@@ -1245,6 +1245,12 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
     </section>
 
     <section class="adminsec">
+      <div class="hdr"><h3>👥 Employee match needed</h3>
+        <span class="hint">Names the other systems use that the roster does not recognise. Tie each one to the right person once and every import after that remembers it. Nothing is guessed.</span></div>
+      <div id="empMatchBody"></div>
+    </section>
+
+    <section class="adminsec">
       <div class="hdr"><h3>👤 Team logins</h3>
         <span class="hint">Who can sign in with Google, and as what. A rep sees their numbers; an admin gets everything. Add each person's work email here AND on their comp plan so their login ties to their record.</span></div>
       <div class="frow" style="margin-bottom:10px">
@@ -2195,8 +2201,13 @@ if(!load(K_REV,false)){
   save(K_PEOPLE,PEOPLE); save(K_REV,true);
 }
 if(!ROWS) ROWS=[];
-// Any row without a person (hand-edited backup, older import) goes to the first person.
-if(PEOPLE.length) ROWS.forEach(r=>{ if(!r.rep || !PEOPLE.some(p=>p.id===r.rep)) r.rep=PEOPLE[0].id; });
+// A row whose person id no longer exists is parked on the "Unassigned" holding record
+// and flagged — it is never quietly credited to somebody else.
+if(PEOPLE.length){
+  let orphaned=0;
+  ROWS.forEach(r=>{ if(!r.rep || !PEOPLE.some(p=>p.id===r.rep)){ if(!r.repOrphan) r.repOrphan=r.rep||'(blank)'; r.repHow='orphan'; r.rep=empUnassigned().id; orphaned++; } });
+  if(orphaned) save(K_ROWS,ROWS);
+}
 // Sold -> completed -> invoiced -> commission paid. Blank means not there yet.
 ROWS.forEach(r=>{
   if(r.type==='renewal'){} else if(r.type!=='upsell') r.type='new';
@@ -2233,6 +2244,165 @@ const unitOne = p => { const u=unitOf(p); return u.replace(/s$/,''); };
 const seasonNorm = ()=>{ const s=GLOBAL.season.reduce((a,b)=>a+b,0)||1; return GLOBAL.season.map(v=>v/s); };
 const person = id => PEOPLE.find(p=>p.id===id) || null;
 const pColor = id => COLORS[Math.max(0,PEOPLE.findIndex(p=>p.id===id))%COLORS.length];
+
+/* ============================================================
+   EMPLOYEE IDENTITY — one canonical record per person
+   PEOPLE is the employee table and `id` is the one permanent key.
+   Names are display values. Emails are identity values. What another
+   system calls somebody is a SOURCE value, remembered as an alias.
+   Nothing downstream may match on a name except through
+   resolveEmployee(), and that only accepts exact matches — an admin
+   confirms everything else once, under "Employee match needed".
+   ============================================================ */
+const EMP_SYS={SA:'Service Autopilot',EL:'Elevation Advisor',GV:'Grovely',INV:'Invoice export',MN:'Manual entry',GOOGLE:'Google login','*':'Any system'};
+const EMP_ROLES=[['sales','Sales'],['estimator','Estimator'],['tech','Technician'],['office','Office'],['manager','Manager']];
+const EMP_UNASSIGNED='emp_unassigned';
+function empKey(s){ return nameTokens(s).sort().join(' '); }            // order-free: "James, Jeff" = "Jeff James"
+function empFirst(p){ if(p.first!=null&&p.first!=='') return p.first; return String(p.name||'').trim().split(/\s+/)[0]||''; }
+function empLast(p){ if(p.last!=null) return p.last; const t=String(p.name||'').trim().split(/\s+/); return t.length>1?t.slice(1).join(' '):''; }
+function empName(p){ if(!p) return '?'; return p.display||p.name||((empFirst(p)+' '+empLast(p)).trim())||'Unnamed'; }
+function empShort(p){ if(!p) return '?'; return p.display||empFirst(p)||p.name||'?'; }
+function empInitials(p){ const f=empFirst(p),l=empLast(p); const x=((f[0]||'')+(l[0]||'')).toUpperCase(); return x||String(p.name||'?').slice(0,2).toUpperCase(); }
+function empIsSales(p){ return p.roles?p.roles.indexOf('sales')>-1:(p.scored!==false); }
+function empId(first,last){ const x=(String(first||'')+'_'+String(last||'')).toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,''); return 'emp_'+(x||'person')+'_'+Math.random().toString(36).slice(2,6); }
+function empWho(){
+  const sx=(typeof session==='function')?session():null; if(sx&&sx.email) return sx.email;
+  const d=(typeof deviceUserQuiet==='function')?deviceUserQuiet():''; if(d) return d;
+  const a=(typeof currentAdmin==='function')?currentAdmin():null; return a?a.name:'(unknown)';
+}
+function empLog(p,what,det){ if(!p) return; p.log=p.log||[]; p.log.push({at:new Date().toISOString(),by:empWho(),what:what,det:det||{}}); if(p.log.length>500) p.log=p.log.slice(-400); }
+// "Sullivan, Zachariah" or "Zachariah Sullivan" → first + last.
+function empSplitName(raw){
+  raw=String(raw||'').trim(); if(!raw) return {first:'',last:''};
+  if(raw.indexOf(',')>-1){ const a=raw.split(','); return {first:a.slice(1).join(',').trim(), last:a[0].trim()}; }
+  const t=raw.split(/\s+/); return {first:t[0], last:t.slice(1).join(' ')};
+}
+
+let EMP_IDX=null;
+function empIndex(){
+  const sig=PEOPLE.map(p=>[p.id,p.name,p.first||'',p.last||'',p.display||'',p.email||'',(p.google&&p.google.email)||'',JSON.stringify(p.aliases||[]),JSON.stringify(p.extIds||{})].join('\u0001')).join('\u0002');
+  if(EMP_IDX && EMP_IDX.sig===sig) return EMP_IDX;
+  const ix={sig:sig, byEmail:{}, byKey:{}, byAlias:{}, byExt:{}};
+  const addKey=(k,id)=>{ if(!k) return; const L=(ix.byKey[k]=ix.byKey[k]||[]); if(L.indexOf(id)<0) L.push(id); };
+  PEOPLE.forEach(p=>{
+    if(p.id===EMP_UNASSIGNED) return;
+    if(p.email) ix.byEmail[String(p.email).toLowerCase().trim()]=p.id;
+    if(p.google&&p.google.email) ix.byEmail[String(p.google.email).toLowerCase().trim()]=p.id;
+    addKey(empKey(p.name),p.id);
+    addKey(empKey(empFirst(p)+' '+empLast(p)),p.id);
+    if(p.display) addKey(empKey(p.display),p.id);
+    (p.aliases||[]).forEach(a=>{ const k=a.key||empKey(a.name); if(k) ix.byAlias[k]=p.id; });
+    Object.keys(p.extIds||{}).forEach(sys=>{ const v=String(p.extIds[sys]||'').trim(); if(v) ix.byExt[sys+'|'+v]=p.id; });
+  });
+  EMP_IDX=ix; return ix;
+}
+// THE resolver. {id, how, conf} or null. It never guesses:
+//   1 external-system id  2 verified email  3 confirmed alias  4 exact full name (either order)
+function resolveEmployee(raw, sys, opts){
+  opts=opts||{}; sys=sys||'*';
+  const ix=empIndex();
+  if(opts.extId){ const id=ix.byExt[sys+'|'+String(opts.extId).trim()]; if(id) return {id:id,how:'ext-id',conf:'high'}; }
+  if(opts.email){ const id=ix.byEmail[String(opts.email).toLowerCase().trim()]; if(id) return {id:id,how:'email',conf:'high'}; }
+  raw=String(raw||'').trim(); if(!raw) return null;
+  if(raw.indexOf('@')>-1){ const id=ix.byEmail[raw.toLowerCase()]; return id?{id:id,how:'email',conf:'high'}:null; }
+  const k=empKey(raw); if(!k) return null;
+  const al=ix.byAlias[k]; if(al) return {id:al,how:'alias',conf:'high'};
+  const ids=ix.byKey[k]||[];
+  if(ids.length===1) return {id:ids[0],how:'name',conf:'high'};
+  return null;   // unknown, or two people share the name — an admin decides, not a guess
+}
+function empIgnoreList(){ return GLOBAL.empIgnore||[]; }
+function empIgnored(raw){ const k=empKey(raw); return !!k && empIgnoreList().some(x=>x.key===k); }
+// A suggestion is NOT a match: same last name, and one first name starts the other (Jeff / Jeffrey).
+function empSuggest(raw){
+  const t=nameTokens(raw); if(t.length<2) return null;
+  const c=PEOPLE.filter(p=>{
+    if(p.id===EMP_UNASSIGNED) return false;
+    const f=nameTokens(empFirst(p))[0]||'', l=nameTokens(empLast(p)); if(!f||!l.length) return false;
+    const last=l[l.length-1]; if(t.indexOf(last)<0) return false;
+    return t.some(x=>x!==last && x.length>=3 && f.length>=3 && (x.indexOf(f)===0||f.indexOf(x)===0));
+  });
+  return c.length===1?c[0].id:null;
+}
+function empAddAlias(pid, raw, sys){
+  const p=person(pid); raw=String(raw||'').trim(); const k=empKey(raw); if(!p||!k) return false;
+  const other=PEOPLE.find(x=>x.id!==pid && (x.aliases||[]).some(a=>(a.key||empKey(a.name))===k));
+  if(other){ alert('"'+raw+'" is already an alias of '+empName(other)+'. Remove it there first.'); return false; }
+  p.aliases=p.aliases||[];
+  if(!p.aliases.some(a=>(a.key||empKey(a.name))===k)){
+    p.aliases.push({sys:sys||'*',name:raw,key:k,by:empWho(),on:todayISO()});
+    empLog(p,'alias-added',{sys:sys||'*',name:raw});
+    if(typeof auditRecord==='function') auditRecord('emp-alias',{emp:pid,sys:sys||'*',name:raw});
+  }
+  save(K_PEOPLE,PEOPLE); return true;
+}
+function empDropAlias(pid,key){ const p=person(pid); if(!p) return; const a=(p.aliases||[]).find(x=>(x.key||empKey(x.name))===key); p.aliases=(p.aliases||[]).filter(x=>(x.key||empKey(x.name))!==key); empLog(p,'alias-removed',{name:a?a.name:key}); save(K_PEOPLE,PEOPLE); render(); }
+function empIgnoreName(raw,sys){ const k=empKey(raw); if(!k) return; GLOBAL.empIgnore=empIgnoreList().filter(x=>x.key!==k); GLOBAL.empIgnore.push({key:k,name:String(raw).trim(),sys:sys||'*',by:empWho(),on:todayISO()}); save(K_GLOBAL,GLOBAL); if(typeof auditRecord==='function') auditRecord('emp-ignore',{sys:sys||'*',name:raw}); }
+function empUnignore(key){ GLOBAL.empIgnore=empIgnoreList().filter(x=>x.key!==key); save(K_GLOBAL,GLOBAL); render(); }
+// Create a person the safe way: refuses a duplicate email, alias or exact name.
+function empCreate(o){
+  o=o||{}; const first=String(o.first||'').trim(), last=String(o.last||'').trim();
+  const name=String(o.name||(first+' '+last)).trim()||'New team member';
+  const em=String(o.email||'').toLowerCase().trim();
+  if(em){ const hit=resolveEmployee('','*',{email:em}); if(hit) return {error:'That email already belongs to '+empName(person(hit.id))+'.', id:hit.id}; }
+  const nm=resolveEmployee(name,'*'); if(nm && !o.allowSameName) return {error:'"'+name+'" already resolves to '+empName(person(nm.id))+'. Open that record instead, or add an alias to it.', id:nm.id};
+  const p=newPerson(name); p.id=empId(first||name,last);
+  p.first=first||empFirst(p); p.last=last||empLast(p);
+  if(o.title!=null) p.title=o.title; if(o.dept) p.dept=o.dept; if(em) p.email=em;
+  p.roles=o.roles||['sales']; p.active=o.active!==false; if(o.ended) p.ended=o.ended;
+  if(o.active===false){ p.scored=false; p.salesPct=0; p.commNew=0; p.commUp=0; p.commRenew=0; p.commOv=0; p.hrsIn=0; p.hrsOff=0; }
+  if(o.note) p.note=o.note; p.created={at:new Date().toISOString(),by:empWho()};
+  p.log=[]; empLog(p,'created',{from:o.from||'manual'});
+  PEOPLE.push(p);
+  if(o.alias) empAddAlias(p.id,o.alias,o.aliasSys); else save(K_PEOPLE,PEOPLE);
+  if(typeof auditRecord==='function') auditRecord('emp-create',{emp:p.id,name:name,active:p.active});
+  return {id:p.id};
+}
+// Holding record for sales whose rep id no longer exists. Money is never
+// silently re-credited to a real person — it parks here where the Hawk sees it.
+function empUnassigned(){
+  let u=PEOPLE.find(x=>x.id===EMP_UNASSIGNED);
+  if(!u){
+    u=newPerson('Unassigned — needs review'); u.id=EMP_UNASSIGNED; u.first='Unassigned'; u.last='';
+    u.active=false; u.scored=false; u.salesPct=0; u.commNew=0; u.commUp=0; u.commRenew=0; u.commOv=0; u.hrsIn=0; u.hrsOff=0; u.roles=[];
+    u.note='System record. Sales land here when their rep id cannot be found. Reassign them from the Data Hawk.'; u.log=[];
+    PEOPLE.push(u); save(K_PEOPLE,PEOPLE);
+  }
+  return u;
+}
+// Names in the data that resolve to nobody — an admin decides each one once.
+function empMatchQueue(){
+  const q={};
+  const add=(sys,raw,kind)=>{ raw=String(raw||'').trim(); if(!raw) return; const k=empKey(raw); if(!k) return;
+    if(resolveEmployee(raw,sys)||empIgnored(raw)) return;
+    const e=q[k]||(q[k]={key:k,raw:raw,sys:{},n:0,kinds:{}}); e.n++; e.sys[sys]=1; e.kinds[kind]=(e.kinds[kind]||0)+1; };
+  CLIENTS.forEach(c=>add('SA',c.sp,'accounts'));
+  INVOICES.forEach(x=>add('INV',x.r,'invoice lines'));
+  ROWS.forEach(r=>{ if(r.repRaw && (r.repHow==='unmatched-default'||r.rep===EMP_UNASSIGNED)) add(r.src||'MN',r.repRaw,'sales'); });
+  HOURS.forEach(h=>{ if(h.repRaw && h.repHow==='unmatched-default') add('MN',h.repRaw,'hours'); });
+  return Object.keys(q).map(k=>q[k]).map(e=>Object.assign(e,{suggest:empSuggest(e.raw)})).sort((a,b)=>b.n-a.n);
+}
+function empOrphanRows(){ return ROWS.filter(r=>r.rep===EMP_UNASSIGNED || r.repHow==='unmatched-default' || r.repHow==='orphan'); }
+// The employee behind the free-text fields other systems hand us.
+function clientRepId(c){ if(!c) return null; const t=(typeof tkoRuleFor==='function')?tkoRuleFor(c.sp):null; if(t&&t.toId) return t.toId; const r=resolveEmployee(c.sp,'SA'); return r?r.id:null; }
+function invoiceRepId(x){ if(!x||!x.r) return null; const r=resolveEmployee(x.r,'INV'); return r?r.id:null; }
+// One-time and additive: first/last/roles/log for people that predate this. Nothing renamed or removed.
+function empMigrate(){
+  let dirty=false;
+  PEOPLE.forEach(p=>{
+    if(p.first==null || p.last==null){ const x=empSplitName(p.name); if(p.first==null) p.first=x.first; if(p.last==null) p.last=x.last; dirty=true; }
+    if(!p.roles){
+      const t=String(p.title||''); p.roles=[];
+      if(p.id!==EMP_UNASSIGNED && (p.scored!==false || +p.salesPct>0 || +p.commNew>0 || /sales/i.test(t))) p.roles.push('sales');
+      if(/estimat/i.test(t)) p.roles.push('estimator');
+      if(/owner|president|manager|director/i.test(t)) p.roles.push('manager');
+      dirty=true;
+    }
+    if(!p.log){ p.log=[{at:new Date().toISOString(),by:'migration',what:'created',det:{from:'existing record'}}]; dirty=true; }
+  });
+  if(dirty) save(K_PEOPLE,PEOPLE);
+}
+empMigrate();
 
 /* ============================================================
    HELPERS
@@ -3137,6 +3307,54 @@ function renderAdmin(){
   renderTombstones();
   renderAudit();
   renderTeamLogins();
+  renderEmpMatch();
+}
+
+function renderEmpMatch(){
+  const box=document.getElementById('empMatchBody'); if(!box) return;
+  const q=empMatchQueue(), orph=empOrphanRows();
+  const opts=PEOPLE.filter(p=>p.id!==EMP_UNASSIGNED).map(p=>'<option value="'+p.id+'">'+esc(empName(p))+(p.active?'':' (inactive)')+'</option>').join('');
+  let h='';
+  if(!q.length && !orph.length) h+='<div class="note"><b>All clear.</b> Every salesperson name in the data resolves to one employee.</div>';
+  if(q.length){
+    h+='<div class="scroll"><table><thead><tr><th>Name in the data</th><th>System</th><th class="num">Records</th><th>Employee</th><th></th></tr></thead><tbody>';
+    q.forEach((e,i)=>{
+      const sug=e.suggest?person(e.suggest):null;
+      h+='<tr><td><b>'+esc(e.raw)+'</b>'+(sug?'<div class="note">looks like <b>'+esc(empName(sug))+'</b> — confirm below</div>':'')+'</td>'+
+        '<td class="note">'+Object.keys(e.sys).map(x=>esc(EMP_SYS[x]||x)).join(', ')+'</td>'+
+        '<td class="num">'+e.n.toLocaleString()+'<div class="note">'+Object.keys(e.kinds).map(k=>e.kinds[k].toLocaleString()+' '+k).join(' · ')+'</div></td>'+
+        '<td><select id="emq'+i+'"><option value="">— pick —</option>'+opts.replace('value="'+(e.suggest||'~')+'"','value="'+(e.suggest||'~')+'" selected')+'</select></td>'+
+        '<td class="num" style="white-space:nowrap"><button class="sm p" onclick="empQConfirm('+i+')">Same person</button> '+
+        '<button class="sm" onclick="empQFormer('+i+')">Former team member</button> '+
+        '<button class="sm" onclick="empQIgnore('+i+')">Not an employee</button></td></tr>';
+    });
+    h+='</tbody></table></div>';
+  }
+  if(orph.length) h+='<div class="note" style="margin-top:12px"><b>'+orph.length+' sale'+(orph.length===1?'':'s')+'</b> credited by default or to nobody — listed under the Data Hawk above.</div>';
+  const ig=empIgnoreList();
+  if(ig.length) h+='<details style="margin-top:10px"><summary>Not employees ('+ig.length+')</summary><div class="dbody">'+
+    ig.map(x=>'<div>'+esc(x.name)+' <span class="note">'+esc(x.on||'')+' · '+esc(x.by||'')+'</span> <button class="sm" onclick="empUnignore(\''+esc(x.key)+'\')">undo</button></div>').join('')+'</div></details>';
+  box.innerHTML=h; window.__EMPQ=q;
+}
+function empQConfirm(i){
+  const e=(window.__EMPQ||[])[i]; if(!e) return;
+  const pid=document.getElementById('emq'+i).value; if(!pid){ toast('Pick the employee first'); return; }
+  if(empAddAlias(pid,e.raw,Object.keys(e.sys)[0]||'*')){ toast('"'+e.raw+'" = '+empName(person(pid))+' from now on'); render(); }
+}
+function empQFormer(i){
+  const e=(window.__EMPQ||[])[i]; if(!e) return;
+  const x=empSplitName(e.raw), sys=Object.keys(e.sys)[0]||'*';
+  if(!confirm('Add "'+x.first+' '+x.last+'" to the roster as a FORMER team member (inactive)?'+BR2+
+    'Their accounts, invoice lines and sales stay tied to them forever. They get no comp plan and no login.')) return;
+  const r=empCreate({first:x.first,last:x.last,active:false,roles:['sales'],from:sys,alias:e.raw,aliasSys:sys,
+    note:'Former team member — added from the '+(EMP_SYS[sys]||sys)+' export on '+todayISO()+'.'});
+  if(r.error){ alert(r.error); return; }
+  toast(x.first+' added as a former team member'); render();
+}
+function empQIgnore(i){
+  const e=(window.__EMPQ||[])[i]; if(!e) return;
+  if(!confirm('"'+e.raw+'" is not an employee? The tracker will stop asking about this name.')) return;
+  empIgnoreName(e.raw,Object.keys(e.sys)[0]||'*'); render();
 }
 
 async function renderTeamLogins(){
@@ -5229,7 +5447,7 @@ function quickSave(again){
   if(!rp||!date){toast('Pick a salesperson and a date');return;}
   if(!client){toast('Client name is required'); document.getElementById('qClient').focus(); return;}
 
-  const row={id:uid('r'),rep:rp,date,client,
+  const row={id:uid('r'),rep:rp,repHow:'manual',date,client,
     service:document.getElementById('qService').value.trim(),
     value,basis:segVal('qBasis'),qty:Math.max(1,Math.round(pNum(document.getElementById('qQty').value))||1),
     type:segVal('qType'),src:segVal('qSrc'),notes:'',
@@ -7523,6 +7741,16 @@ function runChecks(){
           '<button class="sm" onclick="editSplit(\''+d.r.id+'\')">Split it</button>'
     })));
 
+  /* --- THE DATA HAWK: sales not tied to a real employee --- */
+  const orphanRows=empOrphanRows();
+  add('hawkEmp','bad','🦅 Sales not tied to a real employee',
+    'Imported with a salesperson the roster does not recognise (so they fell to the import default), or their rep id no longer exists. Commission on these is going to the wrong person or to nobody. Fix the name under Employee match needed, or set the rep on the sale.',
+    orphanRows.slice(0,30).map(r=>({
+      text:'<b>'+esc(r.client)+'</b> · '+money(bookedValue(r))+' · '+fmtY(r.date),
+      sub:'source said: '+esc(r.repRaw||r.repOrphan||'(blank)')+' · credited to: '+esc(empName(person(r.rep))),
+      act:'<button class="sm" onclick="openEdit(\''+r.id+'\')">Fix rep</button>'
+    })));
+
   /* --- THE DATA HAWK: commission moving on jobs the customer has not paid --- */
   const pastDueBy={}; OPENINV.forEach(v=>{ if(/past/i.test(v.s)) pastDueBy[norm(v.c)]=(pastDueBy[norm(v.c)]||0)+v.t; });
   const owes=ROWS.filter(r=>!r.voidType && r.invoiced && pastDueBy[norm(r.client)]);
@@ -8816,12 +9044,12 @@ function hBuildRows(){
     const date=pDate(m.hMapDate>=0?r[m.hMapDate]:'');
     const hrs=m.hMapHours>=0?pNum(r[m.hMapHours]):0;
     if(!date||!(hrs>0)){bad.push(i+2);return;}
-    let rp=defRep;
+    let rp=defRep, repHow='import-default', repRaw='';
     if(m.hMapRep>=0){
-      const raw=String(r[m.hMapRep]||'').trim(), hit=matchRep(raw);
-      if(hit)rp=hit; else if(raw)unmatched[raw]=1;
+      repRaw=String(r[m.hMapRep]||'').trim(); const hit=resolveEmployee(repRaw,'MN');
+      if(hit){ rp=hit.id; repHow='import-'+hit.how; } else if(repRaw){ unmatched[repRaw]=1; repHow='unmatched-default'; }
     }
-    out.push({id:uid('h'),rep:rp,date,hours:hrs,note:m.hMapNote>=0?String(r[m.hMapNote]||'').trim():''});
+    out.push({id:uid('h'),rep:rp,repRaw,repHow,date,hours:hrs,note:m.hMapNote>=0?String(r[m.hMapNote]||'').trim():''});
   });
   return {out,bad,unmatched};
 }
@@ -9877,41 +10105,9 @@ function parseSaleType(raw, def){
 function nameTokens(s){
   return String(s||'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(Boolean);
 }
-function matchRep(name){
-  const nt=nameTokens(name); if(!nt.length)return null;
-  const flat=nt.join(' '), sorted=nt.slice().sort().join(' ');
-  // 1. full name, in either order ("Dana Cortez" / "Cortez Dana")
-  for(let i=0;i<PEOPLE.length;i++){
-    const pt=nameTokens(PEOPLE[i].name);
-    if(pt.join(' ')===flat || pt.slice().sort().join(' ')===sorted) return PEOPLE[i].id;
-  }
-  // 2. every token of someone's name appears in the input
-  for(let i=0;i<PEOPLE.length;i++){
-    const pt=nameTokens(PEOPLE[i].name);
-    if(pt.length && pt.every(t=>nt.indexOf(t)>-1)) return PEOPLE[i].id;
-  }
-  const only=list=>list.length===1?list[0].id:null;
-  // 3. last name, if only one person has it
-  let hit=only(PEOPLE.filter(x=>{const pt=nameTokens(x.name);return pt.length>1&&nt.indexOf(pt[pt.length-1])>-1;}));
-  if(hit)return hit;
-  // 4. initial + last name ("D Cortez")
-  hit=only(PEOPLE.filter(x=>{
-    const pt=nameTokens(x.name);
-    return pt.length>1&&nt.length>1&&nt[nt.length-1]===pt[pt.length-1]&&nt[0].charAt(0)===pt[0].charAt(0);
-  }));
-  if(hit)return hit;
-  // 5. first name, if only one person has it
-  hit=only(PEOPLE.filter(x=>{const pt=nameTokens(x.name);return pt.length&&nt.indexOf(pt[0])>-1;}));
-  if(hit)return hit;
-  // 6. squashed login-style handle ("dcortez", "danac")
-  const squash=flat.replace(/\s/g,'');
-  hit=only(PEOPLE.filter(x=>{
-    const pt=nameTokens(x.name); if(pt.length<2)return false;
-    const first=pt[0], last=pt[pt.length-1];
-    return squash===first.charAt(0)+last || squash===first+last.charAt(0) || squash===first+last;
-  }));
-  return hit;
-}
+// Every name-to-person lookup in the app funnels through the one resolver.
+// Exact email, confirmed alias, or exact full name (either order) — nothing looser.
+function matchRep(name, sys){ const r=resolveEmployee(name, sys||'*'); return r?r.id:null; }
 
 function buildRows(){
   const m={}; MAP_FIELDS.forEach(f=>m[f[0]]=parseInt(document.getElementById(f[0]).value,10));
@@ -9923,11 +10119,12 @@ function buildRows(){
     const date=pDate(m.mapDate>=0?r[m.mapDate]:'');
     const client=m.mapClient>=0?String(r[m.mapClient]||'').trim():'';
     if(!date||!client){bad.push(i+2);return;}
-    let rep=defRep;
+    let rep=defRep, repHow='import-default', repRaw='';
     if(m.mapRep>=0){
-      const raw=String(r[m.mapRep]||'').trim();
-      const hit=matchRep(raw);
-      if(hit)rep=hit; else if(raw)unmatched[raw]=(unmatched[raw]||0)+1;
+      repRaw=String(r[m.mapRep]||'').trim();
+      const hit=resolveEmployee(repRaw, src);
+      if(hit){ rep=hit.id; repHow='import-'+hit.how; }
+      else if(repRaw){ unmatched[repRaw]=(unmatched[repRaw]||0)+1; repHow='unmatched-default'; }
     }
     const type = m.mapType>=0 ? parseSaleType(r[m.mapType], defType) : defType;
     // Keep the row exactly as the export sent it, so what SA or Elevation
@@ -9943,7 +10140,7 @@ function buildRows(){
       basis:'contract',qty:1,
       completed:m.mapDone>=0?(pDate(r[m.mapDone])||''):'',
       invoiced:m.mapInv>=0?(pDate(r[m.mapInv])||''):'',
-      paid:'', type,src,rep,
+      paid:'', type,src,rep,repRaw,repHow,
       srcId:m.mapSrcId>=0?String(r[m.mapSrcId]||'').trim():'',
       srcUp:m.mapSrcUp>=0?(pDate(r[m.mapSrcUp])||''):'',
       srcRaw:raw};
@@ -10106,8 +10303,8 @@ function exportCSV(){
 }
 // The full app state, as one object. Used by Backup all AND live cloud sync,
 // so the two can never drift apart.
-function stateSnapshot(){
-  return {v:5,saved:todayISO(),people:PEOPLE,rows:ROWS,hours:HOURS,disputes:DISPUTES,
+function stateSnapshot(){   // v6: employee identity fields (first/last/photo/aliases/roles/log) + repRaw/repHow on sales
+  return {v:6,saved:todayISO(),people:PEOPLE,rows:ROWS,hours:HOURS,disputes:DISPUTES,
     clients:CLIENTS,syncs:SYNCLOG,conversions:CONVERSIONS,knocked:KNOCKED,invoices:INVOICES,
     invsyncs:INVSYNC,implog:IMPLOG,gear:GEAR,payments:PAYMENTS,paysyncs:PAYSYNC,
     takeovers:TAKEOVERS,openinv:OPENINV,balsyncs:BALSYNC,tombstones:TOMBSTONES,oscs:OSCS,global:GLOBAL};
@@ -10122,19 +10319,34 @@ function restore(e){
   fr.onload=ev=>{
     let d; try{d=JSON.parse(ev.target.result);}catch(err){alert('That file is not readable JSON.');return;}
     if(!d||!Array.isArray(d.people)){alert('That does not look like a backup from this tracker.');return;}
-    // people matched by name
+    // People are matched by ID first (the permanent key), then verified email, then a
+    // confirmed alias or exact full name. A person nobody here knows keeps the id the
+    // backup gave them, so every sale in that backup still points at the same record.
     const idMap={}; let addedP=0;
     d.people.forEach(bp=>{
-      const hit=PEOPLE.find(x=>x.name.toLowerCase()===String(bp.name).toLowerCase());
-      if(hit){idMap[bp.id]=hit.id;}
-      else{const np=Object.assign(newPerson(bp.name),bp,{id:uid('p')});idMap[bp.id]=np.id;PEOPLE.push(np);addedP++;}
+      let hit=PEOPLE.find(x=>x.id===bp.id) || null;
+      if(!hit && bp.email){ const r=resolveEmployee('','*',{email:bp.email}); if(r) hit=person(r.id); }
+      if(!hit){ const r=resolveEmployee(bp.name,'*'); if(r) hit=person(r.id); }
+      if(hit){
+        idMap[bp.id]=hit.id;
+        // additive: carry over identity details the local record lacks
+        ['first','last','display','photo','dept','email','ended','created','extIds'].forEach(k=>{ if((hit[k]==null||hit[k]==='') && bp[k]!=null && bp[k]!=='') hit[k]=bp[k]; });
+        (bp.aliases||[]).forEach(a=>{ hit.aliases=hit.aliases||[]; if(!hit.aliases.some(x=>(x.key||empKey(x.name))===(a.key||empKey(a.name)))) hit.aliases.push(a); });
+        if(Array.isArray(bp.log)&&bp.log.length){ hit.log=hit.log||[]; const have=new Set(hit.log.map(l=>l.at+'|'+l.what)); bp.log.forEach(l=>{ if(!have.has(l.at+'|'+l.what)) hit.log.push(l); }); }
+      } else {
+        const np=Object.assign(newPerson(bp.name),bp,{id:(bp.id&&!PEOPLE.some(x=>x.id===bp.id))?bp.id:empId(bp.first||bp.name,bp.last||'')});
+        idMap[bp.id]=np.id; PEOPLE.push(np); addedP++;
+      }
     });
+    EMP_IDX=null; empMigrate();
     PEOPLE.forEach(p=>{ if(p.mgr&&idMap[p.mgr])p.mgr=idMap[p.mgr]; });
+    if(d.global&&Array.isArray(d.global.empIgnore)){ GLOBAL.empIgnore=GLOBAL.empIgnore||[]; d.global.empIgnore.forEach(x=>{ if(!GLOBAL.empIgnore.some(y=>y.key===x.key)) GLOBAL.empIgnore.push(x); }); save(K_GLOBAL,GLOBAL); }
     const key=r=>r.rep+'|'+r.date+'|'+String(r.client).toLowerCase()+'|'+bookedValue(r).toFixed(2);
     const seen=new Set(ROWS.map(key)); let addedR=0;
     const byId={}; ROWS.forEach(r=>{ if(r.src&&r.srcId) byId[r.src+'|'+r.srcId]=1; });
     (d.rows||[]).forEach(br=>{
-      const r=Object.assign({},br,{id:uid('r'),rep:idMap[br.rep]||(PEOPLE[0]&&PEOPLE[0].id)});
+      const r=Object.assign({},br,{id:uid('r'),rep:idMap[br.rep]||br.rep});
+      if(!idMap[br.rep]){ r.repOrphan=br.rep||'(blank)'; r.repHow='orphan'; r.rep=empUnassigned().id; }
       // a source record ID is the surest sign it's the same sale
       if(r.src&&r.srcId){ const ik=r.src+'|'+r.srcId; if(byId[ik])return; byId[ik]=1; }
       const k=key(r); if(seen.has(k))return; seen.add(k); ROWS.push(r); addedR++;
@@ -10144,7 +10356,7 @@ function restore(e){
       const hk=x=>x.rep+'|'+x.date+'|'+Number(x.hours).toFixed(2);
       const hseen=new Set(HOURS.map(hk));
       d.hours.forEach(bh=>{
-        const x=Object.assign({},bh,{id:uid('h'),rep:idMap[bh.rep]||(PEOPLE[0]&&PEOPLE[0].id)});
+        const x=Object.assign({},bh,{id:uid('h'),rep:idMap[bh.rep]||empUnassigned().id});
         const k=hk(x); if(hseen.has(k))return; hseen.add(k); HOURS.push(x); addedH++;
       });
       save(K_HOURS,HOURS);
@@ -10153,7 +10365,7 @@ function restore(e){
       const dk=x=>x.rep+'|'+x.raised+'|'+String(x.claim).toLowerCase();
       const dseen=new Set(DISPUTES.map(dk));
       d.disputes.forEach(bd=>{
-        const x=Object.assign({},bd,{id:uid('d'),rep:idMap[bd.rep]||(PEOPLE[0]&&PEOPLE[0].id)});
+        const x=Object.assign({},bd,{id:uid('d'),rep:idMap[bd.rep]||empUnassigned().id});
         if(dseen.has(dk(x)))return; dseen.add(dk(x)); DISPUTES.push(x);
       });
       save(K_DISP,DISPUTES);
@@ -10402,6 +10614,7 @@ function cloudApply(d){
   const A=(v,f)=>Array.isArray(v)?v:f;
   PEOPLE=A(d.people,PEOPLE); put(K_PEOPLE,PEOPLE);
   ROWS=A(d.rows,ROWS); put(K_ROWS,ROWS);
+  empMigrate(); EMP_IDX=null;
   HOURS=A(d.hours,HOURS); put(K_HOURS,HOURS);
   DISPUTES=A(d.disputes,DISPUTES); put(K_DISP,DISPUTES);
   CLIENTS=A(d.clients,CLIENTS); put(K_CLIENTS,CLIENTS);
