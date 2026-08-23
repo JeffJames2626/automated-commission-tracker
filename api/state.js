@@ -184,9 +184,11 @@ export default async function handler(req, res) {
   // Server-side fetch because the browser cannot read docs.google.com cross-origin.
   if (req.method === 'GET' && req.query && req.query.gsheet === '1') {
     const id = String(req.query.id || ''), gid = String(req.query.gid || '0');
-    if (!/^[-\w]{20,}$/.test(id) || !/^\d{1,12}$/.test(gid)) return res.status(400).json({ error: 'bad sheet id or gid' });
+    if (!/^[-\w]{20,}$/.test(id) || !/^\d{0,12}$/.test(gid)) return res.status(400).json({ error: 'bad sheet id or gid' });
     try {
-      const g = await fetch('https://docs.google.com/spreadsheets/d/' + id + '/export?format=csv&gid=' + gid, { redirect: 'follow' });
+      // gid "0" / blank = the first tab (Google numbers the first tab arbitrarily and 400s on a wrong gid)
+      const url = 'https://docs.google.com/spreadsheets/d/' + id + '/export?format=csv' + (gid && gid !== '0' ? '&gid=' + gid : '');
+      const g = await fetch(url, { redirect: 'follow' });
       const ct = String(g.headers.get('content-type') || '');
       if (!g.ok || ct.indexOf('text/csv') < 0) return res.status(g.status === 200 ? 403 : g.status).json({ error: 'Google did not return the sheet as CSV (status ' + g.status + '). Share it as “Anyone with the link · Viewer”.' });
       const csv = await g.text();
