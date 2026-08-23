@@ -1,0 +1,9 @@
+{
+  "name": "automated-commission-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sales and commission tracker with live cloud state",
+  "dependencies": {
+    "@neondatabase/serverless": ">=0.9.0"
+  }
+}

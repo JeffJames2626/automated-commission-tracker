@@ -4,6 +4,12 @@
 *.xls
 *.xlsx
 alp-sales-backup*
+alp-FULL-restore*
+
+# …but these config files MUST be committed (they carry no customer data)
+!package.json
+!package-lock.json
+!vercel.json
 Clients*.csv
 Leads*.csv
 Payments*.csv
@@ -17,3 +23,5 @@ Thumbs.db
 .claude/
 .vscode/
 .idea/
+
+Open Tracker.bat

@@ -1904,7 +1904,11 @@ const K_OLD_ROWS='zach_sales_rows_v1', K_OLD_CFG='zach_sales_cfg_v1';
    STATE  (+ migration from the single-person tracker)
    ============================================================ */
 function load(k,d){ try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){return d;} }
-function save(k,v){ try{localStorage.setItem(k,JSON.stringify(v));}catch(e){alert('Could not save: '+e.message);} }
+function save(k,v){
+  try{localStorage.setItem(k,JSON.stringify(v));}catch(e){alert('Could not save: '+e.message);}
+  // Mirror every change to the cloud (debounced), unless we're applying cloud data.
+  if(typeof CLOUD!=='undefined' && CLOUD.on && !CLOUD.applying) cloudSchedulePush();
+}
 function uid(p){ return (p||'x')+Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 
 let PEOPLE = load(K_PEOPLE,null);
@@ -8851,8 +8855,16 @@ function exportCSV(){
   });
   dl(new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8'}),'alp-sales-'+todayISO()+'.csv');
 }
+// The full app state, as one object. Used by Backup all AND live cloud sync,
+// so the two can never drift apart.
+function stateSnapshot(){
+  return {v:5,saved:todayISO(),people:PEOPLE,rows:ROWS,hours:HOURS,disputes:DISPUTES,
+    clients:CLIENTS,syncs:SYNCLOG,conversions:CONVERSIONS,knocked:KNOCKED,invoices:INVOICES,
+    invsyncs:INVSYNC,implog:IMPLOG,gear:GEAR,payments:PAYMENTS,paysyncs:PAYSYNC,
+    takeovers:TAKEOVERS,openinv:OPENINV,balsyncs:BALSYNC,tombstones:TOMBSTONES,oscs:OSCS,global:GLOBAL};
+}
 function backup(){
-  dl(new Blob([JSON.stringify({v:5,saved:todayISO(),people:PEOPLE,rows:ROWS,hours:HOURS,disputes:DISPUTES,clients:CLIENTS,syncs:SYNCLOG,conversions:CONVERSIONS,knocked:KNOCKED,invoices:INVOICES,invsyncs:INVSYNC,implog:IMPLOG,gear:GEAR,payments:PAYMENTS,paysyncs:PAYSYNC,takeovers:TAKEOVERS,openinv:OPENINV,balsyncs:BALSYNC,tombstones:TOMBSTONES,oscs:OSCS,global:GLOBAL},null,2)],
+  dl(new Blob([JSON.stringify(stateSnapshot(),null,2)],
     {type:'application/json'}),'alp-sales-backup-'+todayISO()+'.json');
 }
 function restore(e){
@@ -8928,11 +8940,159 @@ function restore(e){
 }
 
 /* ============================================================
+   LIVE CLOUD SYNC
+   The whole state lives in a private database (see /api/state).
+   The app pulls it on open and pushes it — debounced — on every
+   change, so the data is the same on every device with no manual
+   restore. If the cloud can't be reached it silently stays on the
+   local copy, so the tracker never breaks.
+   ============================================================ */
+// var (not const): save() references CLOUD during early-boot migrations, before this
+// line runs. var hoists to undefined so the typeof guard in save() is safe; const would throw.
+var CLOUD = {
+  url:'/api/state', pwKey:'alp_cloud_pw', appliedKey:'alp_cloud_applied',
+  on:false, applying:false, pushTimer:null, pushing:false, dirty:false, status:'off', lastErr:''
+};
+function cloudPw(){ return localStorage.getItem(CLOUD.pwKey)||''; }
+function cloudHasBackend(){ return location.protocol==='http:'||location.protocol==='https:'; }
+
+// Load a full state object into localStorage AND the in-memory globals, without a reload.
+function cloudApply(d){
+  if(!d) return;
+  CLOUD.applying=true;
+  const put=(k,v)=>{ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} };
+  const A=(v,f)=>Array.isArray(v)?v:f;
+  PEOPLE=A(d.people,PEOPLE); put(K_PEOPLE,PEOPLE);
+  ROWS=A(d.rows,ROWS); put(K_ROWS,ROWS);
+  HOURS=A(d.hours,HOURS); put(K_HOURS,HOURS);
+  DISPUTES=A(d.disputes,DISPUTES); put(K_DISP,DISPUTES);
+  CLIENTS=A(d.clients,CLIENTS); put(K_CLIENTS,CLIENTS);
+  SYNCLOG=A(d.syncs,SYNCLOG); put(K_SYNC,SYNCLOG);
+  CONVERSIONS=A(d.conversions,CONVERSIONS); put(K_CONV,CONVERSIONS);
+  if(d.knocked&&typeof d.knocked==='object'){ KNOCKED=d.knocked; put(K_KNOCK,KNOCKED); }
+  INVOICES=A(d.invoices,INVOICES); put(K_INV,INVOICES);
+  INVSYNC=A(d.invsyncs,INVSYNC); put(K_INVSYNC,INVSYNC);
+  IMPLOG=A(d.implog,IMPLOG); put(K_IMPLOG,IMPLOG);
+  if(d.gear&&typeof d.gear==='object'){ GEAR=d.gear; if(!GEAR.snooze)GEAR.snooze={}; put(K_GEAR,GEAR); }
+  PAYMENTS=A(d.payments,PAYMENTS); put(K_PAY,PAYMENTS);
+  PAYSYNC=A(d.paysyncs,PAYSYNC); put(K_PAYSYNC,PAYSYNC);
+  TAKEOVERS=A(d.takeovers,TAKEOVERS); put(K_TKO,TAKEOVERS);
+  OPENINV=A(d.openinv,OPENINV); put(K_BAL,OPENINV);
+  BALSYNC=A(d.balsyncs,BALSYNC); put(K_BALSYNC,BALSYNC);
+  TOMBSTONES=A(d.tombstones,TOMBSTONES); put(K_TOMB,TOMBSTONES);
+  OSCS=A(d.oscs,OSCS); put(K_OSC,OSCS);
+  if(d.global&&typeof d.global==='object'){ GLOBAL=d.global; if(!GLOBAL.policy)GLOBAL.policy=Object.assign({},POLICY_DEFAULT); put(K_GLOBAL,GLOBAL); }
+  histDirty(); geoDirty();
+  CLOUD.applying=false;
+}
+function cloudBadge(){
+  let el=document.getElementById('cloudBadge');
+  if(!el){
+    const bar=document.querySelector('header .hbtns')||document.querySelector('header');
+    if(!bar) return null;
+    el=document.createElement('button'); el.id='cloudBadge'; el.className='gh sm';
+    el.onclick=cloudMenu; bar.insertBefore(el, bar.firstChild);
+  }
+  return el;
+}
+function cloudSetStatus(s,msg){
+  CLOUD.status=s;
+  const el=cloudBadge(); if(!el) return;
+  const map={off:['☁ Cloud: off','#a9b3a5'],live:['☁ Live','#8fce8f'],
+    saving:['☁ Saving…','#e6d38a'],offline:['☁ Offline','#e8a89f'],error:['☁ Cloud error','#e8a89f']};
+  const m=map[s]||map.off;
+  el.textContent=m[0]; el.style.color=m[1];
+  el.title=msg||({off:'Cloud sync is off — data is only in this browser. Click to turn on.',
+    live:'Live — synced with the cloud. Data is the same on every device.',
+    saving:'Saving changes to the cloud…',
+    offline:'Can’t reach the cloud right now — working locally, will retry.',
+    error:CLOUD.lastErr||'Cloud error'}[s]||'');
+}
+async function cloudFetch(method,body){
+  const opt={method,headers:{'x-app-password':cloudPw()}};
+  // The state is itself valid JSON; send it as application/json so the server
+  // parses it into an object (no double-encoding, no size blow-up).
+  if(body!=null){ opt.headers['content-type']='application/json'; opt.body=body; }
+  const r=await fetch(CLOUD.url,opt);
+  const txt=await r.text();
+  let j; try{ j=JSON.parse(txt); }catch(e){ j={error:txt.slice(0,200)}; }
+  return {ok:r.ok, status:r.status, j};
+}
+async function cloudPull(seed){
+  if(!CLOUD.on) return;
+  try{
+    const {ok,status,j}=await cloudFetch('GET');
+    if(status===401){ CLOUD.on=false; cloudSetStatus('off'); cloudAskPassword(true); return; }
+    if(!ok){ CLOUD.lastErr=j.error||('HTTP '+status); cloudSetStatus('error'); return; }
+    if(j.empty){
+      // nothing in the cloud yet — push what's here to seed it
+      if(seed) await cloudPushNow();
+      else cloudSetStatus('live');
+      return;
+    }
+    const applied=localStorage.getItem(CLOUD.appliedKey)||'';
+    if(String(j.updated)!==applied){
+      let obj; try{ obj=JSON.parse(j.data); }catch(e){ obj=null; }
+      if(obj){ cloudApply(obj); localStorage.setItem(CLOUD.appliedKey,String(j.updated)); render(); }
+    }
+    cloudSetStatus('live');
+  }catch(e){ CLOUD.lastErr=String(e.message||e); cloudSetStatus('offline'); }
+}
+async function cloudPushNow(){
+  if(!CLOUD.on || CLOUD.pushing) { CLOUD.dirty=true; return; }
+  CLOUD.pushing=true; CLOUD.dirty=false; cloudSetStatus('saving');
+  try{
+    const body=JSON.stringify(stateSnapshot());
+    const {ok,status,j}=await cloudFetch('POST',body);
+    if(status===401){ CLOUD.on=false; cloudSetStatus('off'); cloudAskPassword(true); }
+    else if(!ok){ CLOUD.lastErr=j.error||('HTTP '+status); cloudSetStatus('error'); }
+    else{ if(j.updated) localStorage.setItem(CLOUD.appliedKey,String(j.updated)); cloudSetStatus('live'); }
+  }catch(e){ CLOUD.lastErr=String(e.message||e); cloudSetStatus('offline'); }
+  CLOUD.pushing=false;
+  if(CLOUD.dirty) cloudSchedulePush();   // more changes arrived while saving
+}
+function cloudSchedulePush(){
+  if(!CLOUD.on) return;
+  CLOUD.dirty=true;
+  clearTimeout(CLOUD.pushTimer);
+  CLOUD.pushTimer=setTimeout(cloudPushNow, 2500);
+}
+function cloudAskPassword(wrong){
+  const p=prompt((wrong?'That password was rejected.\n\n':'')+
+    'Enter the tracker password to turn on live cloud sync\n(leave blank to stay local-only on this device):','');
+  if(p==null) return;
+  if(p===''){ localStorage.removeItem(CLOUD.pwKey); CLOUD.on=false; cloudSetStatus('off'); return; }
+  localStorage.setItem(CLOUD.pwKey,p);
+  cloudStart(true);
+}
+function cloudMenu(){
+  if(!cloudHasBackend()){ alert('Live sync needs the app opened from its web address (automatedpest.com), not from a file.'); return; }
+  if(CLOUD.status==='live'){
+    if(confirm('Live cloud sync is ON.\n\nData is saved to the cloud and shared across your devices.\n\nClick OK to change the password, or Cancel to keep going.'))
+      cloudAskPassword(false);
+    return;
+  }
+  cloudAskPassword(false);
+}
+async function cloudStart(seed){
+  if(!cloudHasBackend() || !cloudPw()){ cloudSetStatus('off'); return; }
+  CLOUD.on=true; cloudSetStatus('saving');
+  await cloudPull(seed);
+}
+function cloudInit(){
+  cloudBadge(); cloudSetStatus('off');
+  if(cloudHasBackend() && cloudPw()) cloudStart(true);
+  // re-pull when the tab regains focus, so another device's changes show up
+  document.addEventListener('visibilitychange',()=>{ if(!document.hidden && CLOUD.on) cloudPull(false); });
+}
+
+/* ============================================================
    BOOT
    ============================================================ */
 document.getElementById('hDate').value=todayISO();
 document.getElementById('cMonth').value=defaultReportMonth();
 render();
+cloudInit();
 
 (function(){
   let ok=false;
