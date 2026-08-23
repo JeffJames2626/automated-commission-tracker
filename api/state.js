@@ -26,6 +26,22 @@ function unauthorized(res) {
 }
 
 export default async function handler(req, res) {
+  // ---- health check (no password, no data) — reports config status only ----
+  // Lets setup be diagnosed without exposing anything sensitive.
+  if (req.method === 'GET' && req.query && req.query.health === '1') {
+    const out = {
+      app_password_set: !!process.env.APP_PASSWORD,
+      database_url_set: !!DB_URL,
+      db: 'unknown'
+    };
+    if (!DB_URL) out.db = 'no DATABASE_URL';
+    else {
+      try { const sql = neon(DB_URL); await sql`SELECT 1`; out.db = 'ok'; }
+      catch (e) { out.db = 'fail: ' + (e.message || String(e)).slice(0, 140); }
+    }
+    return res.status(200).json(out);
+  }
+
   // ---- password gate ----
   const want = process.env.APP_PASSWORD || '';
   const got = req.headers['x-app-password'] || '';
