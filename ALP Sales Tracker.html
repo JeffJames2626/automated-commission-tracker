@@ -2376,6 +2376,17 @@ const unitOne = p => { const u=unitOf(p); return u.replace(/s$/,''); };
 const seasonNorm = ()=>{ const s=GLOBAL.season.reduce((a,b)=>a+b,0)||1; return GLOBAL.season.map(v=>v/s); };
 const person = id => PEOPLE.find(p=>p.id===id) || null;
 const pColor = id => COLORS[Math.max(0,PEOPLE.findIndex(p=>p.id===id))%COLORS.length];
+// Four reasons, ONE financial rule: the reversed amount comes off the sale's
+// value (netValue = booked − voidAmount). The type is kept for history and
+// reporting only; it does not change the arithmetic anywhere.
+const VOID_TYPES=[
+  ['','—'],
+  ['cancelled','Cancelled before service'],
+  ['refunded','Refunded after service'],
+  ['credited','Credit issued'],
+  ['writeoff','Written off — never collected']
+];
+const VOID_LABEL={}; VOID_TYPES.forEach(v=>VOID_LABEL[v[0]]=v[1]);
 
 /* ============================================================
    COMMISSION PAYOUT LEDGER
@@ -2390,7 +2401,7 @@ const pColor = id => COLORS[Math.max(0,PEOPLE.findIndex(p=>p.id===id))%COLORS.le
    ============================================================ */
 const K_PAYOUTS='alp_payouts_v1';
 let PAYOUTS=load(K_PAYOUTS,[]);
-const PAYOUT_KINDS={rep:'Rep commission',override:'Manager override',adjustment:'Correction'};
+const PAYOUT_KINDS={rep:'Rep commission',override:'Manager override',adjustment:'Correction','rep-chargeback':'Rep chargeback','manager-chargeback':'Manager chargeback'};
 function round2(n){ return Math.round((+n||0)*100)/100; }
 function payoutsFor(rowId,emp,kinds){
   return PAYOUTS.filter(x=>x.rowId===rowId && x.status==='paid' && (!emp||x.emp===emp) && (!kinds||kinds.indexOf(x.kind)>-1));
@@ -2402,14 +2413,14 @@ function ledgerPaidAll(r){ return payoutsFor(r.id,null,['rep','adjustment']).red
 function recordPayout(o){
   const e={id:uid('po'),kind:o.kind||'rep',emp:o.emp,rowId:o.rowId,period:o.period||'',
     basisValue:round2(o.basisValue),rate:+o.rate||0,share:+o.share||0,amount:round2(o.amount),
-    paidOn:o.paidOn||todayISO(),status:'paid',at:new Date().toISOString(),by:empWho(),
+    paidOn:o.paidOn||todayISO(),status:o.status||'paid',at:new Date().toISOString(),by:empWho(),
     ref:o.ref||'',note:o.note||'',adjOf:o.adjOf||'',reason:o.reason||'',reconstructed:!!o.reconstructed};
   PAYOUTS.push(e); save(K_PAYOUTS,PAYOUTS);
   if(typeof auditRecord==='function') auditRecord('payout',{id:e.id,kind:e.kind,emp:e.emp,rowId:e.rowId,period:e.period,basisValue:e.basisValue,rate:e.rate,share:e.share,amount:e.amount,paidOn:e.paidOn,adjOf:e.adjOf,reason:e.reason,reconstructed:e.reconstructed});
   return e;
 }
 function voidPayout(id,reason){
-  const e=PAYOUTS.find(x=>x.id===id); if(!e||e.status!=='paid') return;
+  const e=PAYOUTS.find(x=>x.id===id); if(!e||e.status==='void') return;
   e.status='void'; e.voidAt=new Date().toISOString(); e.voidBy=empWho(); e.voidReason=reason||'';
   save(K_PAYOUTS,PAYOUTS);
   if(typeof auditRecord==='function') auditRecord('payout-void',{id:e.id,emp:e.emp,rowId:e.rowId,amount:e.amount,reason:e.voidReason});
@@ -2493,6 +2504,73 @@ function payoutMigrate(){
   return rep;
 }
 function payoutReviewRows(){ return ROWS.filter(r=>r.paid && r.payoutReview && !rowHasLedger(r)); }
+
+/* ---- REVERSAL EVENTS ----
+   When a paid sale loses value (cancelled / refunded / credited / written off)
+   the original payouts stay exactly as they were. The difference between what
+   was paid and what the sale now earns — measured against the payee's OWN
+   frozen rate and share — is recorded as a separate, immutable chargeback
+   event: 'rep-chargeback' for each rep paid, 'manager-chargeback' for the
+   override. Status 'applied' lands in the effective month; 'forgiven' (outside
+   the recovery window) is recorded and shown, never deducted and never hidden.
+   No effective date → nothing is journaled; the row is held for review. */
+function chargebacksFor(rowId,emp){ return PAYOUTS.filter(x=>x.rowId===rowId && (!emp||x.emp===emp) && (x.kind==='rep-chargeback'||x.kind==='manager-chargeback') && x.status!=='void'); }
+function journalReversal(r,recon){
+  chargebacksFor(r.id).forEach(x=>voidPayout(x.id,'reversal re-recorded'));
+  r.cbJournaled=false;
+  if(!r.voidType || !r.paid || !rowHasLedger(r) || !r.voidDate) return [];
+  const period=String(r.voidDate).slice(0,7), inWin=clawbackWindowOpen(r), days=+(GLOBAL.policy&&GLOBAL.policy.clawbackDays)||0;
+  const why=(VOID_LABEL[r.voidType]||r.voidType)+(r.voidNote?' — '+r.voidNote:'');
+  const tail=inWin?'':' · outside the '+days+'-day recovery window — FORGIVEN, not recovered';
+  const out=[], firstBy={};
+  payoutsFor(r.id,null,['rep']).forEach(x=>{ if(!firstBy[x.emp]) firstBy[x.emp]=x; });
+  Object.keys(firstBy).forEach(emp=>{
+    const o=firstBy[emp], paid=payoutsFor(r.id,emp,['rep','adjustment']).reduce((a,x)=>a+x.amount,0), now=netValue(r)*o.rate/100*o.share, cb=round2(paid-now);
+    if(cb>0.004) out.push(recordPayout({kind:'rep-chargeback',emp,rowId:r.id,period,basisValue:voidAmount(r),rate:o.rate,share:o.share,amount:-cb,paidOn:r.voidDate,status:inWin?'applied':'forgiven',adjOf:o.id,reason:why+tail,reconstructed:!!recon}));
+  });
+  payoutsFor(r.id,null,['override']).forEach(o=>{
+    const now=netValue(r)*o.rate/100*o.share, cb=round2(o.amount-now);
+    if(cb>0.004) out.push(recordPayout({kind:'manager-chargeback',emp:o.emp,rowId:r.id,period,basisValue:voidAmount(r),rate:o.rate,share:o.share,amount:-cb,paidOn:r.voidDate,status:inWin?'applied':'forgiven',adjOf:o.id,reason:why+tail,reconstructed:!!recon}));
+  });
+  r.cbJournaled=true;
+  return out;
+}
+function unjournalReversal(r){ chargebacksFor(r.id).forEach(x=>voidPayout(x.id,'reversal undone')); r.cbJournaled=false; }
+// Reversals that cannot be journaled: a paid sale reversed with no effective date,
+// or a legacy paid sale whose payout is still waiting for confirmation.
+function reversalReviewRows(){ return ROWS.filter(r=>r.voidType && r.paid && (!r.voidDate || !rowHasLedger(r))); }
+function voidDateMissingRows(){ return ROWS.filter(r=>r.voidType && !r.voidDate); }
+// One-time: reversals recorded before chargeback events existed. Only rows with a
+// real effective date and a journaled payout qualify; nothing is invented.
+function reversalMigrate(){
+  let n=0, review=0;
+  ROWS.forEach(r=>{ if(!r.voidType||!r.paid) return;
+    if(!r.voidDate || !rowHasLedger(r)){ review++; return; }
+    if(r.cbJournaled || chargebacksFor(r.id).length) return;
+    journalReversal(r,true); n++; });
+  if(n){ save(K_ROWS,ROWS); if(typeof auditRecord==='function') auditRecord('chargeback-migrate',{journaled:n,review:review}); }
+  return {journaled:n,review:review};
+}
+
+/* ---- COMPENSATION POSITION (balance engine) ----
+   The ledger records what happened; this works out what remains due, month by
+   month, on the payable ('due') basis:
+     closing = opening + earned + override + adjustments − chargebacks − paid
+   A negative closing is carried into the next month's opening — it is never
+   dropped. Payable now = max(0, closing). */
+function nextYm(m){ const y=+m.slice(0,4), mm=+m.slice(5,7); return mm===12?(y+1)+'-01':y+'-'+String(mm+1).padStart(2,'0'); }
+function compPosition(p,ym){
+  const start=String(p.start||ym).slice(0,7); let m=start<ym?start:ym, opening=0, cur=null, guard=0;
+  while(m<=ym && guard++<600){
+    const C=commissionFor(p,m,'due',{noBalance:true});
+    const earned=C.newC+C.upC, ov=C.ovC, adj=C.adjTotal+C.ledgerAdj, cb=C.cbTotal, paid=C.ledgerRep+C.ledgerOv+C.ledgerAdj+C.legacyPaid;
+    const closing=round2(opening+earned+ov+adj-cb-paid);
+    cur={ym:m,opening:round2(opening),earned:round2(earned),override:round2(ov),adjust:round2(adj),chargebacks:round2(cb),paid:round2(paid),closing,payable:Math.max(0,closing),carry:Math.max(0,-closing)};
+    opening=closing; m=nextYm(m);
+  }
+  return cur;
+}
+function compHistory(p,toYm){ const out=[]; const start=String(p.start||toYm).slice(0,7); let m=start<toYm?start:toYm, guard=0; while(m<=toYm&&guard++<600){ out.push(compPosition(p,m)); m=nextYm(m); } return out; }
 // Admin confirms what a legacy row actually paid → becomes ledger truth.
 function payoutConfirm(rowId){
   const r=ROWS.find(x=>x.id===rowId); if(!r||!ADMIN) return;
@@ -2679,6 +2757,7 @@ function empMigrate(){
 empMigrate();
 // Payout ledger backfill for sales marked paid before the ledger existed (see payoutMigrate).
 payoutMigrate();
+reversalMigrate();
 
 /* ============================================================
    HELPERS
@@ -2867,13 +2946,6 @@ function valueLabel(r){
 }
 
 /* ---- reversals ---- */
-const VOID_TYPES=[
-  ['','—'],
-  ['cancelled','Cancelled before service'],
-  ['refunded','Refunded after service'],
-  ['writeoff','Written off — never collected']
-];
-const VOID_LABEL={}; VOID_TYPES.forEach(v=>VOID_LABEL[v[0]]=v[1]);
 
 // How much of the contract came back. A reversal with no amount means all of it.
 function voidAmount(r){
@@ -3631,7 +3703,9 @@ function renderPayoutLedgerCard(){
   const rev=payoutReviewRows(); const mig=(GLOBAL.payoutMig||[]).slice(-1)[0];
   let h='<div class="tiles small">'+tile('Payout entries',live.length,(voided?voided+' voided · ':'')+PAYOUTS.filter(x=>x.reconstructed).length+' reconstructed from legacy')+
     tile('Rep commission paid',money(sum('rep')),'all time, ledger')+tile('Corrections',money(sum('adjustment')),'net of + and −')+tile('Override paid',money(sum('override')),'managers')+
-    tile('Legacy to confirm',rev.length,rev.length?money(rev.reduce((a,r)=>a+(r.paidCalc?r.paidCalc.amount:0),0))+' frozen at migration':'nothing waiting',rev.length?'bad':'ok')+'</div>';
+    tile('Legacy to confirm',rev.length,rev.length?money(rev.reduce((a,r)=>a+(r.paidCalc?r.paidCalc.amount:0),0))+' frozen at migration':'nothing waiting',rev.length?'bad':'ok')+
+    tile('Chargebacks',money(-PAYOUTS.filter(x=>(x.kind==='rep-chargeback'||x.kind==='manager-chargeback')&&x.status==='applied').reduce((a,x)=>a+x.amount,0)),money(-PAYOUTS.filter(x=>x.status==='forgiven').reduce((a,x)=>a+x.amount,0))+' forgiven (outside window)')+
+    tile('Reversals to review',reversalReviewRows().length+' / '+voidDateMissingRows().length,'paid without chargeback · missing effective date',(reversalReviewRows().length||voidDateMissingRows().length)?'bad':'ok')+'</div>';
   if(mig) h+='<div class="note" style="margin-top:8px">Last migration '+esc(String(mig.on).replace('T',' ').slice(0,16))+': '+mig.confident+' paid sale'+(mig.confident===1?'':'s')+' journaled from frozen amounts ('+money(mig.amount-mig.reviewAmount)+'), '+mig.review+' held for review ('+money(mig.reviewAmount)+'), '+mig.emps+' people, '+mig.months+' periods.</div>';
   if(rev.length) h+='<div class="note" style="margin-top:6px">Confirm legacy payouts on the <a href="#" onclick="setTab(\'adj\');return false">Adjustments tab</a>.</div>';
   box.innerHTML=h;
@@ -4653,8 +4727,8 @@ function monthBounds(ym){
 }
 
 // Everything owed to one person for one month.
-function commissionFor(p, ym, basis){
-  basis = basis || 'due';
+function commissionFor(p, ym, basis, opts){
+  basis = basis || 'due'; opts=opts||{};
   const b=monthBounds(ym);
   // Commission runs from the plan date; base pay runs from the payroll date. They are
   // usually the same, but somebody can be on the books before their plan starts.
@@ -4694,18 +4768,24 @@ function commissionFor(p, ym, basis){
   const held = rows.filter(splitPending);
   const heldC = held.reduce((a,r)=>a+(r.paid?grossComm(r):rowComm(r))*shareFor(r,p.id),0);
 
-  // Override on anyone reporting to this person.
+  // Override on anyone reporting to this person — on NET value (a cancelled sale
+  // earns the manager nothing; a partial refund earns on what is left). Once the
+  // override was paid, the ledger entry is the figure; reversals produce a
+  // manager-chargeback event rather than a recalculation.
   const team=[];
   if(p.commOv>0){
     PEOPLE.filter(x=>x.mgr===p.id).forEach(x=>{
-      // Only count a report's sale if that report's own plan was live for it, so a single
-      // sale is treated the same way on both their report and the manager's.
       const lo = from < x.start ? x.start : from;
       if(lo > b.to) return;
-      const v=(basis==='due'
+      const rs=(basis==='due'
         ? ROWS.filter(r=>r.rep===x.id && r.date>=x.start && dueDate(r) && dueDate(r)>=b.from && dueDate(r)<=b.to)
-        : ROWS.filter(r=>r.rep===x.id && r.date>=lo && r.date<=b.to)).reduce((a,r)=>a+bookedValue(r),0);
-      if(v>0) team.push({name:x.name, booked:v, comm:v*p.commOv/100, since: lo>from?lo:null});
+        : ROWS.filter(r=>r.rep===x.id && r.date>=lo && r.date<=b.to));
+      let v=0, comm=0, paid=0;
+      rs.forEach(r=>{ const anyOv=payoutsFor(r.id,null,['override'])[0];
+        if(anyOv && anyOv.emp!==p.id) return;                     // override on this sale was already paid — to a different manager; nothing here
+        if(anyOv){ v+=anyOv.basisValue; comm+=anyOv.amount; paid+=anyOv.amount; }
+        else { const nv=netValue(r); v+=nv; comm+=nv*p.commOv/100; } });
+      if(v>0||comm>0) team.push({name:x.name, id:x.id, booked:v, comm:comm, paid:paid, since: lo>from?lo:null});
     });
   }
   const ovC=team.reduce((a,t)=>a+t.comm,0);
@@ -4719,35 +4799,38 @@ function commissionFor(p, ym, basis){
   const ledgerRep=ledger.filter(x=>x.kind==='rep').reduce((a,x)=>a+x.amount,0);
   const ledgerAdj=ledger.filter(x=>x.kind==='adjustment').reduce((a,x)=>a+x.amount,0);
   const ledgerOv=ledger.filter(x=>x.kind==='override').reduce((a,x)=>a+x.amount,0);
-  const ovPaidRows=new Set(PAYOUTS.filter(x=>x.status==='paid'&&x.kind==='override'&&x.emp===p.id).map(x=>x.rowId));
-  const ovUnpaid=team.length?PEOPLE.filter(x=>x.mgr===p.id).reduce((a,x)=>{
-      const lo = from < x.start ? x.start : from; if(lo > b.to) return a;
-      const rs=(basis==='due'
-        ? ROWS.filter(r=>r.rep===x.id && r.date>=x.start && dueDate(r) && dueDate(r)>=b.from && dueDate(r)<=b.to)
-        : ROWS.filter(r=>r.rep===x.id && r.date>=lo && r.date<=b.to)).filter(r=>!r.paid && !ovPaidRows.has(r.id));
-      return a+rs.reduce((q,r)=>q+bookedValue(r),0)*p.commOv/100; },0):0;
-  // Chargebacks land in the month the reversal happened, not the month of the sale.
-  // On a split sale each person is clawed back only for their share.
-  const chargebacks = ROWS.filter(r=>shareFor(r,p.id)>0 && r.voidType && r.voidDate &&
-      r.voidDate>=b.from && r.voidDate<=b.to && clawback(r)>0 && clawbackWindowOpen(r));
-  const cbTotal = chargebacks.reduce((a,r)=>a+clawback(r)*shareFor(r,p.id),0);
+  const ovUnpaid=team.reduce((a,t)=>a+(t.comm-t.paid),0);
+  // Paid sales that predate the ledger and are still awaiting confirmation count as paid at their frozen proposal.
+  const legacyPaid=rows.filter(r=>r.paid && !rowHasLedger(r)).reduce((a,r)=>a+perRowComm(r),0);
+  // Chargebacks are immutable ledger events (rep-chargeback / manager-chargeback) dated by
+  // the reversal's effective date. 'applied' ones deduct; 'forgiven' ones are shown, never hidden.
+  const cbAll=PAYOUTS.filter(x=>x.emp===p.id && (x.kind==='rep-chargeback'||x.kind==='manager-chargeback') && x.period===ym && x.status!=='void');
+  const chargebacks=cbAll.filter(x=>x.status==='applied'), forgiven=cbAll.filter(x=>x.status==='forgiven');
+  const cbTotal=-chargebacks.reduce((a,x)=>a+x.amount,0), forgivenTotal=-forgiven.reduce((a,x)=>a+x.amount,0);
+  const reversalReview=ROWS.filter(r=>r.voidType && r.paid && shareFor(r,p.id)>0 && (!r.voidDate || !rowHasLedger(r)));
   // Dispute adjustments land in the month they were resolved.
   const adjustments = DISPUTES.filter(d=>d.rep===p.id && d.status!=='open' && d.resolved &&
       d.resolved>=b.from && d.resolved<=b.to && (+d.adjust||0)!==0);
   const adjTotal = adjustments.reduce((a,d)=>a+(+d.adjust||0),0);
   const owed=unpaidC+ovUnpaid+adjTotal-cbTotal;
-  return {p, bounds:b, from, live, payFrom, payLive, basis, unpaid, rows, news, ups, newV, upV, newC, upC, team, ovC,
+  const R={p, bounds:b, from, live, payFrom, payLive, basis, unpaid, rows, news, ups, newV, upV, newC, upC, team, ovC,
           held, heldC,
-          chargebacks, cbTotal, adjustments, adjTotal,
+          chargebacks, cbTotal, forgiven, forgivenTotal, reversalReview, adjustments, adjTotal,
           commission:newC+upC+ovC,                 // CALCULATED for the period (paid + unpaid)
-          paidC, unpaidC, ovUnpaid,                // split of the above
+          paidC, unpaidC, ovUnpaid, legacyPaid,    // split of the above
           ledger, ledgerRep, ledgerAdj, ledgerOv,  // PAID — from the payout ledger, by period
           netCommission:newC+upC+ovC+adjTotal-cbTotal,
-          payable:Math.max(0,owed),                // PAYABLE — only what has NOT been paid yet
+          payable:Math.max(0,owed),                // this month alone; replaced by the balance engine below on the 'due' basis
           carry:Math.max(0,-owed),
           base, hrs, total:base+Math.max(0,owed),
           partial: b.from < p.start && live,
           payOnly: payLive && !live};
+  // Balance engine: on the payable basis, what remains due carries month to month.
+  if(basis==='due' && !opts.noBalance){
+    const pos=compPosition(p,ym);
+    R.position=pos; R.opening=pos.opening; R.closing=pos.closing; R.payable=pos.payable; R.carry=pos.carry; R.total=base+pos.payable;
+  }
+  return R;
 }
 
 function renderComm(){
@@ -4814,15 +4897,17 @@ function renderComm(){
                : !r.live ? '<div class="note" style="color:var(--red)">plan starts '+fmtY(r.p.start)+'</div>'
                : r.partial ? '<div class="note" style="color:var(--red)">part month from '+fmtY(r.from)+'</div>' : '';
     h+='<tr><td><b>'+esc(r.p.name)+'</b><div class="note">'+esc(r.p.title)+'</div>'+flag+'</td>'+
-      '<td class="num">'+r.news.length+'</td><td class="num">'+money(r.newV)+'</td>'+
-      '<td class="num">'+r.ups.length+'</td><td class="num">'+money(r.upV)+'</td>'+
+      '<td class="num">'+r.news.filter(x=>!isReversed(x)).length+'</td><td class="num">'+money(r.newV)+'</td>'+
+      '<td class="num">'+r.ups.filter(x=>!isReversed(x)).length+'</td><td class="num">'+money(r.upV)+'</td>'+
       '<td class="num">'+money(r.newC+r.upC)+(r.paidC?'<div class="note">'+money(r.paidC)+' of it paid</div>':'')+'</td>'+
       '<td class="num">'+(r.ovC?money(r.ovC):'—')+'</td>'+
       '<td class="num">'+((r.ledgerRep||r.ledgerAdj||r.ledgerOv)?money(r.ledgerRep+r.ledgerAdj+r.ledgerOv):'—')+(r.ledgerOv?'<div class="note">'+money(r.ledgerOv)+' override</div>':'')+'</td>'+
       '<td class="num'+(r.adjTotal<0?' neg':'')+'">'+(r.adjTotal?(r.adjTotal>0?'+':'−')+money(Math.abs(r.adjTotal)):'—')+'</td>'+
       '<td class="num'+(r.cbTotal?' neg':'')+'">'+(r.cbTotal?'−'+money(r.cbTotal):'—')+'</td>'+
       '<td class="num"><b>'+money(r.payable)+'</b>'+
-        (r.carry?'<div class="note neg">'+money(r.carry)+' carried</div>':'')+'</td>'+
+        (r.opening?'<div class="note">'+(r.opening<0?'−':'+')+money(Math.abs(r.opening))+' carried in</div>':'')+
+        (r.carry?'<div class="note neg">'+money(r.carry)+' carried forward</div>':'')+
+        (r.forgivenTotal?'<div class="note neg">'+money(r.forgivenTotal)+' forgiven</div>':'')+'</td>'+
       '<td class="num">'+money(r.base)+'</td>'+
       '<td class="num"><b>'+money(r.total)+'</b></td></tr>';
   });
@@ -4842,11 +4927,14 @@ function renderComm(){
          (grand.adj?' · '+(grand.adj>0?'+':'−')+money(Math.abs(grand.adj))+' adjustments':'')+
          (grand.cb?' · −'+money(grand.cb)+' chargebacks':'')+'</div></div>'+
      '<div><div class="k">Paid — ledger</div><div class="v">'+money(grand.ledger)+'</div><div class="n">actual payouts recorded for this period</div></div>'+
+     (basis==='due'?'<div><div class="k">Position</div><div class="v">'+money(reports.reduce((a,r)=>a+(r.closing||0),0))+'</div><div class="n">opening '+money(reports.reduce((a,r)=>a+(r.opening||0),0))+' + earned + override + adjustments − chargebacks − paid</div></div>':'')+
      '<div><div class="k">Base pay — guaranteed</div><div class="v">'+money(grand.base)+'</div>'+
        '<div class="n">payroll estimate, not a timecard</div></div>'+
      '<div class="tot"><div class="k">Total compensation</div><div class="v">'+money(grand.total)+'</div></div></div>';
   h+='</div>';
 
+  const rr=reports.reduce((a,r)=>a.concat(r.reversalReview||[]),[]);
+  if(rr.length) h+='<div class="warnbox" style="margin:10px 0"><b>'+rr.length+' reversed, paid sale'+(rr.length===1?'':'s')+' cannot be charged back yet</b> — no effective date, or the original payout is still unconfirmed: '+rr.map(x=>esc(x.client)).join(', ')+'. Fix on the Adjustments tab. Nothing has been forgiven.</div>';
   /* ---- per person ---- */
   if(detail){
     reports.forEach(r=>{
@@ -4911,29 +4999,26 @@ function renderComm(){
            '</tr></thead><tbody>';
         r.team.forEach(t=>{
           h+='<tr><td>'+esc(t.name)+(t.since?'<div class="note">from '+fmtY(t.since)+', when their plan starts</div>':'')+'</td>'+
-            '<td class="num">'+money2(t.booked)+'</td>'+
-            '<td class="num">'+num(p.commOv,1)+'%</td><td class="num mono">'+money2(t.comm)+'</td></tr>';
+            '<td class="num">'+money2(t.booked)+'<div class="note">net of reversals</div></td>'+
+            '<td class="num">'+num(p.commOv,1)+'%</td><td class="num mono">'+money2(t.comm)+(t.paid?'<div class="note">'+money2(t.paid)+' paid</div>':'')+'</td></tr>';
         });
         h+='<tr class="tot"><td colspan="3">Override total</td><td class="num">'+money2(r.ovC)+'</td>'+
            '</tr></tbody></table></div></div>';
       }
 
-      if(r.chargebacks.length){
+      if(r.chargebacks.length||r.forgiven.length){
         h+='<div class="repsec"><h4>Chargebacks</h4><div class="scroll"><table><thead><tr>'+
-           '<th>Reversed</th><th>Client</th><th>Reason</th><th class="num">Contract</th>'+
-           '<th class="num">Reversed</th><th class="num">Paid</th><th class="num">Now owed</th><th class="num">Recover</th>'+
+           '<th>Effective</th><th>Kind</th><th>Client</th><th>Reason</th><th class="num">Reversed value</th>'+
+           '<th class="num">Original payout</th><th class="num">Chargeback</th><th>Status</th>'+
            '</tr></thead><tbody>';
-        r.chargebacks.forEach(row=>{
-          h+='<tr><td class="mono">'+fmt(row.voidDate)+'</td><td>'+esc(row.client)+'</td>'+
-            '<td>'+esc(VOID_LABEL[row.voidType])+(row.voidNote?'<div class="note">'+esc(row.voidNote)+'</div>':'')+'</td>'+
-            '<td class="num mono">'+money2(bookedValue(row))+'</td>'+
-            '<td class="num mono neg">−'+money2(voidAmount(row))+'</td>'+
-            '<td class="num mono">'+money2(paidOut(row))+'</td>'+
-            '<td class="num mono">'+money2(rowComm(row))+'</td>'+
-            '<td class="num mono neg"><b>−'+money2(clawback(row))+'</b></td></tr>';
+        r.chargebacks.concat(r.forgiven).forEach(x=>{ const row=ROWS.find(q=>q.id===x.rowId), orig=PAYOUTS.find(q=>q.id===x.adjOf);
+          h+='<tr'+(x.status==='forgiven'?' style="opacity:.7"':'')+'><td class="mono">'+fmt(x.paidOn)+'</td><td>'+esc(PAYOUT_KINDS[x.kind]||x.kind)+'</td><td>'+esc(row?row.client:x.rowId)+'</td>'+
+            '<td>'+esc(x.reason||'')+'</td><td class="num mono neg">−'+money2(x.basisValue)+'</td>'+
+            '<td class="num mono">'+(orig?money2(orig.amount)+'<div class="note">'+fmt(orig.paidOn)+'</div>':'—')+'</td>'+
+            '<td class="num mono neg"><b>−'+money2(-x.amount)+'</b></td><td>'+(x.status==='applied'?'<span class="pill no">DEDUCTED</span>':'<span class="pill n">FORGIVEN · outside window</span>')+'</td></tr>';
         });
-        h+='<tr class="tot"><td colspan="7">Recovered this period</td>'+
-           '<td class="num neg">−'+money2(r.cbTotal)+'</td></tr></tbody></table></div></div>';
+        h+='<tr class="tot"><td colspan="6">Deducted this period'+(r.forgivenTotal?' · '+money2(r.forgivenTotal)+' forgiven (not deducted)':'')+'</td>'+
+           '<td class="num neg">−'+money2(r.cbTotal)+'</td><td></td></tr></tbody></table></div></div>';
       }
       if(r.adjustments.length){
         h+='<div class="repsec"><h4>Dispute adjustments</h4><div class="scroll"><table><thead><tr>'+
@@ -8613,22 +8698,45 @@ function addDispute(){
   const claim=document.getElementById('dClaim').value.trim();
   if(!rp||!raised){alert('Pick who raised it and the date.');return;}
   if(!claim){alert('Say what is being claimed — this is the record of the dispute.');return;}
-  DISPUTES.push({id:uid('d'),rep:rp,raised,rowId:document.getElementById('dRow').value||'',
+  const rowId=document.getElementById('dRow').value||'';
+  if(!rowId && !confirm('This dispute is NOT tied to a specific sale.\n\nThat is the exception, not the rule — a general dispute has no sale to measure against, so any adjustment on it will need an explicit admin override. Continue?')) return;
+  DISPUTES.push({id:uid('d'),rep:rp,raised,rowId,scope:rowId?'sale':'general',
     claim,amount:pNum(document.getElementById('dAmt').value),
-    status:'open',resolved:'',resolution:'',adjust:0});
+    status:'open',resolved:'',resolution:'',adjust:0,createdBy:empWho(),createdAt:new Date().toISOString()});
+  auditRecord('dispute-open',{rep:rp,rowId,amount:pNum(document.getElementById('dAmt').value),scope:rowId?'sale':'general'});
   save(K_DISP,DISPUTES);
   document.getElementById('dClaim').value=''; document.getElementById('dAmt').value='';
   render();
 }
+// What a dispute can move without an explicit override: the commission this
+// person was paid (or is owed) on the linked sale. A general dispute has none.
+function disputeExposure(d){
+  if(!d.rowId) return null;
+  const r=ROWS.find(x=>x.id===d.rowId); if(!r) return 0;
+  const paid=ledgerPaid(r,d.rep); return round2(paid>0?paid:commFor(r,d.rep));
+}
 function setDispute(id,field,val){
   const d=DISPUTES.find(x=>x.id===id); if(!d)return;
+  const before=JSON.stringify({s:d.status,a:d.adjust,r:d.resolved});
   if(field==='adjust'||field==='amount') d[field]=pNum(val); else d[field]=val;
   if(field==='status'){
-    if(val==='open'){ d.resolved=''; d.adjust=0; }
+    if(val==='open'){ d.resolved=''; d.adjust=0; delete d.override; }
     else if(!d.resolved) d.resolved=todayISO();
     if(val==='upheld' && !d.adjust) d.adjust=d.amount;
     if(val==='declined'||val==='withdrawn') d.adjust=0;
+    d.resolvedBy=val==='open'?'':empWho();
   }
+  if((field==='adjust'||field==='status') && d.adjust){
+    const exp=disputeExposure(d);
+    if(exp===null){
+      if(!d.override){ if(confirm('This dispute is not tied to a sale, so there is nothing to measure the adjustment against.\n\nApply '+money2(d.adjust)+' anyway as an explicit admin override?')){ d.override={by:empWho(),on:todayISO(),reason:prompt('Reason for the override (goes on the audit trail):','')||''}; } else { d.adjust=0; } }
+    } else if(Math.abs(d.adjust)>exp+0.004){
+      if(confirm('That adjustment ('+money2(d.adjust)+') exceeds the commission at stake on this sale ('+money2(exp)+').\n\nOK = apply it anyway as an explicit admin override (recorded).\nCancel = cap it at '+money2(exp)+'.')){ d.override={by:empWho(),on:todayISO(),reason:prompt('Reason for exceeding the exposure:','')||'',exposure:exp}; }
+      else { d.adjust=exp*Math.sign(d.adjust); delete d.override; }
+    } else delete d.override;
+  }
+  const after=JSON.stringify({s:d.status,a:d.adjust,r:d.resolved});
+  if(before!==after) auditRecord('dispute',{id:d.id,rep:d.rep,rowId:d.rowId||'',status:d.status,adjust:d.adjust,resolved:d.resolved,override:!!d.override});
   save(K_DISP,DISPUTES); render();
 }
 function delDispute(id){
@@ -8640,6 +8748,14 @@ function delDispute(id){
 function disputeAge(d){ return Math.round((dObj(todayISO())-dObj(d.raised))/86400000); }
 function respondBy(d){ return addDays(d.raised, Math.ceil((+(GLOBAL.policy.respondDays)||10)*7/5)); }
 
+function reversalSetDate(rowId){
+  const r=ROWS.find(x=>x.id===rowId); if(!r||!ADMIN) return;
+  const v=prompt('Effective date of the '+(VOID_LABEL[r.voidType]||'reversal')+' on '+r.client+' (the month any chargeback lands in):',''); if(v===null) return;
+  const d=pDate(v); if(!d){ alert('Could not read that date.'); return; }
+  logEdit(r,'voidDate',r.voidDate||'',d,'user'); r.voidDate=d;
+  const ev=journalReversal(r); save(K_ROWS,ROWS); render();
+  toast(ev.length?ev.length+' chargeback event'+(ev.length===1?'':'s')+' recorded':'Date set');
+}
 function payoutCorrect(rowId,emp,diff){
   const r=ROWS.find(x=>x.id===rowId), p=person(emp); if(!r||!p||!ADMIN) return;
   const v=prompt((diff>0?'Pay '+empShort(p)+' an additional ':'Record that '+empShort(p)+' was over-paid by ')+money2(Math.abs(diff))+' on '+r.client+'?\n\nEnter the correction amount (negative = claw back). Nothing on the original payout changes.',String(diff));
@@ -8738,32 +8854,32 @@ function renderAdj(){
 
   /* --- chargebacks --- */
   const ct=document.getElementById('cbTable');
-  const cb=ROWS.filter(r=>r.voidType).sort((a,b)=>(a.voidDate||a.date)<(b.voidDate||b.date)?1:-1);
-  if(!cb.length){
+  const evs=PAYOUTS.filter(x=>(x.kind==='rep-chargeback'||x.kind==='manager-chargeback')&&x.status!=='void').sort((a,b)=>a.paidOn<b.paidOn?1:-1);
+  const rev=reversalReviewRows(), noDate=voidDateMissingRows().filter(r=>!r.paid);
+  const unpaidRev=ROWS.filter(r=>r.voidType && !r.paid && r.voidDate);
+  if(!evs.length && !rev.length && !noDate.length && !unpaidRev.length){
     ct.innerHTML='<tbody><tr><td class="empty">No sales reversed. Mark one on the Pipeline tab if a job cancels or gets refunded.</td></tr></tbody>';
   } else {
-    let x='<thead><tr><th>Reversed</th><th>Who</th><th>Client</th><th>Reason</th>'+
-      '<th class="num">Contract</th><th class="num">Reversed</th><th class="num">Commission paid</th>'+
-      '<th class="num">Now owed</th><th class="num">Recover</th><th>Status</th></tr></thead><tbody>';
-    let tot=0;
-    cb.forEach(r=>{
-      const p=person(r.rep), back=clawback(r), openWin=clawbackWindowOpen(r);
-      if(openWin) tot+=back;
-      x+='<tr><td class="mono">'+(r.voidDate?fmt(r.voidDate):'—')+'</td>'+
-        '<td><span class="dot" style="background:'+pColor(r.rep)+'"></span>'+(p?empLink(p.id,empShort(p)):'—')+'</td>'+
-        '<td><b>'+esc(r.client)+'</b><div class="note">sold '+fmt(r.date)+'</div></td>'+
-        '<td>'+esc(VOID_LABEL[r.voidType]||r.voidType)+(r.voidNote?'<div class="note">'+esc(r.voidNote)+'</div>':'')+'</td>'+
-        '<td class="num mono">'+money2(bookedValue(r))+'</td>'+
-        '<td class="num mono neg">−'+money2(voidAmount(r))+'</td>'+
-        '<td class="num mono">'+(r.paid?money2(paidOut(r)):'<span class="note">not paid</span>')+'</td>'+
-        '<td class="num mono">'+money2(rowComm(r))+'</td>'+
-        '<td class="num mono'+(back>0?' neg':'')+'"><b>'+(back>0?'−'+money2(back):'—')+'</b></td>'+
-        '<td>'+(back<=0?'<span class="pill ok">NOTHING DUE</span>'
-              :!openWin?'<span class="pill n">WINDOW CLOSED</span>'
-              :'<span class="pill no">RECOVER</span>')+'</td></tr>';
-    });
-    x+='<tr class="tot"><td colspan="8">Recoverable within the '+(GLOBAL.policy.clawbackDays||180)+'-day window</td>'+
-       '<td class="num neg">−'+money2(tot)+'</td><td></td></tr>';
+    let x='<thead><tr><th>Effective</th><th>Who</th><th>Sale</th><th>Reason</th><th class="num">Reversed value</th><th class="num">Original payout</th><th class="num">Chargeback</th><th>Status</th></tr></thead><tbody>';
+    let ded=0, forg=0;
+    evs.forEach(e=>{ const r=ROWS.find(q=>q.id===e.rowId), p=person(e.emp), orig=PAYOUTS.find(q=>q.id===e.adjOf);
+      if(e.status==='applied') ded+=-e.amount; else forg+=-e.amount;
+      x+='<tr'+(e.status==='forgiven'?' style="opacity:.75"':'')+'><td class="mono">'+fmt(e.paidOn)+'</td>'+
+        '<td>'+(p?'<span class="dot" style="background:'+pColor(p.id)+'"></span>'+empLink(p.id,empShort(p)):esc(e.emp))+'<div class="note">'+esc(PAYOUT_KINDS[e.kind]||e.kind)+'</div></td>'+
+        '<td>'+(r?'<b>'+esc(r.client)+'</b><div class="note">sold '+fmt(r.date)+' · '+esc(VOID_LABEL[r.voidType]||r.voidType)+'</div>':esc(e.rowId))+'</td>'+
+        '<td class="note">'+esc(e.reason||'')+'</td><td class="num mono neg">−'+money2(e.basisValue)+'</td>'+
+        '<td class="num mono">'+(orig?money2(orig.amount)+'<div class="note">'+fmt(orig.paidOn)+' · '+num(orig.rate,1)+'% · '+Math.round(orig.share*100)+'%</div>':'—')+'</td>'+
+        '<td class="num mono neg"><b>−'+money2(-e.amount)+'</b></td>'+
+        '<td>'+(e.status==='applied'?'<span class="pill no">DEDUCTED '+esc(e.period)+'</span>':'<span class="pill n" title="'+esc(e.reason)+'">FORGIVEN · OUTSIDE RECOVERY WINDOW</span>')+(e.reconstructed?' <span class="pill n">legacy</span>':'')+'</td></tr>'; });
+    rev.forEach(r=>{ const p=person(r.rep);
+      x+='<tr><td class="mono">'+(r.voidDate?fmt(r.voidDate):'<span style="color:var(--red)">no date</span>')+'</td><td>'+(p?empLink(p.id,empShort(p)):'—')+'</td><td><b>'+esc(r.client)+'</b><div class="note">sold '+fmt(r.date)+' · '+esc(VOID_LABEL[r.voidType]||r.voidType)+' · commission paid '+fmt(r.paid)+'</div></td>'+
+        '<td class="note">'+(r.voidDate?'original payout not confirmed yet':'reversal has no effective date — chargeback cannot land')+'</td><td class="num mono neg">−'+money2(voidAmount(r))+'</td><td class="num mono">'+money2(paidOut(r))+'</td><td class="num mono">'+(clawback(r)>0?'−'+money2(clawback(r)):'—')+'</td>'+
+        '<td><span class="pill no">NEEDS REVIEW</span> '+(ADMIN?(r.voidDate?'':'<button class="sm p" onclick="reversalSetDate(\''+r.id+'\')">Set effective date</button>'):'')+'</td></tr>'; });
+    unpaidRev.forEach(r=>{ const p=person(r.rep);
+      x+='<tr style="opacity:.7"><td class="mono">'+fmt(r.voidDate)+'</td><td>'+(p?empLink(p.id,empShort(p)):'—')+'</td><td><b>'+esc(r.client)+'</b><div class="note">sold '+fmt(r.date)+' · '+esc(VOID_LABEL[r.voidType]||r.voidType)+'</div></td><td class="note">'+esc(r.voidNote||'')+'</td><td class="num mono neg">−'+money2(voidAmount(r))+'</td><td class="num mono"><span class="note">not paid</span></td><td class="num mono">—</td><td><span class="pill ok">NOTHING TO RECOVER</span><div class="note">commission recalculated on '+money2(netValue(r))+' net</div></td></tr>'; });
+    noDate.forEach(r=>{ const p=person(r.rep);
+      x+='<tr><td class="mono"><span style="color:var(--red)">no date</span></td><td>'+(p?empLink(p.id,empShort(p)):'—')+'</td><td><b>'+esc(r.client)+'</b><div class="note">'+esc(VOID_LABEL[r.voidType]||r.voidType)+' · not paid</div></td><td class="note">no effective date on the reversal</td><td class="num mono neg">−'+money2(voidAmount(r))+'</td><td class="num mono">—</td><td class="num mono">—</td><td>'+(ADMIN?'<button class="sm" onclick="reversalSetDate(\''+r.id+'\')">Set effective date</button>':'')+'</td></tr>'; });
+    x+='<tr class="tot"><td colspan="6">Deducted '+money2(ded)+(forg?' · forgiven (outside the '+(GLOBAL.policy.clawbackDays||180)+'-day window, not recovered) '+money2(forg):'')+'</td><td class="num neg">−'+money2(ded)+'</td><td></td></tr>';
     ct.innerHTML=x+'</tbody>';
   }
 
@@ -9089,37 +9205,40 @@ function renderPipe(){
 function reverseSale(id){
   const r=ROWS.find(x=>x.id===id); if(!r)return;
   if(r.voidType){
-    if(!confirm('Undo the reversal on '+r.client+'?\n\nThe sale goes back to full value and any chargeback against it disappears.'))return;
+    if(!confirm('Undo the reversal on '+r.client+'?\n\nThe sale goes back to full value. Any chargeback events recorded against it are voided (kept on the ledger, marked void).'))return;
     logEdit(r,'voidType',r.voidType,'');
+    unjournalReversal(r);
     r.voidType=''; r.voidDate=''; r.voidAmt=0; r.voidNote='';
     save(K_ROWS,ROWS); render(); return;
   }
   const kinds=VOID_TYPES.filter(v=>v[0]);
   const pick=prompt('Reverse '+r.client+' — '+money2(bookedValue(r))+'\n\n'+
-    kinds.map((v,i)=>(i+1)+'. '+v[1]).join('\n')+'\n\nEnter 1, 2 or 3:','1');
+    kinds.map((v,i)=>(i+1)+'. '+v[1]).join('\n')+'\n\nEnter 1–'+kinds.length+':','1');
   if(pick===null)return;
   const kind=kinds[parseInt(pick,10)-1];
   if(!kind){alert('Not one of the options — nothing changed.');return;}
   const amtRaw=prompt('How much of the '+money2(bookedValue(r))+' came back?\n\n'+
     'Leave it as-is for the whole thing, or enter a smaller number for a partial refund.', String(bookedValue(r)));
   if(amtRaw===null)return;
-  const amt=Math.min(bookedValue(r),Math.max(0,pNum(amtRaw)));
+  const asked=pNum(amtRaw);
+  if(asked>bookedValue(r)+0.004){ alert('That is more than the sale is worth ('+money2(bookedValue(r))+'). A reversal cannot exceed the sale — using the full amount.'); }
+  const amt=Math.min(bookedValue(r),Math.max(0,asked));
   if(!(amt>0)){alert('Nothing reversed.');return;}
-  const when=prompt('Date of the cancellation or refund:', todayISO());
+  let when=prompt('EFFECTIVE DATE of the '+kind[1].toLowerCase()+' (required — it decides which month any chargeback lands in):', todayISO());
   if(when===null)return;
+  if(!String(when).trim()){ when=todayISO(); alert('No date given — using today ('+fmtY(when)+'). Change it on the sale if that is wrong.'); }
   const d=pDate(when); if(!d){alert('Could not read that date — nothing changed.');return;}
   const why=prompt('Why? This shows on the chargeback record.','')||'';
 
   logEdit(r,'voidType','',kind[0]+' '+money2(amt));
   r.voidType=kind[0]; r.voidAmt=amt; r.voidDate=d; r.voidNote=why.trim();
+  const ev=journalReversal(r);
   save(K_ROWS,ROWS);
-  const back=clawback(r);
+  const back=-ev.reduce((a,x)=>a+x.amount,0);
   render();
   if(back>0){
-    alert('Reversed '+money2(amt)+'.\n\nCommission of '+money2(paidOut(r))+' was already paid and only '+
-      money2(rowComm(r))+' is now owed, so '+money2(back)+' is recoverable.\n\n'+
-      'It will appear as a deduction on the next commission report'+
-      (clawbackWindowOpen(r)?'.':' — but this is outside the '+(GLOBAL.policy.clawbackDays||180)+'-day chargeback window, so it is flagged and not deducted.'));
+    alert('Reversed '+money2(amt)+'.\n\n'+ev.map(x=>PAYOUT_KINDS[x.kind]+' '+money2(-x.amount)+' → '+empName(person(x.emp))+' ('+x.status.toUpperCase()+')').join('\n')+'\n\n'+
+      (clawbackWindowOpen(r)?'Recorded as chargeback events in '+d.slice(0,7)+'; the original payouts are untouched.':'Outside the '+(GLOBAL.policy.clawbackDays||180)+'-day recovery window: recorded as FORGIVEN — visible on the Adjustments tab and the report, not deducted.'));
   }
 }
 
@@ -11043,7 +11162,7 @@ function tpDelta(cur,prev,money$){
 function renderTeamPulse(){
   const box=document.getElementById('teamPulse'); if(!box) return;
   const W=tpWindows(), today=todayISO();
-  const live=ROWS.filter(r=>!r.voidType);
+  const live=ROWS.filter(r=>!isReversed(r));   // net: a partial refund stays at what is left; a full reversal is gone
   const inW=r=>r.date>=W.from && r.date<=W.to, inP=r=>r.date>=W.pfrom && r.date<=W.pto;
   const cur=live.filter(inW), prev=live.filter(inP);
   const val=rs=>rs.reduce((a,r)=>a+netValue(r),0);
@@ -11063,7 +11182,7 @@ function renderTeamPulse(){
   let h='<div class="segs pulse-per" style="margin-bottom:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="note" style="margin-right:4px">Team pulse</span>'+
     [['week','This week'],['month','This month'],['ytd','Year to date']].map(x=>'<button class="sm'+(TP_PERIOD===x[0]?' on':'')+'" onclick="tpSetPeriod(\''+x[0]+'\')">'+x[1]+'</button>').join('')+'</div>';
   h+='<div class="pulse">'+
-    '<div class="hero"><div><div class="lab">Booked '+esc(W.label)+'</div><div class="big">'+money(curV)+'</div><div class="delta">'+tpDelta(curV,prevV,true)+'</div></div>'+tpSpark(wk,'#8fce8f',300,34)+'<div class="lab" style="margin-top:4px;font-weight:500;text-transform:none;letter-spacing:0">weekly booked · last 12 weeks</div></div>'+
+    '<div class="hero"><div><div class="lab">Net booked '+esc(W.label)+'</div><div class="big">'+money(curV)+'</div><div class="delta">'+tpDelta(curV,prevV,true)+'</div></div>'+tpSpark(wk,'#8fce8f',300,34)+'<div class="lab" style="margin-top:4px;font-weight:500;text-transform:none;letter-spacing:0">weekly booked · last 12 weeks</div></div>'+
     tile('Sales '+W.label,cur.length,tpDelta(cur.length,prev.length,false))+
     tile('New vs upsell',newN+' / '+upN,cur.length?Math.round(newN/cur.length*100)+'% new clients':'—')+
     tile('Average sale',cur.length?money(curV/cur.length):'—',prev.length?'prior '+money(prevV/prev.length):'')+
@@ -11470,7 +11589,8 @@ function empKpis(D){
   K.commPaid=D.rows.reduce((a,r)=>a+(r.paid?paidOut(r)*sh(r):0),0);
   K.commPending=D.rows.reduce((a,r)=>a+((!r.paid&&!splitPending(r))?rowComm(r)*sh(r):0),0);
   K.held=D.rows.reduce((a,r)=>a+(splitPending(r)?rowComm(r)*sh(r):0),0);
-  K.clawback=D.rows.reduce((a,r)=>a+clawback(r)*sh(r),0);
+  K.clawback=-PAYOUTS.filter(x=>x.emp===p.id&&x.status==='applied'&&(x.kind==='rep-chargeback'||x.kind==='manager-chargeback')).reduce((a,x)=>a+x.amount,0);
+  K.forgiven=-PAYOUTS.filter(x=>x.emp===p.id&&x.status==='forgiven'&&(x.kind==='rep-chargeback'||x.kind==='manager-chargeback')).reduce((a,x)=>a+x.amount,0);
   K.cancelled=D.rows.filter(r=>r.voidType).length;
   K.invLines=D.inv.length; K.invBilled=D.inv.reduce((a,x)=>a+(+x.v||0),0);
   K.invYr=D.inv.filter(x=>String(x.d).slice(0,4)===yr).reduce((a,x)=>a+(+x.v||0),0);
@@ -11583,7 +11703,7 @@ function renderEmp(){
         epTile('Earned',money(K.commEarned),'calculated since plan start · net of reversals')+epTile('Pending',money(K.commPending),'sold, not yet invoiced')+
         epTile('Payable',money(K.commPayable),'invoiced, not yet paid')+epTile('Paid',money(K.commPaid),'from the payout ledger'+(K.commAdj?' · incl. '+(K.commAdj>0?'+':'−')+money(Math.abs(K.commAdj))+' corrections':'')+(K.legacyReview?' · '+K.legacyReview+' to confirm':''))+
         (K.held?epTile('Held on splits',money(K.held),'waiting for approvals'):'')+(K.ovPaid?epTile('Override paid',money(K.ovPaid),'manager override, from the ledger'):'')+
-        epTile('Chargebacks',money(K.clawback),'overpaid commission to recover')+(K.variance.length?epTile('Corrections needed',K.variance.length,'paid sales whose commission changed since payout','bad'):'')+'</div>';
+        epTile('Chargebacks',money(K.clawback),'deducted, from the ledger'+(K.forgiven?' · '+money(K.forgiven)+' forgiven':''))+(K.variance.length?epTile('Corrections needed',K.variance.length,'paid sales whose commission changed since payout','bad'):'')+'</div>';
     }
     if(K.accts||K.leads||K.invLines||K.outstanding) h+='<div class="tiles small" style="margin-top:12px">'+
       epTile('Accounts owned',K.accts.toLocaleString(),K.leads+' open leads · from the SA salesperson field')+
@@ -11656,6 +11776,24 @@ function renderEmp(){
       ' <button class="sm" onclick="closeEmp();setTab(\'comm\');const w=document.getElementById(\'cWho\');if(w){w.value=\''+p.id+'\';renderComm();}">Open in Commissions</button></div>';
     h+='<div class="tiles small" style="margin-bottom:10px">'+epTile('Earned',money(K.commEarned),'calculated')+epTile('Pending',money(K.commPending),'not invoiced')+epTile('Payable',money(K.commPayable),'invoiced, unpaid')+epTile('Paid',money(K.commPaid),'ledger')+(K.commAdj?epTile('Corrections',(K.commAdj>0?'+':'−')+money(Math.abs(K.commAdj)),'ledger adjustments'):'')+(K.held?epTile('Held',money(K.held),'splits awaiting approval'):'')+epTile('Chargebacks',money(K.clawback),'')+'</div>';
     const myL=PAYOUTS.filter(x=>x.emp===p.id).sort((a,b)=>a.paidOn<b.paidOn?1:a.paidOn>b.paidOn?-1:0);
+    // How each paid sale's number was reached: original + chargebacks + corrections = net
+    const bySale={}; myL.filter(x=>x.status!=='void').forEach(x=>{ (bySale[x.rowId]=bySale[x.rowId]||[]).push(x); });
+    const saleIds=Object.keys(bySale).filter(id=>bySale[id].length>1 || bySale[id].some(x=>x.kind!=='rep'&&x.kind!=='override'));
+    if(saleIds.length){
+      h+='<h3 style="margin:8px 0 6px">How each number was reached</h3><div class="scroll"><table><thead><tr><th>Sale</th><th>Events</th><th class="num">Net</th></tr></thead><tbody>';
+      saleIds.forEach(id=>{ const r=ROWS.find(q=>q.id===id), L=bySale[id]; const net=L.filter(x=>x.status!=='forgiven').reduce((a,x)=>a+x.amount,0);
+        h+='<tr><td><b>'+esc(r?r.client:id)+'</b>'+(r?'<div class="note">'+fmtY(r.date)+' · '+esc(r.service||'')+(r.voidType?' · '+esc(VOID_LABEL[r.voidType]||r.voidType):'')+'</div>':'')+'</td><td>'+
+          L.slice().sort((a,b)=>a.paidOn<b.paidOn?-1:1).map(x=>'<div>'+(x.status==='forgiven'?'<span class="pill n">FORGIVEN</span> ':'')+esc(PAYOUT_KINDS[x.kind]||x.kind)+': <span class="mono">'+(x.amount<0?'−':'+')+money2(Math.abs(x.amount))+'</span> <span class="note">'+fmt(x.paidOn)+(x.reason?' · '+esc(x.reason):'')+'</span></div>').join('')+'</td>'+
+          '<td class="num mono"><b>'+money2(net)+'</b></td></tr>'; });
+      h+='</tbody></table></div>';
+    }
+    // Month-by-month position: opening + earned + override + adjustments − chargebacks − paid = closing
+    const hist=compHistory(p,todayISO().slice(0,7)).filter(x=>x.earned||x.override||x.adjust||x.chargebacks||x.paid||x.opening);
+    if(hist.length){
+      h+='<h3 style="margin:16px 0 6px">Compensation position by month</h3><div class="note" style="margin-bottom:6px">Opening + earned + override + adjustments − chargebacks − paid = closing. A negative closing carries into the next month; it is never dropped.</div>';
+      h+='<div class="scroll"><table><thead><tr><th>Month</th><th class="num">Opening</th><th class="num">Earned</th><th class="num">Override</th><th class="num">Adjustments</th><th class="num">Chargebacks</th><th class="num">Paid</th><th class="num">Closing</th></tr></thead><tbody>'+
+        hist.slice().reverse().map(x=>'<tr><td><b>'+esc(x.ym)+'</b></td><td class="num mono">'+(x.opening?money2(x.opening):'—')+'</td><td class="num mono">'+money2(x.earned)+'</td><td class="num mono">'+(x.override?money2(x.override):'—')+'</td><td class="num mono">'+(x.adjust?money2(x.adjust):'—')+'</td><td class="num mono neg">'+(x.chargebacks?'−'+money2(x.chargebacks):'—')+'</td><td class="num mono">'+(x.paid?money2(x.paid):'—')+'</td><td class="num mono"><b>'+money2(x.closing)+'</b>'+(x.carry?'<div class="note neg">carried forward</div>':'')+'</td></tr>').join('')+'</tbody></table></div>';
+    }
     if(myL.length||K.variance.length){
       h+='<h3 style="margin:8px 0 6px">Payout ledger</h3><div class="note" style="margin-bottom:6px">Every dollar actually handed to '+esc(empShort(p))+' — permanent. Corrections are separate entries that point at the original; nothing here is ever rewritten.</div>';
       h+='<div class="scroll"><table><thead><tr><th>Paid</th><th>Period</th><th>Kind</th><th>Sale</th><th class="num">Basis</th><th class="num">Rate</th><th class="num">Share</th><th class="num">Amount</th><th>Recorded by</th><th></th></tr></thead><tbody>';
@@ -11994,7 +12132,7 @@ function cloudApply(d){
   const A=(v,f)=>Array.isArray(v)?v:f;
   PEOPLE=A(d.people,PEOPLE); put(K_PEOPLE,PEOPLE);
   ROWS=A(d.rows,ROWS); put(K_ROWS,ROWS);
-  empMigrate(); EMP_IDX=null; payoutMigrate();
+  empMigrate(); EMP_IDX=null; payoutMigrate(); reversalMigrate();
   HOURS=A(d.hours,HOURS); put(K_HOURS,HOURS);
   DISPUTES=A(d.disputes,DISPUTES); put(K_DISP,DISPUTES);
   CLIENTS=A(d.clients,CLIENTS); put(K_CLIENTS,CLIENTS);

@@ -86,8 +86,10 @@
       // T4 cancelled AFTER payment — sale month keeps gross, reversal month claws it back
       ROWS=[mkRow({type:'new', value:1000, invoiced:'2026-06-10', paid:'2026-06-20', paidAmt:100,
                    voidType:'refunded', voidDate:'2026-07-10', voidAmt:1000})];
+      if(typeof PAYOUTS!=='undefined'){ PAYOUTS=[]; payoutMigrate(); reversalMigrate(); }   // as boot does for a legacy paid+reversed row
       check('C1.T4 paid-then-reversed: sale month = $100', 100, commissionFor(P,'2026-06','sold').commission);
       check('C1.T4 paid-then-reversed: reversal month clawback = $100', 100, commissionFor(P,'2026-07','sold').cbTotal);
+      if(typeof PAYOUTS!=='undefined') PAYOUTS=[];
 
       // T5 partial reversal, unpaid — net $600 → $60  (BUG: currently $100)
       ROWS=[mkRow({type:'new', value:1000, voidType:'refunded', voidDate:'2026-06-15', voidAmt:400})];
@@ -766,6 +768,184 @@
         window.alert=alertL; window.toast=toastL; PAYOUTS=[];
       } else {
         results.push({name:'payout ledger exists (journalPaid/PAYOUTS)', expected:true, actual:false, pass:false});
+      }
+
+
+      /* ---------- STAGE 2 — REVERSALS, CHARGEBACKS, OVERRIDE, DISPUTES, CARRY ---------- */
+      if(typeof journalReversal==='function' && typeof compPosition==='function'){
+        var alertR=window.alert, toastR=window.toast, confR=window.confirm, promptR=window.prompt;
+        window.alert=function(){}; window.toast=function(){}; window.confirm=function(){return true;}; window.prompt=function(){return 'test';};
+        var RA=mkPerson({id:'RA', name:'Ann Rep'}); RA.first='Ann'; RA.last='Rep'; RA.roles=['sales']; RA.start='2026-01-01'; RA.commNew=5; RA.commUp=5; RA.mgr='RM';
+        var RB=mkPerson({id:'RB', name:'Bob Rep'}); RB.first='Bob'; RB.last='Rep'; RB.roles=['sales']; RB.start='2026-01-01'; RB.commNew=5; RB.commUp=5;
+        var RM=mkPerson({id:'RM', name:'Mia Manager'}); RM.first='Mia'; RM.last='Manager'; RM.roles=['manager']; RM.start='2026-01-01'; RM.commOv=5; RM.commNew=0; RM.commUp=0;
+        var RN=mkPerson({id:'RN', name:'Ned Manager'}); RN.first='Ned'; RN.last='Manager'; RN.roles=['manager']; RN.start='2026-01-01'; RN.commOv=5; RN.commNew=0; RN.commUp=0;
+        PEOPLE=[RA,RB,RM,RN]; ROWS=[]; PAYOUTS=[]; DISPUTES=[]; EMP_IDX=null; GLOBAL.payLag=30; GLOBAL.policy.clawbackDays=180;
+        var fresh=function(o){ var r=mkRow(Object.assign({rep:'RA', type:'new', value:1000, date:'2026-06-05', invoiced:'2026-06-10', client:'Rev Co'},o||{})); freezeDueLag(r); return r; };
+        var pay=function(r,on){ r.paid=on||'2026-07-15'; journalPaid(r,r.paid); };
+        var rev=function(r,kind,amt,on){ r.voidType=kind; r.voidAmt=amt; r.voidDate=on===undefined?'2026-08-05':on; return journalReversal(r); };
+        var C=function(p,m,b,o){ return commissionFor(p,m,b||'sold',o); };
+        var ev=function(rowId,emp,kind){ return PAYOUTS.filter(function(x){return x.rowId===rowId&&x.emp===emp&&x.kind===kind&&x.status!=='void';}); };
+        var sum=function(L){ return L.reduce(function(a,x){return a+x.amount;},0); };
+
+        // 1. normal sale
+        var r1=fresh(); ROWS=[r1];
+        check('R1 normal: rep 50', 50, C(RA,'2026-06').commission);
+        check('R1 normal: manager override 50 (5% of net 1000)', 50, C(RM,'2026-06').ovC);
+        // 2. cancelled before invoiced
+        var r2=fresh({invoiced:''}); r2.voidType='cancelled'; r2.voidAmt=1000; r2.voidDate='2026-06-08'; ROWS=[r2];
+        check('R2 cancelled before invoice: rep 0', 0, C(RA,'2026-06').commission); check('R2 ... manager 0', 0, C(RM,'2026-06').ovC); check('R2 ... production 0', 0, analyzeFor('RA').totalV);
+        // 3. cancelled after invoiced (unpaid)
+        var r3=fresh(); r3.voidType='cancelled'; r3.voidAmt=1000; r3.voidDate='2026-06-20'; ROWS=[r3];
+        check('R3 cancelled after invoice: due-month payable 0', 0, C(RA,'2026-07','due').payable); check('R3 ... manager 0', 0, C(RM,'2026-07','due').ovC);
+        check('R3 ... no ledger events (nothing was paid)', 0, PAYOUTS.length);
+        // 4/5. cancelled before vs after commission paid
+        var r5=fresh(); ROWS=[r5]; pay(r5);
+        var paidBefore=JSON.stringify(PAYOUTS.filter(function(x){return x.kind==='rep';}));
+        rev(r5,'cancelled',1000,'2026-08-05');
+        check('R5 cancelled after paid: original rep payout untouched', paidBefore, JSON.stringify(PAYOUTS.filter(function(x){return x.kind==='rep';})));
+        check('R5 rep chargeback event −50 in Aug', -50, sum(ev(r5.id,'RA','rep-chargeback')));
+        check('R5 manager chargeback event −50 in Aug', -50, sum(ev(r5.id,'RM','manager-chargeback')));
+        check('R5 Aug report: chargebacks 50 (rep)', 50, C(RA,'2026-08','due').cbTotal);
+        check('R5 Aug report: manager chargebacks 50', 50, C(RM,'2026-08','due').cbTotal);
+        check('R5 June report still shows the 50 paid', 50, C(RA,'2026-06').commission);
+        check('R5 net compensation on the sale = 0', 0, sum(ev(r5.id,'RA','rep'))+sum(ev(r5.id,'RA','rep-chargeback')));
+        check('R5 production 0 after cancellation', 0, analyzeFor('RA').totalV);
+        // 6. partial cancellation before payment
+        var r6=fresh({value:10000}); r6.voidType='cancelled'; r6.voidAmt=5000; r6.voidDate='2026-06-20'; ROWS=[r6];
+        check('R6 50% cancelled unpaid: rep 250', 250, C(RA,'2026-06').commission); check('R6 ... manager 250', 250, C(RM,'2026-06').ovC);
+        // 7. partial cancellation after payment — the audit's $10,000 / $2,000 example
+        var r7=fresh({value:10000}); ROWS=[r7]; pay(r7); PAYOUTS=PAYOUTS.filter(function(x){return x.rowId===r7.id;});
+        check('R7 paid 500', 500, sum(ev(r7.id,'RA','rep')));
+        rev(r7,'refunded',2000,'2026-08-10');
+        check('R7 original payout still +500', 500, sum(ev(r7.id,'RA','rep')));
+        check('R7 chargeback −100', -100, sum(ev(r7.id,'RA','rep-chargeback')));
+        check('R7 net compensation 400', 400, sum(ev(r7.id,'RA','rep'))+sum(ev(r7.id,'RA','rep-chargeback')));
+        check('R7 manager: +500 paid, −100 chargeback', '500/-100', sum(ev(r7.id,'RM','override'))+'/'+sum(ev(r7.id,'RM','manager-chargeback')));
+        check('R7 chargeback basis value recorded (2000)', 2000, ev(r7.id,'RA','rep-chargeback')[0].basisValue);
+        check('R7 chargeback points at the original payout', ev(r7.id,'RA','rep')[0].id, ev(r7.id,'RA','rep-chargeback')[0].adjOf);
+        // 8/9/10/11. full refund, partial refund, credit, write-off — one rule, type preserved
+        ['refunded','credited','writeoff','cancelled'].forEach(function(k){
+          var rk=fresh({value:4000}); ROWS=[rk]; rk.voidType=k; rk.voidAmt=4000; rk.voidDate='2026-06-20';
+          check('R8-11 '+k+' full: net 0 / rep 0 / manager 0', '0/0/0', netValue(rk)+'/'+C(RA,'2026-06').commission+'/'+C(RM,'2026-06').ovC);
+          rk.voidAmt=1000;
+          check('R8-11 '+k+' partial 1000: net 3000 / rep 150 / manager 150', '3000/150/150', netValue(rk)+'/'+C(RA,'2026-06').commission+'/'+C(RM,'2026-06').ovC);
+          check('R8-11 '+k+' type preserved for history', k, rk.voidType);
+        });
+        // 12. blank reversal date on a PAID sale: never silently dropped
+        PAYOUTS=[]; var r12=fresh(); ROWS=[r12]; pay(r12); var e12=rev(r12,'cancelled',1000,'');
+        check('R12 blank date: no chargeback event journaled (nothing to date it by)', 0, e12.length);
+        checkTrue('R12 blank date: sale is in the review list', reversalReviewRows().indexOf(r12)>-1, reversalReviewRows().length);
+        checkTrue('R12 blank date: report flags it', C(RA,'2026-08','due').reversalReview.length===1, 'ok');
+        r12.voidDate='2026-08-05'; journalReversal(r12);
+        check('R12 date set later → chargeback lands', -50, sum(ev(r12.id,'RA','rep-chargeback')));
+        check('R12 review list clears', 0, reversalReviewRows().length);
+        // 13. reversal greater than the sale value: clamped, net never negative
+        var r13=fresh({value:10000}); ROWS=[r13]; [500,2500,9999,10000,25000].forEach(function(a){ r13.voidType='refunded'; r13.voidAmt=a; r13.voidDate='2026-06-20';
+          check('R13 reverse '+a+': net', Math.max(0,10000-Math.min(a,10000)), netValue(r13)); });
+        check('R13 over-reversal: rep commission 0, never negative', 0, C(RA,'2026-06').commission);
+        check('R13 over-reversal: manager 0, never negative', 0, C(RM,'2026-06').ovC);
+        // 14/15. rep + manager chargebacks are separate kinds with separate recipients
+        PAYOUTS=[]; var r14=fresh({value:2000}); ROWS=[r14]; pay(r14); rev(r14,'refunded',1000,'2026-08-05');
+        check('R14 rep chargeback kind/amount', 'rep-chargeback/-50', ev(r14.id,'RA','rep-chargeback')[0].kind+'/'+sum(ev(r14.id,'RA','rep-chargeback')));
+        check('R15 manager chargeback kind/amount', 'manager-chargeback/-50', ev(r14.id,'RM','manager-chargeback')[0].kind+'/'+sum(ev(r14.id,'RM','manager-chargeback')));
+        // 16/17. override cancelled before vs after payment
+        PAYOUTS=[]; var r16=fresh(); ROWS=[r16]; r16.voidType='cancelled'; r16.voidAmt=1000; r16.voidDate='2026-06-20';
+        check('R16 override cancelled before payment: 0 payable, no events', '0/0', C(RM,'2026-07','due').ovC+'/'+PAYOUTS.length);
+        var r17=fresh(); ROWS=[r17]; pay(r17); rev(r17,'cancelled',1000,'2026-08-05');
+        check('R17 override paid then cancelled: +50 stays, −50 chargeback, net 0', '50/-50', sum(ev(r17.id,'RM','override'))+'/'+sum(ev(r17.id,'RM','manager-chargeback')));
+        check('R17 Mia Aug position: chargeback 50', 50, C(RM,'2026-08','due').cbTotal);
+        // 18. dispute linked to a sale, within exposure
+        PAYOUTS=[]; var r18=fresh({value:2000}); ROWS=[r18]; pay(r18);
+        DISPUTES=[{id:'d18',rep:'RA',raised:'2026-08-01',rowId:r18.id,scope:'sale',claim:'short',amount:30,status:'open',resolved:'',resolution:'',adjust:0}];
+        setDispute('d18','status','upheld');
+        check('R18 dispute within exposure (paid 100): adjust 30 lands', 30, DISPUTES[0].adjust);
+        check('R18 dispute effective date stamped', todayISO(), DISPUTES[0].resolved);
+        checkTrue('R18 dispute resolvedBy recorded', !!DISPUTES[0].resolvedBy, DISPUTES[0].resolvedBy);
+        check('R18 report adjustment this month', 30, C(RA,todayISO().slice(0,7),'due').adjTotal);
+        // 19. dispute exceeding exposure: capped unless explicit override
+        window.confirm=function(){return false;};   // decline the override
+        setDispute('d18','adjust',999);
+        check('R19 over-exposure adjust capped to 100 without override', 100, DISPUTES[0].adjust);
+        checkTrue('R19 no override flag', !DISPUTES[0].override, 'ok');
+        window.confirm=function(){return true;};    // accept the override
+        setDispute('d18','adjust',999);
+        check('R19 explicit override applies 999', 999, DISPUTES[0].adjust);
+        checkTrue('R19 override recorded with who/when', !!(DISPUTES[0].override&&DISPUTES[0].override.by), JSON.stringify(DISPUTES[0].override));
+        DISPUTES=[];
+        // 20. reversal outside the recovery window: FORGIVEN, visible, not deducted
+        PAYOUTS=[]; RA.start='2025-01-01'; var r20=fresh({date:'2025-06-05',invoiced:'2025-06-10'}); ROWS=[r20]; pay(r20,'2025-07-15'); var e20=rev(r20,'cancelled',1000,'2026-06-01'); RA.start='2026-01-01';
+        check('R20 forgiven event recorded', 'forgiven', e20[0]&&e20[0].status);
+        check('R20 forgiven amount −50 visible on the event', -50, e20[0]&&e20[0].amount);
+        checkTrue('R20 reason says outside window', /outside the 180-day recovery window/.test(e20[0]&&e20[0].reason), e20[0]&&e20[0].reason);
+        check('R20 not deducted (cbTotal 0)', 0, C(RA,'2026-06','due').cbTotal);
+        check('R20 shown as forgiven on the report', 50, C(RA,'2026-06','due').forgivenTotal);
+        // 21. negative carry into the next month
+        PAYOUTS=[]; var r21=fresh({value:6000,date:'2026-05-05',invoiced:'2026-05-10'}); ROWS=[r21]; pay(r21,'2026-06-12'); rev(r21,'cancelled',6000,'2026-07-03');
+        var r21b=fresh({value:20000,date:'2026-07-01',invoiced:'2026-07-05'}); ROWS=[r21,r21b];
+        var J=C(RA,'2026-07','due'), A=C(RA,'2026-08','due');
+        check('R21 July: chargeback 300, earned 0, closing −300', -300, J.closing);
+        check('R21 July payable 0, carry 300', '0/300', J.payable+'/'+J.carry);
+        check('R21 Aug: opening −300', -300, A.opening);
+        check('R21 Aug: earned 1000 (20000 × 5%)', 1000, A.earned||A.newC+A.upC);
+        check('R21 Aug payable = 700', 700, A.payable);
+        check('R21 position identity: closing = opening + earned + override + adj − cb − paid', A.position.closing, A.position.opening+A.position.earned+A.position.override+A.position.adjust-A.position.chargebacks-A.position.paid);
+        // 22. employee reassigned after reversal — events stay with the original payee
+        PAYOUTS=[]; var r22=fresh(); ROWS=[r22]; pay(r22); rev(r22,'refunded',500,'2026-08-05'); r22.rep='RB';
+        check('R22 Ann keeps +50 / −25', '50/-25', sum(ev(r22.id,'RA','rep'))+'/'+sum(ev(r22.id,'RA','rep-chargeback')));
+        check('R22 Bob has no events', 0, PAYOUTS.filter(function(x){return x.emp==='RB';}).length);
+        check('R22 Ann Aug chargeback 25', 25, C(RA,'2026-08','due').cbTotal);
+        r22.rep='RA';
+        // 23. manager changed after reversal — Mia keeps her +50/−25; Ned gets nothing
+        RA.mgr='RN';
+        check('R23 Mia keeps override +50 and chargeback −25', '50/-25', sum(ev(r22.id,'RM','override'))+'/'+sum(ev(r22.id,'RM','manager-chargeback')));
+        check('R23 Ned has no events', 0, PAYOUTS.filter(function(x){return x.emp==='RN';}).length);
+        check('R23 Ned current override on that sale (already journaled to Mia): 0', 0, C(RN,'2026-07','due').ovC);
+        RA.mgr='RM';
+        // 24. employee page net compensation explains the number
+        var KA=empKpis(empData('RA'));
+        check('R24 page paid 50 (ledger)', 50, KA.commPaid); check('R24 page chargebacks 25 (events)', 25, KA.clawback);
+        check('R24 net = paid − chargebacks = 25', 25, KA.commPaid-KA.clawback);
+        // 25/26. report and scoreboard reconcile on net
+        var r25=fresh({value:8000,date:'2026-06-05',invoiced:''}); r25.voidType='refunded'; r25.voidAmt=2000; r25.voidDate='2026-06-20'; ROWS=[r25]; PAYOUTS=[];
+        check('R25 report June commission on net 6000', 300, C(RA,'2026-06').commission);
+        check('R26 scoreboard production net 6000', 6000, analyzeFor('RA').totalV);
+        check('R26 scoreboard commission = report', C(RA,'2026-06').commission, analyzeFor('RA').commission);
+        check('R26 employee page YTD net', 6000, empKpis(empData('RA')).ytd.v);
+        // M2 rerun — team pulse counts partial refunds at net
+        TP_PERIOD='ytd'; var pulseNet=(function(){ var live=ROWS.filter(function(r){return !isReversed(r);}); return live.reduce(function(a,r){return a+netValue(r);},0); })();
+        check('M2 pulse net booked counts the partial refund at 6000', 6000, pulseNet);
+        // M3 rerun — report counts exclude fully reversed sales
+        var r27=fresh({client:'Gone'}); r27.voidType='cancelled'; r27.voidAmt=1000; r27.voidDate='2026-06-20'; ROWS=[r25,r27];
+        check('M3 report NEW count excludes the cancelled sale', 1, C(RA,'2026-06').news.filter(function(x){return !isReversed(x);}).length);
+        // M5 rerun — credit exists, all four types identical
+        checkTrue('M5 credited is an accepted reversal type', VOID_TYPES.some(function(v){return v[0]==='credited';}), 'ok');
+        // H6 rerun — dispute cap / link
+        DISPUTES=[{id:'h6',rep:'RA',raised:'2026-08-01',rowId:'',scope:'general',claim:'x',amount:5000,status:'open',resolved:'',resolution:'',adjust:0}];
+        window.confirm=function(){return false;}; setDispute('h6','status','upheld');
+        check('H6 general dispute without override → 0 applied', 0, DISPUTES[0].adjust);
+        window.confirm=function(){return true;}; DISPUTES=[];
+        // legacy migration of an old paid+reversed row
+        PAYOUTS=[]; var g=fresh({client:'Old Rev', paid:'2026-03-15', paidAmt:50}); g.voidType='refunded'; g.voidAmt=500; g.voidDate='2026-04-10'; ROWS=[g];
+        payoutMigrate(); var mg=reversalMigrate();
+        check('R-mig legacy paid+reversed row: 1 chargeback journaled', 1, mg.journaled);
+        check('R-mig chargeback −25 dated by the existing void date', '-25/2026-04', sum(ev(g.id,'RA','rep-chargeback'))+'/'+ev(g.id,'RA','rep-chargeback')[0].period);
+        checkTrue('R-mig marked reconstructed', ev(g.id,'RA','rep-chargeback')[0].reconstructed===true, 'ok');
+        var g2=fresh({client:'Old NoDate', paid:'2026-03-15', paidAmt:50}); g2.voidType='refunded'; g2.voidAmt=500; g2.voidDate=''; ROWS=[g,g2];
+        var mg2=reversalMigrate();
+        check('R-mig blank-date legacy row: held for review, nothing invented', '0/1', mg2.journaled+'/'+mg2.review);
+        // undo a reversal voids its events (kept)
+        PAYOUTS=[]; var r28=fresh(); ROWS=[r28]; pay(r28); rev(r28,'cancelled',1000,'2026-08-05'); unjournalReversal(r28);
+        check('R-undo chargeback events voided, not deleted', 'void', PAYOUTS.filter(function(x){return x.kind==='rep-chargeback';})[0].status);
+        check('R-undo nothing deducted', 0, C(RA,'2026-08','due').cbTotal);
+        // every dollar from immutable events: rep + manager
+        PAYOUTS=[]; var r29=fresh({value:10000}); ROWS=[r29]; pay(r29); rev(r29,'refunded',2000,'2026-08-10'); recordCorrection(r29.id,'RA',25,'goodwill');
+        var evts=PAYOUTS.filter(function(x){return x.status!=='void';});
+        check('R-recon Ann from events: +500 −100 +25 = 425', 425, evts.filter(function(x){return x.emp==='RA'&&x.status!=='forgiven';}).reduce(function(a,x){return a+x.amount;},0));
+        check('R-recon Mia from events: +500 −100 = 400', 400, evts.filter(function(x){return x.emp==='RM';}).reduce(function(a,x){return a+x.amount;},0));
+        check('R-recon Ann page paid − chargebacks = 425', 425, empKpis(empData('RA')).commPaid-empKpis(empData('RA')).clawback);
+        window.alert=alertR; window.toast=toastR; window.confirm=confR; window.prompt=promptR; PAYOUTS=[]; DISPUTES=[]; TP_PERIOD='month';
+      } else {
+        results.push({name:'reversal engine exists (journalReversal/compPosition)', expected:true, actual:false, pass:false});
       }
 
       /* ---------- C2: tombstones stop deleted records resurrecting ---------- */
