@@ -2472,7 +2472,8 @@ const VOID_LABEL={}; VOID_TYPES.forEach(v=>VOID_LABEL[v[0]]=v[1]);
    ============================================================ */
 const K_PAYOUTS='alp_payouts_v1';
 let PAYOUTS=load(K_PAYOUTS,[]);
-const PAYOUT_KINDS={rep:'Rep commission',override:'Manager override',adjustment:'Correction','rep-chargeback':'Rep chargeback','manager-chargeback':'Manager chargeback'};
+const PAYOUT_KINDS={rep:'Rep commission',override:'Manager override',adjustment:'Correction','override-adjustment':'Override correction','rep-chargeback':'Rep chargeback','manager-chargeback':'Manager chargeback'};
+const OV_KINDS=['override','override-adjustment'];
 function round2(n){ return Math.round((+n||0)*100)/100; }
 function payoutsFor(rowId,emp,kinds){
   return PAYOUTS.filter(x=>x.rowId===rowId && x.status==='paid' && (!emp||x.emp===emp) && (!kinds||kinds.indexOf(x.kind)>-1));
@@ -2504,9 +2505,13 @@ function journalPaid(r,paidOn){
   if(r.commRate==null||r.commRate===''||!isFinite(+r.commRate)) r.commRate=rate;   // rate frozen on the row from here on
   const shares=rowShares(r);
   shares.forEach(sx=>recordPayout({kind:'rep',emp:sx.rep,rowId:r.id,period,basisValue:basis,rate,share:sx.frac,amount:basis*rate/100*sx.frac,paidOn}));
+  // Manager override is earned on the NET value — a sale already cancelled or
+  // partly refunded when it is paid earns the manager only on what is left.
+  // (A later reversal is handled by journalReversal as a manager-chargeback.)
   const p=person(r.rep), m=(p&&p.mgr)?person(p.mgr):null;
-  if(m && +m.commOv>0 && r.date>=(p.start||'0000'))
-    recordPayout({kind:'override',emp:m.id,rowId:r.id,period,basisValue:bookedValue(r),rate:+m.commOv,share:1,amount:bookedValue(r)*m.commOv/100,paidOn,note:'team override on '+empName(p)+'’s sale'});
+  const ovBasis=netValue(r), ovAmt=round2(ovBasis*((m&&+m.commOv)||0)/100);
+  if(m && +m.commOv>0 && r.date>=(p.start||'0000') && ovAmt>0.004)
+    recordPayout({kind:'override',emp:m.id,rowId:r.id,period,basisValue:ovBasis,rate:+m.commOv,share:1,amount:ovAmt,paidOn,note:'team override on '+empName(p)+'’s sale'});
   r.paidAmt=round2(basis*rate/100);
   r.paidTo=shares.map(sx=>({emp:sx.rep,share:sx.frac,amount:round2(basis*rate/100*sx.frac)}));
   r.paidBasis={value:basis,rate:rate,period:period,on:paidOn};
@@ -2528,17 +2533,31 @@ function commFor(r,pid){
 }
 // A paid sale whose current commission no longer matches what was paid — a
 // correction is owed (to or from somebody). Never changes the ledger by itself.
+function ledgerOverridePaid(r,emp){
+  return PAYOUTS.filter(x=>x.rowId===r.id && x.emp===emp && x.status!=='void' &&
+    (OV_KINDS.indexOf(x.kind)>-1 || (x.kind==='manager-chargeback' && x.status==='applied'))).reduce((a,x)=>a+x.amount,0);
+}
 function payoutVariance(r){
   if(!r.paid || !rowHasLedger(r)) return [];
   const out=[]; const ids=new Set(rowShares(r).map(x=>x.rep).concat(payoutsFor(r.id,null,['rep','adjustment']).map(x=>x.emp)));
-  ids.forEach(id=>{ const now=round2(rowComm(r)*shareFor(r,id)), paid=round2(ledgerPaid(r,id)); if(Math.abs(now-paid)>=0.01) out.push({emp:id,now,paid,diff:round2(now-paid)}); });
+  ids.forEach(id=>{ const now=round2(rowComm(r)*shareFor(r,id)), paid=round2(ledgerPaid(r,id)); if(Math.abs(now-paid)>=0.01) out.push({emp:id,kind:'rep',now,paid,diff:round2(now-paid)}); });
+  // the manager override on this sale, measured against its own frozen rate
+  payoutsFor(r.id,null,['override']).forEach(o=>{
+    const paid=round2(ledgerOverridePaid(r,o.emp)), now=round2(netValue(r)*o.rate/100*o.share);
+    if(Math.abs(now-paid)>=0.01) out.push({emp:o.emp,kind:'override',now,paid,diff:round2(now-paid),of:o.id});
+  });
   return out;
 }
-function recordCorrection(rowId,emp,amount,reason){
+function recordCorrection(rowId,emp,amount,reason,opts){
+  opts=opts||{};
   const r=ROWS.find(x=>x.id===rowId); if(!r) return null;
-  const first=payoutsFor(rowId,emp,['rep'])[0];
-  const e=recordPayout({kind:'adjustment',emp,rowId,period:todayISO().slice(0,7),basisValue:netValue(r),rate:rowRate(r),share:shareFor(r,emp),amount:amount,paidOn:todayISO(),adjOf:first?first.id:'',reason:reason||''});
-  r.paidAmt=round2(ledgerPaidAll(r));   // whole-row paid figure follows the ledger
+  const isOv=opts.kind==='override';
+  const first=payoutsFor(rowId,emp,[isOv?'override':'rep'])[0];
+  const e=recordPayout({kind:isOv?'override-adjustment':'adjustment',emp,rowId,period:todayISO().slice(0,7),
+    basisValue:netValue(r),rate:isOv?(first?first.rate:0):rowRate(r),share:isOv?1:shareFor(r,emp),
+    amount:amount,paidOn:todayISO(),adjOf:opts.adjOf||(first?first.id:''),reason:reason||''});
+  // The row's paid figure is the REP payout — an override correction never touches it.
+  if(!isOv) r.paidAmt=round2(ledgerPaidAll(r));
   save(K_ROWS,ROWS); return e;
 }
 // One-time, safe backfill for sales marked paid before the ledger existed.
@@ -2674,10 +2693,15 @@ function empShort(p){ if(!p) return '?'; return p.display||empFirst(p)||p.name||
 function empInitials(p){ const f=empFirst(p),l=empLast(p); const x=((f[0]||'')+(l[0]||'')).toUpperCase(); return x||String(p.name||'?').slice(0,2).toUpperCase(); }
 function empIsSales(p){ return p.roles?p.roles.indexOf('sales')>-1:(p.scored!==false); }
 function empId(first,last){ const x=(String(first||'')+'_'+String(last||'')).toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,''); return 'emp_'+(x||'person')+'_'+Math.random().toString(36).slice(2,6); }
+// Called from migrations that run during boot, before every const below exists —
+// so nothing in here may throw (reading a not-yet-initialised const does).
 function empWho(){
-  const sx=(typeof session==='function')?session():null; if(sx&&sx.email) return sx.email;
-  const d=(typeof deviceUserQuiet==='function')?deviceUserQuiet():''; if(d) return d;
-  const a=(typeof currentAdmin==='function')?currentAdmin():null; return a?a.name:'(unknown)';
+  try{
+    const sx=(typeof session==='function')?session():null; if(sx&&sx.email) return sx.email;
+    const d=(typeof deviceUserQuiet==='function')?deviceUserQuiet():''; if(d) return d;
+    const a=(typeof currentAdmin==='function')?currentAdmin():null; if(a) return a.name;
+  }catch(e){}
+  return '(unknown)';
 }
 function empLog(p,what,det){ if(!p) return; p.log=p.log||[]; p.log.push({at:new Date().toISOString(),by:empWho(),what:what,det:det||{}}); if(p.log.length>500) p.log=p.log.slice(-400); }
 // "Sullivan, Zachariah" or "Zachariah Sullivan" → first + last.
@@ -2826,9 +2850,9 @@ function empMigrate(){
   if(typeof TAKEOVERS!=='undefined' && typeof tkoMigrate==='function') tkoMigrate();
 }
 empMigrate();
-// Payout ledger backfill for sales marked paid before the ledger existed (see payoutMigrate).
-payoutMigrate();
-reversalMigrate();
+// payoutMigrate()/reversalMigrate() write ledger entries and audit records, so they
+// run at the very end of boot (see BOOT) — not here, where half the file is still
+// in its temporal dead zone.
 
 /* ============================================================
    HELPERS
@@ -4854,7 +4878,8 @@ function commissionFor(p, ym, basis, opts){
       let v=0, comm=0, paid=0;
       rs.forEach(r=>{ const anyOv=payoutsFor(r.id,null,['override'])[0];
         if(anyOv && anyOv.emp!==p.id) return;                     // override on this sale was already paid — to a different manager; nothing here
-        if(anyOv){ v+=anyOv.basisValue; comm+=anyOv.amount; paid+=anyOv.amount; }
+        if(anyOv){ const adj=PAYOUTS.filter(x=>x.rowId===r.id&&x.emp===p.id&&x.kind==='override-adjustment'&&x.status!=='void').reduce((a,x)=>a+x.amount,0);
+          v+=anyOv.basisValue; comm+=anyOv.amount+adj; paid+=anyOv.amount+adj; }
         else { const nv=netValue(r); v+=nv; comm+=nv*p.commOv/100; } });
       if(v>0||comm>0) team.push({name:x.name, id:x.id, booked:v, comm:comm, paid:paid, since: lo>from?lo:null});
     });
@@ -4869,7 +4894,7 @@ function commissionFor(p, ym, basis, opts){
   const ledger=PAYOUTS.filter(x=>x.status==='paid' && x.emp===p.id && x.period===ym);
   const ledgerRep=ledger.filter(x=>x.kind==='rep').reduce((a,x)=>a+x.amount,0);
   const ledgerAdj=ledger.filter(x=>x.kind==='adjustment').reduce((a,x)=>a+x.amount,0);
-  const ledgerOv=ledger.filter(x=>x.kind==='override').reduce((a,x)=>a+x.amount,0);
+  const ledgerOv=ledger.filter(x=>OV_KINDS.indexOf(x.kind)>-1).reduce((a,x)=>a+x.amount,0);
   const ovUnpaid=team.reduce((a,t)=>a+(t.comm-t.paid),0);
   // Paid sales that predate the ledger and are still awaiting confirmation count as paid at their frozen proposal.
   const legacyPaid=rows.filter(r=>r.paid && !rowHasLedger(r)).reduce((a,r)=>a+perRowComm(r),0);
@@ -8700,8 +8725,7 @@ function runChecks(){
   PAYOUTS.filter(x=>x.kind==='override'&&x.status==='paid').forEach(x=>{
     const r=ROWS.find(q=>q.id===x.rowId); if(!r) return;
     const should=netValue(r)*x.rate/100*x.share;
-    const cbs=PAYOUTS.filter(q=>q.rowId===x.rowId&&q.emp===x.emp&&q.kind==='manager-chargeback'&&q.status==='applied').reduce((a,q)=>a+q.amount,0);
-    const netPaid=x.amount+cbs;
+    const netPaid=ledgerOverridePaid(r,x.emp);
     if(netPaid-should>0.01) ovBad.push({x,r,should,netPaid});
   });
   add('hawkOvGross','bad','🦅 Manager override paid on more than the sale is worth',
@@ -8751,7 +8775,7 @@ function runChecks(){
   add('hawkVariance','warn','🦅 Paid sale drifted from its payout',
     'The sale changed after the money went out (value, rate, split or owner), so today’s commission no longer matches what was paid. The payout stays as recorded — record a correction instead.',
     varRows.slice(0,30).map(d=>({
-      text:'<b>'+esc(d.r.client)+'</b> · '+d.v.map(x=>esc(empShort(person(x.emp)))+' '+(x.diff>0?'under':'over')+'-paid '+money2(Math.abs(x.diff))).join(' · '),
+      text:'<b>'+esc(d.r.client)+'</b> · '+d.v.map(x=>esc(empShort(person(x.emp)))+(x.kind==='override'?' (override)':'')+' '+(x.diff>0?'under':'over')+'-paid '+money2(Math.abs(x.diff))).join(' · '),
       sub:'paid '+fmt(d.r.paid)+' · '+money2(paidOut(d.r))+' on the ledger',
       act:'<button class="sm" onclick="setTab(\'adj\')">Payout corrections</button>'
     })), varRows.reduce((a,d)=>a+d.v.reduce((q,x)=>q+Math.abs(x.diff),0),0));
@@ -9085,12 +9109,13 @@ function reversalSetDate(rowId){
   const ev=journalReversal(r); save(K_ROWS,ROWS); render();
   toast(ev.length?ev.length+' chargeback event'+(ev.length===1?'':'s')+' recorded':'Date set');
 }
-function payoutCorrect(rowId,emp,diff){
+function payoutCorrect(rowId,emp,diff,kind){
   const r=ROWS.find(x=>x.id===rowId), p=person(emp); if(!r||!p||!ADMIN) return;
-  const v=prompt((diff>0?'Pay '+empShort(p)+' an additional ':'Record that '+empShort(p)+' was over-paid by ')+money2(Math.abs(diff))+' on '+r.client+'?\n\nEnter the correction amount (negative = claw back). Nothing on the original payout changes.',String(diff));
+  const what=kind==='override'?' manager override':' commission';
+  const v=prompt((diff>0?'Pay '+empShort(p)+' an additional ':'Record that '+empShort(p)+' was over-paid by ')+money2(Math.abs(diff))+what+' on '+r.client+'?\n\nEnter the correction amount (negative = claw back). Nothing on the original payout changes.',String(diff));
   if(v===null) return; const amt=pNum(v); if(!amt){ toast('No correction recorded'); return; }
-  const why=prompt('Reason for the correction (goes on the ledger and the audit trail):','commission basis changed after payout'); if(why===null) return;
-  recordCorrection(rowId,emp,amt,why); render(); toast('Correction of '+(amt>0?'+':'−')+money2(Math.abs(amt))+' recorded for '+empShort(p));
+  const why=prompt('Reason for the correction (goes on the ledger and the audit trail):',kind==='override'?'override was recorded on the gross value':'commission basis changed after payout'); if(why===null) return;
+  recordCorrection(rowId,emp,amt,why,{kind:kind}); render(); toast('Correction of '+(amt>0?'+':'−')+money2(Math.abs(amt))+' recorded for '+empShort(p));
 }
 function renderAdj(){
   const today=todayISO();
@@ -9169,9 +9194,9 @@ function renderAdj(){
     else {
       x='<thead><tr><th>Sale</th><th>Who</th><th class="num">Paid (ledger)</th><th class="num">Calculates now</th><th class="num">Difference</th><th></th></tr></thead><tbody>';
       vars.forEach(v=>{ const p=person(v.emp);
-        x+='<tr><td><b>'+esc(v.r.client)+'</b><div class="note">'+fmtY(v.r.date)+' · '+esc(v.r.service||'')+' · paid '+fmtY(v.r.paid)+'</div></td><td>'+(p?empLink(p.id):esc(v.emp))+'</td>'+
+        x+='<tr><td><b>'+esc(v.r.client)+'</b><div class="note">'+fmtY(v.r.date)+' · '+esc(v.r.service||'')+' · paid '+fmtY(v.r.paid)+'</div></td><td>'+(p?empLink(p.id):esc(v.emp))+(v.kind==='override'?' <span class="pill el">OVERRIDE</span>':'')+'</td>'+
           '<td class="num mono">'+money2(v.paid)+'</td><td class="num mono">'+money2(v.now)+'</td><td class="num mono"><b style="color:'+(v.diff>0?'var(--grn-d)':'var(--red)')+'">'+(v.diff>0?'+':'−')+money2(Math.abs(v.diff))+'</b><div class="note">'+(v.diff>0?'under-paid':'over-paid')+'</div></td>'+
-          '<td class="num">'+(ADMIN?'<button class="sm p" onclick="payoutCorrect(\''+v.r.id+'\',\''+v.emp+'\','+v.diff+')">Record correction</button>':'')+'</td></tr>'; });
+          '<td class="num">'+(ADMIN?'<button class="sm p" onclick="payoutCorrect(\''+v.r.id+'\',\''+v.emp+'\','+v.diff+',\''+(v.kind||'rep')+'\')">Record correction</button>':'')+'</td></tr>'; });
       rev.forEach(r=>{ const calc=r.paidCalc?r.paidCalc.amount:grossComm(r);
         x+='<tr><td><b>'+esc(r.client)+'</b><div class="note">'+fmtY(r.date)+' · paid '+fmtY(r.paid)+' · <span class="pill no">LEGACY — confirm</span> '+esc(r.payoutReview)+'</div></td><td>'+rowShares(r).map(sx=>empLink(sx.rep)).join(', ')+'</td>'+
           '<td class="num mono">—</td><td class="num mono">'+money2(calc)+'<div class="note">frozen at migration</div></td><td class="num mono">?</td>'+
@@ -12084,7 +12109,7 @@ function empKpis(D){
   const myLedger=PAYOUTS.filter(x=>x.status==='paid' && x.emp===p.id);
   K.commPaid=myLedger.filter(x=>x.kind==='rep'||x.kind==='adjustment').reduce((a,x)=>a+x.amount,0);
   K.commAdj=myLedger.filter(x=>x.kind==='adjustment').reduce((a,x)=>a+x.amount,0);
-  K.ovPaid=myLedger.filter(x=>x.kind==='override').reduce((a,x)=>a+x.amount,0);
+  K.ovPaid=myLedger.filter(x=>OV_KINDS.indexOf(x.kind)>-1).reduce((a,x)=>a+x.amount,0);
   K.commPending=cr.reduce((a,r)=>a+((!r.paid&&!r.invoiced&&!splitPending(r))?rowComm(r)*sh(r):0),0);
   K.commPayable=cr.reduce((a,r)=>a+((!r.paid&&r.invoiced&&!splitPending(r))?rowComm(r)*sh(r):0),0);
   K.held=cr.reduce((a,r)=>a+(splitPending(r)?rowComm(r)*sh(r):0),0);
@@ -12782,6 +12807,11 @@ function cloudInit(){
 // Logins tie to employee records by verified email (empLinkLogin) — never by name.
 document.getElementById('hDate').value=todayISO();
 document.getElementById('cMonth').value=defaultReportMonth();
+// Ledger backfills for data that predates the payout ledger. They record audit
+// entries, so they run here — after every collection and constant exists.
+payoutMigrate();
+reversalMigrate();
+
 render();
 cloudInit();
 // Deep link to a team member: #emp/<employee id>

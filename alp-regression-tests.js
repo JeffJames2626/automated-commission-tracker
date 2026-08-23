@@ -1009,6 +1009,84 @@
         results.push({name:'hawk x10 present', expected:true, actual:false, pass:false});
       }
 
+
+      /* ---------- CRITICAL FIX #1 — manager override is journaled on NET ---------- */
+      if(typeof journalPaid==='function' && typeof payoutVariance==='function'){
+        var alertO=window.alert, toastO=window.toast; window.alert=function(){}; window.toast=function(){};
+        var OA=mkPerson({id:'OA', name:'Ov Ann'}); OA.first='Ov'; OA.last='Ann'; OA.roles=['sales']; OA.start='2026-01-01'; OA.commNew=10; OA.commUp=5; OA.mgr='OM'; OA.aliases=[]; OA.log=[];
+        var OM=mkPerson({id:'OM', name:'Ov Mia'}); OM.first='Ov'; OM.last='Mia'; OM.roles=['manager']; OM.start='2026-01-01'; OM.commOv=5; OM.commNew=0; OM.commUp=0; OM.aliases=[]; OM.log=[];
+        PEOPLE=[OA,OM]; ROWS=[]; PAYOUTS=[]; DISPUTES=[]; EMP_IDX=null; GLOBAL.payLag=30; GLOBAL.policy.clawbackDays=180;
+        var mkO=function(o){ var r=mkRow(Object.assign({rep:'OA',type:'new',value:4000,date:'2026-06-05',invoiced:'2026-06-10',client:'Ov Co'},o||{})); freezeDueLag(r); return r; };
+        var ovOf=function(id){ return PAYOUTS.filter(function(x){return x.rowId===id&&x.kind==='override'&&x.status!=='void';}); };
+        var ovNet=function(id){ return PAYOUTS.filter(function(x){return x.rowId===id&&x.emp==='OM'&&x.status!=='void'&&(x.kind==='override'||x.kind==='override-adjustment'||(x.kind==='manager-chargeback'&&x.status==='applied'));}).reduce(function(a,x){return a+x.amount;},0); };
+
+        // O1 — clean sale: override on the full value
+        var o1=mkO({}); ROWS=[o1]; o1.paid='2026-07-15'; journalPaid(o1,'2026-07-15');
+        check('OV1 clean sale: override 200 (5% of 4000)', 200, ovOf(o1.id)[0].amount);
+        check('OV1 basis recorded = 4000', 4000, ovOf(o1.id)[0].basisValue);
+
+        // O2 — THE BUG: partial reversal BEFORE payment must pay the override on NET
+        PAYOUTS=[]; var o2=mkO({voidType:'refunded',voidAmt:1000,voidDate:'2026-06-20'}); ROWS=[o2]; o2.paid='2026-07-15'; journalPaid(o2,'2026-07-15');
+        check('OV2 partly refunded before payment: override 150 (5% of net 3000)', 150, ovOf(o2.id)[0].amount);
+        check('OV2 basis recorded = net 3000', 3000, ovOf(o2.id)[0].basisValue);
+        check('OV2 rep paid on net too (10% of 3000)', 300, ledgerPaid(o2,'OA'));
+        check('OV2 report: Mia ledger override 150', 150, commissionFor(OM,'2026-07','due').ledgerOv);
+        check('OV2 Mia page override paid 150', 150, empKpis(empData('OM')).ovPaid);
+        checkTrue('OV2 no variance — the entry is already right', payoutVariance(o2).length===0, JSON.stringify(payoutVariance(o2)));
+
+        // O3 — fully cancelled before payment: no override entry at all, nothing payable
+        PAYOUTS=[]; var o3=mkO({voidType:'cancelled',voidAmt:4000,voidDate:'2026-06-20'}); ROWS=[o3]; o3.paid='2026-07-15'; journalPaid(o3,'2026-07-15');
+        check('OV3 fully cancelled: no override entry', 0, ovOf(o3.id).length);
+        check('OV3 fully cancelled: Mia earns 0 in the report', 0, commissionFor(OM,'2026-07','due').ovC);
+        check('OV3 fully cancelled: rep entry still exists (ledger complete)', 1, PAYOUTS.filter(function(x){return x.rowId===o3.id&&x.kind==='rep';}).length);
+
+        // O4 — reversal AFTER payment still nets the manager to what the sale is worth
+        PAYOUTS=[]; var o4=mkO({}); ROWS=[o4]; o4.paid='2026-07-15'; journalPaid(o4,'2026-07-15');
+        o4.voidType='refunded'; o4.voidAmt=1000; o4.voidDate='2026-08-10'; journalReversal(o4);
+        check('OV4 paid then partly refunded: +200 then −50 = 150 net', 150, ovNet(o4.id));
+        check('OV4 original override entry untouched at 200', 200, ovOf(o4.id)[0].amount);
+        check('OV4 Aug manager chargeback 50', 50, commissionFor(OM,'2026-08','due').cbTotal);
+
+        // O5 — a legacy entry written on GROSS is detected and correctable, never rewritten
+        PAYOUTS=[]; var o5=mkO({voidType:'refunded',voidAmt:1000,voidDate:'2026-06-20'}); ROWS=[o5]; o5.paid='2026-07-15'; journalPaid(o5,'2026-07-15');
+        var bad=ovOf(o5.id)[0]; bad.amount=200; bad.basisValue=4000;          // reproduce the old gross-basis entry
+        var v5=payoutVariance(o5).filter(function(x){return x.kind==='override';});
+        check('OV5 gross entry flagged as a 50 over-pay', -50, v5.length?v5[0].diff:0);
+        check('OV5 flagged against the manager', 'OM', v5.length?v5[0].emp:'');
+        if(typeof runChecks==='function'){
+          var hg=runChecks().find(function(c){return c.id==='hawkOvGross';});
+          checkTrue('OV5 Hawk flags it with dollars at stake', hg && hg.items.length===1 && Math.abs(hg.impact-50)<0.01, hg?hg.items.length+'/'+hg.impact:'none');
+        }
+        var before=JSON.stringify(bad);
+        recordCorrection(o5.id,'OM',-50,'override was recorded on the gross value',{kind:'override'});
+        check('OV5 correction did NOT rewrite the original entry', before, JSON.stringify(ovOf(o5.id)[0]));
+        check('OV5 correction is a NEW event of its own kind', 'override-adjustment', PAYOUTS.filter(function(x){return x.rowId===o5.id&&x.kind==='override-adjustment';})[0].kind);
+        check('OV5 correction points at the original', bad.id, PAYOUTS.filter(function(x){return x.kind==='override-adjustment';})[0].adjOf);
+        check('OV5 net override now 150', 150, ovNet(o5.id));
+        check('OV5 variance cleared', 0, payoutVariance(o5).filter(function(x){return x.kind==='override';}).length);
+        if(typeof runChecks==='function') check('OV5 Hawk clear', undefined, (runChecks().find(function(c){return c.id==='hawkOvGross';})||{}).items);
+        check('OV5 correction counted in the report ledger override', 150, commissionFor(OM,'2026-07','due').ledgerOv + commissionFor(OM,todayISO().slice(0,7),'due').ledgerOv - (('2026-07'===todayISO().slice(0,7))?150:0));
+        // the row's REP payout must be untouched by a manager correction
+        check('OV5 rep paid still 300 (override correction never pollutes it)', 300, ledgerPaid(o5,'OA'));
+        check('OV5 row paidAmt still the rep figure', 300, +o5.paidAmt);
+        check('OV5 paidOut(row) still the rep figure', 300, paidOut(o5));
+
+        // O6 — a manager with no override rate gets no entry
+        PAYOUTS=[]; OM.commOv=0; var o6=mkO({}); ROWS=[o6]; o6.paid='2026-07-15'; journalPaid(o6,'2026-07-15');
+        check('OV6 commOv 0: no override entry', 0, ovOf(o6.id).length);
+        OM.commOv=5;
+
+        // O7 — position identity still holds with an override correction in play
+        PAYOUTS=[]; ROWS=[o5]; o5.paid='2026-07-15'; PAYOUTS=[]; journalPaid(o5,'2026-07-15');
+        recordCorrection(o5.id,'OM',-25,'test',{kind:'override'});
+        var pos=compPosition(OM,todayISO().slice(0,7));
+        check('OV7 balance identity holds', pos.closing, pos.opening+pos.earned+pos.override+pos.adjust-pos.chargebacks-pos.paid);
+
+        window.alert=alertO; window.toast=toastO; PAYOUTS=[]; DISPUTES=[];
+      } else {
+        results.push({name:'override-on-net fix present', expected:true, actual:false, pass:false});
+      }
+
       /* ---------- C2: tombstones stop deleted records resurrecting ---------- */
       if(typeof addTombstone==='function' && typeof isTombstoned==='function'){
         TOMBSTONES=[];
