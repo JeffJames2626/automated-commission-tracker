@@ -2432,7 +2432,7 @@ function empCreate(o){
   const p=newPerson(name); p.id=empId(first||name,last);
   p.first=first||empFirst(p); p.last=last||empLast(p);
   if(o.title!=null) p.title=o.title; if(o.dept) p.dept=o.dept; if(em) p.email=em;
-  if(o.phone) p.phone=o.phone; if(o.truck) p.truck=o.truck; if(o.ext) p.ext=o.ext; if(o.altEmails&&o.altEmails.length) p.altEmails=o.altEmails.slice(); if(o.photoUrl) p.photoUrl=o.photoUrl;
+  if(o.phone) p.phone=o.phone; if(o.truck) p.truck=o.truck; if(o.ext) p.ext=o.ext; if(o.altEmails&&o.altEmails.length) p.altEmails=o.altEmails.slice(); if(o.photoUrl) p.photoUrl=o.photoUrl; if(o.location) p.location=o.location;
   p.roles=o.roles||['sales']; p.active=o.active!==false; if(o.ended) p.ended=o.ended;
   if(o.active===false){ p.scored=false; p.salesPct=0; p.commNew=0; p.commUp=0; p.commRenew=0; p.commOv=0; p.hrsIn=0; p.hrsOff=0; }
   if(o.note) p.note=o.note; p.created={at:new Date().toISOString(),by:empWho()};
@@ -10685,7 +10685,7 @@ function renderRoster(){
   const box=document.getElementById('rosterBox'); if(!box) return;
   const q=norm(ROSTER_Q);
   let list=PEOPLE.filter(p=>p.id!==EMP_UNASSIGNED && (ROSTER_INACTIVE||p.active));
-  if(q) list=list.filter(p=>norm(empName(p)+' '+(p.title||'')+' '+(p.dept||'')+' '+(p.email||'')).indexOf(q)>-1);
+  if(q) list=list.filter(p=>norm(empName(p)+' '+(p.title||'')+' '+(p.dept||'')+' '+(p.email||'')+' '+(p.truck||'')+' '+empWhere(p)).indexOf(q)>-1);
   list.sort((a,b)=>(a.active===b.active?0:a.active?-1:1)||empName(a).localeCompare(empName(b)));
   const cnt=document.getElementById('rosterCount');
   if(cnt) cnt.textContent=PEOPLE.filter(p=>p.active&&p.id!==EMP_UNASSIGNED).length+' active · '+PEOPLE.filter(p=>!p.active&&p.id!==EMP_UNASSIGNED).length+' former';
@@ -10712,9 +10712,13 @@ function renderRoster(){
 }
 
 // Where they work from: their truck, or the office (with a location if one is set).
+// Where they work from: their truck; otherwise the shop, or remote.
+function empWhere(p){ if(p.truck) return 'truck'; const l=String(p.location||'').toLowerCase(); return /remote|home|wfh/.test(l)?'remote':'shop'; }
 function empWhereChip(p){
-  if(p.truck) return '<span class="pill truck" title="assigned truck">🚚 '+esc(p.truck)+'</span>';
-  return '<span class="pill truck" title="office-based">🏢 '+esc(p.location||'Office')+'</span>';
+  const w=empWhere(p);
+  if(w==='truck') return '<span class="pill truck" title="assigned truck">🚚 '+esc(p.truck)+'</span>';
+  if(w==='remote') return '<span class="pill truck" title="works remotely">🏠 Remote'+(p.location&&!/^remote$/i.test(p.location)?' · '+esc(p.location):'')+'</span>';
+  return '<span class="pill truck" title="office work done at the shop">🏢 Shop'+(p.location&&!/^shop$/i.test(p.location)?' · '+esc(p.location):'')+'</span>';
 }
 
 /* ---- ROSTER HEALTH: the numbers an admin needs after a sync ---- */
@@ -10873,7 +10877,7 @@ function empDirApplyRows(rows, choiceOf){
     const choice=choiceOf(i);
     if(choice==='skip'){ skipped++; return; }
     if(choice==='new'){
-      const r=empCreate({first:d.first,last:d.last,title:d.title,dept:d.dept,email:d.email,altEmails:d.altEmails,phone:d.phone,truck:d.truck,ext:d.ext,photoUrl:d.photoUrl,roles:d.roles.length?d.roles:['tech'],active:true,from:'directory'});
+      const r=empCreate({first:d.first,last:d.last,title:d.title,dept:d.dept,email:d.email,altEmails:d.altEmails,phone:d.phone,truck:d.truck,ext:d.ext,photoUrl:d.photoUrl,location:/remote/i.test(d.title||'')?'Remote':'',roles:d.roles.length?d.roles:['tech'],active:true,from:'directory'});
       if(r.error){ errs.push(d.name+': '+r.error); return; } made++; return;
     }
     const p=person(choice); if(!p){ errs.push(d.name+': record not found'); return; }
@@ -10887,6 +10891,7 @@ function empDirApplyRows(rows, choiceOf){
     if(d.ext && d.ext!==(p.ext||'')){ p.ext=d.ext; changed.ext=1; }
     if(d.photoUrl && d.photoUrl!==(p.photoUrl||'')){ p.photoUrl=d.photoUrl; changed.photoUrl=1; }   // p.photo (manual upload) is never touched
     if(d.dept && !p.dept){ p.dept=d.dept; changed.dept=1; }
+    if(!p.location && /remote/i.test(d.title||'')){ p.location='Remote'; changed.location=1; }
     if(!p.first && d.first){ p.first=d.first; } if(!p.last && d.last){ p.last=d.last; }
     const roles=(p.roles||[]).slice(); d.roles.forEach(r=>{ if(roles.indexOf(r)<0) roles.push(r); });
     if(roles.join()!==(p.roles||[]).join()){ empLog(p,'roles',{from:p.roles||[],to:roles}); p.roles=roles; }
@@ -11303,7 +11308,7 @@ function renderEmp(){
         '<div><label>Other emails (comma-separated)</label><input id="epAlt" value="'+esc((p.altEmails||[]).join(', '))+'" placeholder="personal@gmail.com"></div>'+
         '<div><label>Phone</label><input id="epPhone" value="'+esc(p.phone||'')+'"></div>'+
         '<div><label>Truck</label><input id="epTruck" value="'+esc(p.truck||'')+'" placeholder="GMC #014 (blank = office)"></div>'+
-        '<div><label>Office location</label><input id="epLoc" value="'+esc(p.location||'')+'" placeholder="Main shop / remote"></div>'+
+        '<div><label>Works from</label><input id="epLoc" list="epLocList" value="'+esc(p.location||'')+'" placeholder="Shop (default) or Remote"><datalist id="epLocList"><option value="Shop"><option value="Remote"></datalist></div>'+
         '<div><label>Phone ext</label><input id="epExt" value="'+esc(p.ext||'')+'"></div>'+
         '<div class="full"><label>Roles</label><div class="rolechips">'+EMP_ROLES.map(r=>'<label><input type="checkbox" class="epRole" value="'+r[0]+'"'+((p.roles||[]).indexOf(r[0])>-1?' checked':'')+'> '+r[1]+'</label>').join('')+'</div></div>'+
         '<div><label>Status</label><select id="epActive"><option value="1"'+(p.active?' selected':'')+'>Active</option><option value="0"'+(p.active?'':' selected')+'>Former team member</option></select></div>'+
