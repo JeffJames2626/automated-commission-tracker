@@ -11378,10 +11378,14 @@ function stateSnapshot(){   // v6: employee identity fields (first/last/photo/al
     takeovers:TAKEOVERS,openinv:OPENINV,balsyncs:BALSYNC,tombstones:TOMBSTONES,oscs:OSCS,global:GLOBAL};
 }
 function backup(){
+  // Gated in the header too, but the guard belongs in the function: a whole-state
+  // dump is an admin operation however it was reached.
+  if(!can('admin_security')){ toast('That is not part of your access'); return; }
   dl(new Blob([JSON.stringify(stateSnapshot(),null,2)],
     {type:'application/json'}),'alp-sales-backup-'+todayISO()+'.json');
 }
 function restore(e){
+  if(!can('admin_security')){ toast('That is not part of your access'); e.target.value=''; return; }
   const f=e.target.files[0]; if(!f)return;
   const fr=new FileReader();
   fr.onload=ev=>{
