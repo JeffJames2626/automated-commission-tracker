@@ -258,10 +258,36 @@ footer{padding:24px 0 40px;font-size:12px;color:var(--muted);text-align:center}
 .fab-left:hover{background:#264c66}
 .fab-mid{right:auto;left:50%;transform:translateX(-50%);background:#ee4f9a}
 .fab-mid:hover{background:#d63e87;transform:translateX(-50%) translateY(-1px)}
+
+/* ---- phone layout: hamburger header + fixed bottom action bar ---- */
+#hamBtn{display:none;background:transparent;border:1px solid #4a5346;color:#e6eae2;
+  font-size:20px;line-height:1;padding:8px 13px;border-radius:8px}
 @media(max-width:640px){
-  .fab{padding:9px 11px;font-size:12.5px}
+  header .top{padding-bottom:10px}
+  header h1{font-size:17px}
+  .hsub{display:none}
+  #hamBtn{display:block}
+  /* everything header-related folds behind the hamburger */
+  header .hbtns{display:none}
+  header nav{display:none}
+  header.menu-open .hbtns{display:flex;flex-wrap:wrap;gap:8px;padding:4px 0 10px}
+  header.menu-open nav{display:flex;flex-direction:column;gap:2px;padding-bottom:12px}
+  header.menu-open nav button{border-radius:8px;border-bottom:none;text-align:left;
+    padding:12px 14px;font-size:15px}
+  header.menu-open nav button.on{background:var(--sand);color:var(--ink)}
+  /* the three floating pills become one fixed bottom bar */
+  .fab{position:fixed;top:auto;bottom:0;left:auto;right:0;transform:none;margin:0;
+    width:33.34%;border-radius:0;box-shadow:0 -2px 12px rgba(28,33,25,.18);
+    padding:13px 4px calc(13px + env(safe-area-inset-bottom));
+    font-size:12.5px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fab:hover{transform:none}
   .fab kbd{display:none}
-  .fab-mid{bottom:74px}
+  .fab-left{left:0;right:auto}
+  .fab-mid{left:33.33%;right:auto;transform:none}
+  .fab-mid:hover{transform:none}
+  /* keep page content clear of the bar */
+  body{padding-bottom:calc(64px + env(safe-area-inset-bottom))}
+  .toast{bottom:calc(74px + env(safe-area-inset-bottom))}
 }
 /* assistant chat */
 .aichat{max-height:44vh;overflow-y:auto;display:flex;flex-direction:column;gap:9px;padding:2px}
@@ -429,6 +455,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
         <div class="hsub">Automated Lawn &amp; Pest · production, comp plans, and commission by salesperson</div>
       </div>
       <div class="hspace"></div>
+      <button id="hamBtn" onclick="toggleMenu()" title="Menu" aria-label="Menu">&#9776;</button>
       <div class="hbtns">
         <button class="gh" onclick="window.print()">Print / PDF</button>
         <button class="gh" onclick="exportCSV()">Export CSV</button>
@@ -2699,7 +2726,10 @@ const TABS=[
   ['admin','Admin',null,'Data checks, access and backups']
 ];
 const TAB_INFO={}; TABS.forEach(t=>{ TAB_INFO[t[0]]={label:t[1],admin:t[2],desc:t[3]}; });
-function setTab(t){ TAB=t; render(); }
+function setTab(t){ TAB=t; closeMenu(); render(); }
+// Phone hamburger: nav and header actions fold behind ☰.
+function toggleMenu(){ document.querySelector('header').classList.toggle('menu-open'); }
+function closeMenu(){ const h=document.querySelector('header'); if(h) h.classList.remove('menu-open'); }
 function setWho(id){ WHO=id; render(); }
 function selPerson(id){ SEL=id; planToForm(); renderPlanList(); renderScenarios(); renderHours(); }
 
