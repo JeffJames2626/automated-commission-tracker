@@ -2457,6 +2457,7 @@ function empMigrate(){
     if(!p.log){ p.log=[{at:new Date().toISOString(),by:'migration',what:'created',det:{from:'existing record'}}]; dirty=true; }
   });
   if(dirty) save(K_PEOPLE,PEOPLE);
+  if(typeof TAKEOVERS!=='undefined' && typeof tkoMigrate==='function') tkoMigrate();
 }
 empMigrate();
 
@@ -5236,7 +5237,7 @@ function cpLogSale(){
   closeClient();
   openQuick();
   document.getElementById('qClient').value=name;
-  const rid=c?matchRep(c.sp):null;
+  const rid=c?clientRepId(c):null;
   if(rid) document.getElementById('qRep').value=rid;
   applySuggestedType();
   document.getElementById('qService').focus();
@@ -5889,10 +5890,8 @@ function cliApply(){
 
   const byKey={}; CLIENTS.forEach(c=>byKey[cliKey(c)]=c);
   CLI_PARSED.forEach(c=>{
-    // SA keeps exporting former team members as account owners until it is
-    // fixed there — re-apply every takeover rule so ownership stays moved.
-    const rule=tkoRuleFor(c.sp);
-    if(rule && !PEOPLE.some(p=>norm(p.name)===norm(c.sp))){ c.spWas=c.sp; c.sp=rule.to; }
+    // The SA salesperson value is kept exactly as exported. Takeover rules are
+    // applied when the owner is resolved (clientRepId), so nothing is rewritten here.
     const k=cliKey(c), old=byKey[k];
     if(old){ Object.assign(old,c,{gone:false}); }
     else { c.gone=false; c.first=todayISO(); CLIENTS.push(c); byKey[k]=c; }
@@ -6011,7 +6010,7 @@ function renderClients(){
     // clients date from when they became a client; leads from when they were acquired
     rows=rows.filter(c=>{ const d=isLead(c)?(c.lead||c.since):(c.since||''); return d&&d>=cut; });
   }
-  if(rp){ const p=person(rp); if(p) rows=rows.filter(c=>matchRep(c.sp)===rp); }
+  if(rp){ const p=person(rp); if(p) rows=rows.filter(c=>clientRepId(c)===rp); }
   rows.sort((a,b)=>{
     const ka=a.since||a.lead||'', kb=b.since||b.lead||'';
     return kb<ka?-1:1;
@@ -6027,7 +6026,7 @@ function renderClients(){
     '<th>Owner</th><th class="num">Last invoice</th><th class="num">Sales logged</th></tr></thead><tbody>';
   rows.slice(0,400).forEach(c=>{
     const mine=ROWS.filter(r=>norm(r.client)===norm(c.n));
-    const repId=matchRep(c.sp);
+    const repId=clientRepId(c);
     const lead=isLead(c);
     const age=lead&&c.lead?Math.round((dObj(todayISO())-dObj(c.lead))/86400000):null;
     x+='<tr'+(c.gone?' style="opacity:.45"':'')+'>'+
@@ -6058,29 +6057,30 @@ function renderLeadReps(leads, clients){
   }
   const today=todayISO(), d90=addDays(today,-90), d30=addDays(today,-30);
   const by={};
+  const ownerKey=o=>{ const id=clientRepId(o); return id?('id:'+id):(o.sp||'(nobody)'); };
   leads.forEach(l=>{
-    const k=l.sp||'(nobody)';
-    const g=by[k]=by[k]||{name:k,total:0,fresh:0,stale:0,ages:[]};
+    const k=ownerKey(l);
+    const g=by[k]=by[k]||{name:k.indexOf('id:')===0?empName(person(k.slice(3))):k,rid:k.indexOf('id:')===0?k.slice(3):null,total:0,fresh:0,stale:0,ages:[]};
     g.total++;
     if(l.lead&&l.lead>=d30) g.fresh++;
     if(!l.lead||l.lead<d90) g.stale++;
     if(l.lead) g.ages.push(Math.round((dObj(today)-dObj(l.lead))/86400000));
   });
   const convBy={};
-  CONVERSIONS.forEach(c=>{ const k=c.sp||'(nobody)'; convBy[k]=(convBy[k]||0)+1; });
+  CONVERSIONS.forEach(c=>{ const k=ownerKey(c); convBy[k]=(convBy[k]||0)+1; });
   const list=Object.values(by).sort((a,b)=>b.total-a.total);
   let x='<thead><tr><th>Owner</th><th class="num">Open leads</th><th class="num">New in 30d</th>'+
     '<th class="num">Over 90d old</th><th class="num">Median age</th><th class="num">Conversions seen</th></tr></thead><tbody>';
   list.forEach(g=>{
     g.ages.sort((a,b)=>a-b);
     const med=g.ages.length?g.ages[Math.floor(g.ages.length/2)]:null;
-    const rid=matchRep(g.name);
+    const rid=g.rid;
     x+='<tr><td>'+(rid?'<span class="dot" style="background:'+pColor(rid)+'"></span><b>'+empLink(rid)+'</b>'
                       :'<span class="note">'+esc(g.name)+' <span class="pill no" title="Not on the roster — see Admin › Employee match needed">?</span></span>')+'</td>'+
       '<td class="num">'+g.total+'</td><td class="num">'+g.fresh+'</td>'+
       '<td class="num"'+(g.stale>g.total*0.5?' style="color:var(--red)"':'')+'>'+g.stale+'</td>'+
       '<td class="num">'+(med!=null?med+'d':'—')+'</td>'+
-      '<td class="num">'+(convBy[g.name]||'—')+'</td></tr>';
+      '<td class="num">'+(convBy[g.rid?('id:'+g.rid):g.name]||'—')+'</td></tr>';
   });
   x+='<tr class="tot"><td>TOTAL</td><td class="num">'+leads.length+'</td>'+
      '<td class="num">'+list.reduce((a,g)=>a+g.fresh,0)+'</td>'+
@@ -7026,16 +7026,32 @@ function renderBalances(){
    original name is kept on the record as spWas.
    ============================================================ */
 function formerList(){ return GLOBAL.formerReps||[]; }
-function isFormerSp(sp){
+// A takeover rule: accounts whose SA salesperson resolves to employee X (someone
+// who left) — or, for a name not yet on the roster, whose first name is on the
+// legacy former-members list — belong to employee Y. Rules are applied when an
+// owner is RESOLVED (clientRepId), so the raw SA value on the record is never
+// rewritten and every future sync honours the rule with no re-apply step.
+function tkoMigrate(){
+  let dirty=false;
+  TAKEOVERS.forEach(t=>{
+    if(!t.toId && t.to){ const r=resolveEmployee(t.to,'*'); if(r){ t.toId=r.id; dirty=true; } }
+    if(!t.fromId && t.from){ const r=resolveEmployee(t.from,'*'); if(r && person(r.id) && !person(r.id).active){ t.fromId=r.id; dirty=true; } }
+  });
+  if(dirty) save(K_TKO,TAKEOVERS);
+}
+function isFormerSp(sp){   // an account owner who is not an active employee
   if(!sp) return false;
+  const r=resolveEmployee(sp,'SA');
+  if(r) return r.id!==EMP_UNASSIGNED && !!person(r.id) && !person(r.id).active;
   const toks=nameTokens(sp);
-  return formerList().some(f=>toks.indexOf(f.toLowerCase())>-1) &&
-         !PEOPLE.some(p=>norm(p.name)===norm(sp));   // never flag a current person
+  return formerList().some(f=>toks.indexOf(f.toLowerCase())>-1);
 }
 function tkoRuleFor(sp){
   if(!sp) return null;
+  const r=resolveEmployee(sp,'SA');
+  if(r) return TAKEOVERS.find(t=>t.fromId===r.id)||null;
   const toks=nameTokens(sp);
-  return TAKEOVERS.find(t=>toks.indexOf(String(t.from).toLowerCase())>-1)||null;
+  return TAKEOVERS.find(t=>!t.fromId && t.from && toks.indexOf(String(t.from).toLowerCase())>-1)||null;
 }
 let TKO_VIEW=[];
 function renderTakeover(){
@@ -7045,45 +7061,63 @@ function renderTakeover(){
   const YR=todayISO().slice(0,4);
   const billedYr={};
   INVOICES.forEach(x=>{ if(String(x.d).slice(0,4)===YR){ const k=norm(x.c); billedYr[k]=(billedYr[k]||0)+x.v; } });
-  TKO_VIEW=formerList().map(f=>{
-    const fl=f.toLowerCase();
-    const matches=CLIENTS.filter(c=>!c.gone && c.sp && nameTokens(c.sp).indexOf(fl)>-1 &&
-      !PEOPLE.some(p=>norm(p.name)===norm(c.sp)));
-    const rule=TAKEOVERS.find(t=>String(t.from).toLowerCase()===fl);
-    return {first:f, matches, rule,
-      billed:matches.reduce((a,c)=>a+(billedYr[norm(c.n)]||0),0)};
+  const live=CLIENTS.filter(c=>!c.gone && c.sp);
+  TKO_VIEW=[];
+  // 1. former team members on the roster (id-based)
+  PEOPLE.filter(p=>!p.active && p.id!==EMP_UNASSIGNED).forEach(p=>{
+    const matches=live.filter(c=>{ const r=resolveEmployee(c.sp,'SA'); return r && r.id===p.id; });
+    if(!matches.length) return;
+    TKO_VIEW.push({label:empName(p), emp:p, matches, rule:TAKEOVERS.find(t=>t.fromId===p.id)||null,
+      billed:matches.reduce((a,c)=>a+(billedYr[norm(c.n)]||0),0)});
   });
-  const open=TKO_VIEW.filter(v=>v.matches.length);
+  // 2. legacy first names that still do not resolve to anybody
+  formerList().forEach(f=>{
+    const fl=f.toLowerCase();
+    const matches=live.filter(c=>!resolveEmployee(c.sp,'SA') && nameTokens(c.sp).indexOf(fl)>-1);
+    if(!matches.length) return;
+    TKO_VIEW.push({label:f, emp:null, matches, rule:TAKEOVERS.find(t=>!t.fromId && String(t.from).toLowerCase()===fl)||null,
+      billed:matches.reduce((a,c)=>a+(billedYr[norm(c.n)]||0),0)});
+  });
+  const active=PEOPLE.filter(p=>p.active && p.id!==EMP_UNASSIGNED);
   let h='<table><thead><tr><th>Former team member</th><th class="num">Clients</th><th class="num">Leads</th>'+
     '<th class="num">Billed '+YR+'</th><th>Goes to</th><th></th></tr></thead><tbody>';
   TKO_VIEW.forEach((v,i)=>{
     const cs=v.matches.filter(isClient).length, ls=v.matches.filter(isLead).length;
-    h+='<tr><td><b>'+esc(v.first)+'</b>'+
-      (v.rule?'<div class="note">handed to '+esc(v.rule.to)+' on '+fmtY(v.rule.on)+' ('+v.rule.moved+' accounts)</div>':'')+'</td>'+
+    const to=v.rule&&v.rule.toId?person(v.rule.toId):null;
+    h+='<tr><td><b>'+(v.emp?empLink(v.emp.id):esc(v.label)+' <span class="pill no" title="Not on the roster — add them under Admin › Employee match needed so history stays tied to one record">?</span>')+'</b>'+
+      (v.rule?'<div class="note">handed to <b>'+(to?empLink(to.id):esc(v.rule.to))+'</b> on '+fmtY(v.rule.on)+' ('+(v.rule.moved||v.matches.length)+' accounts) · <a href="#" onclick="undoTakeover('+i+');return false">undo</a></div>':'')+'</td>'+
       '<td class="num">'+(cs||'—')+'</td><td class="num">'+(ls||'—')+'</td>'+
       '<td class="num mono">'+(v.billed?money(v.billed):'—')+'</td>'+
-      (v.matches.length
-        ? '<td><select id="tkoSel'+i+'">'+PEOPLE.filter(p=>p.active).map(p=>'<option>'+esc(p.name)+'</option>').join('')+'</select></td>'+
-          '<td><button class="sm p" onclick="runTakeover('+i+')">Take over '+v.matches.length+'</button></td>'
-        : '<td colspan="2"><span class="pill ok">CLEAR</span></td>')+
+      (v.rule
+        ? '<td colspan="2"><span class="pill ok">RULE ACTIVE</span> <span class="note">every sync keeps these on '+esc(to?empName(to):v.rule.to)+'</span></td>'
+        : '<td><select id="tkoSel'+i+'">'+active.map(p=>'<option value="'+p.id+'">'+esc(empName(p))+'</option>').join('')+'</select></td>'+
+          '<td><button class="sm p" onclick="runTakeover('+i+')">Take over '+v.matches.length+'</button></td>')+
       '</tr>';
   });
   h+='</tbody></table>';
-  if(!open.length) h='<div class="note" style="margin-bottom:9px"><b>All clear.</b> No active account still carries a former team member’s name. The rules below re-apply on every sync in case SA sends the old names back.</div>'+h;
+  if(!TKO_VIEW.length) h='<div class="note" style="margin-bottom:9px"><b>All clear.</b> No active account is owned by a former team member. Rules below re-apply themselves on every sync in case SA sends the old names back.</div>'+h;
   box.innerHTML=h;
 }
 function runTakeover(i){
   const v=TKO_VIEW[i]; if(!v||!v.matches.length) return;
-  const to=document.getElementById('tkoSel'+i).value;
+  const toId=document.getElementById('tkoSel'+i).value, to=person(toId);
   if(!to) return;
-  if(!confirm('Hand '+v.matches.length+' account'+(v.matches.length===1?'':'s')+' still assigned to '+v.first+' over to '+to+'?'+BR2+
-    'The rule sticks: every future sync keeps moving '+v.first+'’s accounts to '+to+' until it is fixed in Service Autopilot.'))return;
-  v.matches.forEach(c=>{ if(!c.spWas) c.spWas=c.sp; c.sp=to; });
-  save(K_CLIENTS,CLIENTS);
-  TAKEOVERS=TAKEOVERS.filter(t=>String(t.from).toLowerCase()!==v.first.toLowerCase());
-  TAKEOVERS.push({from:v.first,to,on:todayISO(),moved:v.matches.length});
+  if(!confirm('Hand '+v.matches.length+' account'+(v.matches.length===1?'':'s')+' still assigned to '+v.label+' over to '+empName(to)+'?'+BR2+
+    'The rule sticks: every future sync keeps '+v.label+'’s accounts on '+empName(to)+' until it is fixed in Service Autopilot. Nothing on the records is rewritten — the original owner stays visible.'))return;
+  TAKEOVERS=TAKEOVERS.filter(t=>v.emp?t.fromId!==v.emp.id:(t.fromId||String(t.from).toLowerCase()!==v.label.toLowerCase()));
+  TAKEOVERS.push({from:v.label,fromId:v.emp?v.emp.id:'',to:empName(to),toId:toId,on:todayISO(),moved:v.matches.length,by:empWho()});
   save(K_TKO,TAKEOVERS);
-  toast(v.matches.length+' accounts moved to '+to);
+  empLog(to,'takeover',{from:v.label,moved:v.matches.length}); if(v.emp) empLog(v.emp,'handed-over',{to:empName(to),moved:v.matches.length});
+  save(K_PEOPLE,PEOPLE);
+  auditRecord('takeover',{from:v.label,fromId:v.emp?v.emp.id:'',to:toId,moved:v.matches.length});
+  toast(v.matches.length+' accounts now resolve to '+empName(to));
+  render();
+}
+function undoTakeover(i){
+  const v=TKO_VIEW[i]; if(!v||!v.rule) return;
+  if(!confirm('Remove the rule handing '+v.label+'’s accounts to '+esc(v.rule.to)+'?')) return;
+  TAKEOVERS=TAKEOVERS.filter(t=>t!==v.rule); save(K_TKO,TAKEOVERS);
+  auditRecord('takeover-undo',{from:v.label,to:v.rule.toId||v.rule.to});
   render();
 }
 
@@ -7489,15 +7523,16 @@ function renderRevenue(){
   // by rep, against what the tracker has logged
   const byRep={};
   INV.forEach(r=>{
-    const k=r.r||'(no rep on the line)';
-    const g=byRep[k]=byRep[k]||{name:k,billed:0,lines:0,clients:{}};
+    const rid=invoiceRepId(r);
+    const k=rid?('id:'+rid):(r.r||'(no rep on the line)');
+    const g=byRep[k]=byRep[k]||{name:rid?empName(person(rid)):k,rid:rid||null,billed:0,lines:0,clients:{}};
     g.billed+=r.v; g.lines++; g.clients[norm(r.c)]=1;
   });
   const reps=Object.values(byRep).sort((a,b)=>b.billed-a.billed);
   x='<thead><tr><th>Rep on the invoice</th><th class="num">Lines</th><th class="num">Clients</th>'+
     '<th class="num">Billed</th><th class="num">Share</th><th class="num">Logged here</th></tr></thead><tbody>';
   reps.forEach(g=>{
-    const id=matchRep(g.name);
+    const id=g.rid;
     const logged=id?ROWS.filter(r=>r.rep===id).reduce((a,r)=>a+bookedValue(r),0):null;
     x+='<tr><td>'+(id?'<span class="dot" style="background:'+pColor(id)+'"></span><b>'+empLink(id)+'</b>'
                      :'<span class="note">'+esc(g.name)+' <span class="pill no" title="Not on the roster — see Admin › Employee match needed">?</span></span>')+'</td>'+
@@ -7794,7 +7829,7 @@ function runChecks(){
     const lines=INVOICES.filter(x=>norm(x.c)===norm(r.client) && x.r &&
       Math.abs((dObj(x.d)-dObj(r.date))/86400000)<=60);
     const others={};
-    lines.forEach(x=>{ const id=matchRep(x.r); if(id && shareIds.indexOf(id)<0) others[x.r]=1; });
+    lines.forEach(x=>{ const id=invoiceRepId(x); if(id && shareIds.indexOf(id)<0) others[x.r]=1; });
     if(Object.keys(others).length) repMismatch.push({r, others:Object.keys(others)});
   });
   add('hawkRep','warn','🦅 Sale and invoice name different reps',
@@ -8126,7 +8161,7 @@ function runChecks(){
   /* --- leads going cold --- */
   if(CLIENTS.some(c=>c.ct==='Lead')){
     const d90=addDays(today,-90);
-    const cold=CLIENTS.filter(c=>c.ct==='Lead' && !c.gone && c.lead && c.lead<d90 && matchRep(c.sp));
+    const cold=CLIENTS.filter(c=>c.ct==='Lead' && !c.gone && c.lead && c.lead<d90 && clientRepId(c));
     add('coldleads','info','Leads over 90 days old',
       'Still open in Service Autopilot and assigned to someone on a comp plan. Either work them or close them out — they make the pipeline look bigger than it is.',
       cold.slice(0,40).map(c=>({text:'<b>'+esc(c.n)+'</b>'+(c.at?' · '+esc(c.at):''),
@@ -8172,7 +8207,7 @@ function fixBasis(id){
 function logFromClient(name,sp){
   openQuick();
   document.getElementById('qClient').value=name;
-  const hit=sp?matchRep(sp):null;
+  const hit=sp?(clientRepId({sp:sp})):null;
   if(hit) document.getElementById('qRep').value=hit;
   const c=CLIENTS.find(x=>x.n===name);
   if(c&&c.since) document.getElementById('qDate').value=c.since;
@@ -8503,7 +8538,7 @@ function oscClientPicked(){
   const c=CLIENTS.find(x=>norm(x.n)===norm(v));
   if(c){
     if(c.addr) document.getElementById('oAddr').value=c.addr+(c.city?', '+c.city:'')+(c.zip?' '+c.zip:'');
-    const rid=matchRep(c.sp); if(rid) document.getElementById('oRep').value=rid;
+    const rid=clientRepId(c); if(rid) document.getElementById('oRep').value=rid;
   }
   oscPreview();
 }
@@ -9611,8 +9646,8 @@ function editSplit(id){
   for(const part of parts){
     const m=part.match(/^(.*?)[\s:]+(\d+(?:\.\d+)?)\s*%?$/);
     if(!m){ alert('Could not read "'+part+'" — use: Name percent (e.g. Zach 60).'); return; }
-    const pid=matchRep(m[1]);
-    if(!pid){ alert('No salesperson here matches "'+m[1].trim()+'". Add them on Comp plans first.'); return; }
+    const pid=empPickTyped(m[1]);
+    if(!pid){ alert('No active team member matches "'+m[1].trim()+'" (use a full name, or a first name only one person has).'); return; }
     if(split.some(s=>s.rep===pid)){ alert(person(pid).name+' is listed twice.'); return; }
     split.push({rep:pid, pct:+m[2]});
   }
@@ -10173,6 +10208,14 @@ function nameTokens(s){
 // Every name-to-person lookup in the app funnels through the one resolver.
 // Exact email, confirmed alias, or exact full name (either order) — nothing looser.
 function matchRep(name, sys){ const r=resolveEmployee(name, sys||'*'); return r?r.id:null; }
+// For names an ADMIN TYPES (split prompt): exact resolver first, else a first name
+// that exactly one active team member has. Never used for imported data.
+function empPickTyped(text){
+  const r=resolveEmployee(text,'*'); if(r) return r.id;
+  const t=nameTokens(text); if(t.length!==1) return null;
+  const hits=PEOPLE.filter(p=>p.active && p.id!==EMP_UNASSIGNED && (nameTokens(empFirst(p))[0]===t[0] || nameTokens(p.display||'')[0]===t[0]));
+  return hits.length===1?hits[0].id:null;
+}
 
 function buildRows(){
   const m={}; MAP_FIELDS.forEach(f=>m[f[0]]=parseInt(document.getElementById(f[0]).value,10));
@@ -10609,7 +10652,8 @@ function empTimeline(D){
       'active':'Marked '+(d.to?'active':'former team member')+(d.ended?' as of '+fmtY(d.ended):''),
       'profile':'Profile updated: '+esc(Object.keys(d).join(', ')),'photo':'Profile photo '+(d.removed?'removed':'updated'),
       'roles':'Roles set to '+esc((d.to||[]).join(', ')||'none'),'email':'Company email set to '+esc(d.to||''),
-      'admin':'Admin access '+(d.to?'granted':'removed')}[l.what]||esc(l.what);
+      'admin':'Admin access '+(d.to?'granted':'removed'),
+      'takeover':'Took over '+(d.moved||0)+' accounts from '+esc(d.from||''),'handed-over':'Accounts handed to '+esc(d.to||'')+' ('+(d.moved||0)+')'}[l.what]||esc(l.what);
     ev(l.at,'id',txt+' <span class="note">· by '+esc(l.by||'')+'</span>');
   });
   D.rows.forEach(r=>{
@@ -10626,7 +10670,7 @@ function empTimeline(D){
   });
   D.disputes.forEach(d=>ev(d.raised,'bad','Dispute raised · '+esc(d.claim||'')+(d.status?' · '+esc(d.status):'')));
   D.oscs.forEach(o=>ev(o.when,'','Estimate booked · '+esc(o.client||'')));
-  TAKEOVERS.forEach(t=>{ if(t.toId===p.id) ev(t.on,'id','Took over '+(t.moved||0)+' accounts from '+esc(t.from)); if(t.fromId===p.id) ev(t.on,'id','Accounts handed to '+esc(t.to)); });
+  TAKEOVERS.forEach(t=>{ if(!(p.log||[]).some(l=>l.what==='takeover'||l.what==='handed-over')){ if(t.toId===p.id) ev(t.on,'id','Took over '+(t.moved||0)+' accounts from '+esc(t.from)); if(t.fromId===p.id) ev(t.on,'id','Accounts handed to '+esc(t.to)); } });
   if(typeof AUDIT!=='undefined'){
     const em=String(p.email||'').toLowerCase();
     AUDIT.forEach(a=>{ const d=a.det||{};
@@ -11200,11 +11244,7 @@ function cloudInit(){
 /* ============================================================
    BOOT
    ============================================================ */
-// One-time: tie the owner's Google login to his person record.
-(function(){
-  const j=PEOPLE.find(function(p){return /jeff\s*james/i.test(p.name||'');});
-  if(j && !j.email){ j.email='jeff@automatedlawnandpest.com'; save(K_PEOPLE,PEOPLE); }
-})();
+// Logins tie to employee records by verified email (empLinkLogin) — never by name.
 document.getElementById('hDate').value=todayISO();
 document.getElementById('cMonth').value=defaultReportMonth();
 render();

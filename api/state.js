@@ -63,6 +63,8 @@ async function ensureUsers(sql) {
   await sql`CREATE TABLE IF NOT EXISTS users (
     email TEXT PRIMARY KEY, name TEXT, role TEXT NOT NULL DEFAULT 'rep',
     added_by TEXT, added_at TIMESTAMPTZ NOT NULL DEFAULT now())`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMPTZ`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub TEXT`;
   const n = await sql`SELECT count(*)::int AS n FROM users`;
   if (!n[0].n) await sql`INSERT INTO users (email, name, role, added_by) VALUES (${ROOT_ADMIN}, 'Jeff James', 'admin', 'bootstrap')`;
 }
@@ -112,7 +114,9 @@ export default async function handler(req, res) {
     if (!u.length) return res.status(403).json({ denied: true, email,
       error: 'This Google account is not on the team list. An admin adds it under Admin → Team logins.' });
     const sess = { e: email, n: info.name || u[0].name || email, r: u[0].role, x: Date.now() + 30 * 86400000 };
-    return res.status(200).json({ ok: true, token: signSession(sess), email: sess.e, name: sess.n, role: sess.r });
+    // remember the Google subject id (stable per account) and when they last signed in
+    try { await sql2`UPDATE users SET last_login = now(), google_sub = COALESCE(google_sub, ${String(info.sub || '')}) WHERE email = ${email}`; } catch (e) {}
+    return res.status(200).json({ ok: true, token: signSession(sess), email: sess.e, name: sess.n, role: sess.r, sub: String(info.sub || '') });
   }
 
   // ---- health check (no password, no data) — reports config status only ----
@@ -257,7 +261,7 @@ export default async function handler(req, res) {
       await ensureUsers(sql);
       const isAdmin = (sess && sess.r === 'admin') || (!sess && pwOk);   // password path counts as admin (legacy)
       if (req.method === 'GET') {
-        const rows = await sql`SELECT email, name, role, added_by, added_at FROM users ORDER BY added_at`;
+        const rows = await sql`SELECT email, name, role, added_by, added_at, last_login FROM users ORDER BY added_at`;
         return res.status(200).json({ users: rows, you: who || '(password)' });
       }
       if (!isAdmin) return res.status(403).json({ error: 'admins only' });
