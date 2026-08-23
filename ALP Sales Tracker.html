@@ -7651,7 +7651,12 @@ function hawkCounts(){
     hawkNoInv:'sales missing their real invoice',
     hawkChain:'AUDIT TRAIL TAMPERED', hawkAfterPaid:'money changed after payout',
     hawkBump:'value raised right before payout', hawkPaidDel:'paid sales deleted', hawkNight:'dead-of-night changes',
-    hawkEmp:'sales not tied to a real employee', hawkSeason:'work completed out of season'};
+    hawkEmp:'sales not tied to a real employee', hawkSeason:'work completed out of season',
+    hawkOvGross:'manager override over-paid', hawkLedgerGap:'paid money the ledger cannot account for',
+    hawkVoidDate:'reversals with no effective date', hawkForgiven:'chargebacks forgiven',
+    hawkVariance:'paid sales drifted from their payout', hawkNoIdDupes:'probable duplicate sales',
+    hawkSplit:'splits holding money', hawkPrePlan:'sales earning $0 (plan starts later)',
+    hawkFormer:'former team members still in the money', hawkInvNo:'invoice numbers matching nothing'};
   const out={total:0,parts:[],items:{}};
   runChecks().forEach(c=>{
     if(HAWK_IDS[c.id] && c.items.length){
@@ -8604,6 +8609,144 @@ function runChecks(){
     'Counted for production but earns no commission, because it predates the commission plan. Fine if deliberate.',
     preplan.slice(0,40).map(r=>({text:'<b>'+esc(r.client)+'</b> · '+money(bookedValue(r)),
       sub:fmt(r.date)+' · '+(person(r.rep)?person(r.rep).name+' starts '+fmtY(person(r.rep).start):'')})));
+
+  /* ============================================================
+     🦅 TEN MORE SKILLS — every one of these is a failure mode a
+     real audit actually caught. Detection here, decision by a human.
+     ============================================================ */
+
+  /* --- 1. manager override journaled on more than the sale now earns --- */
+  const ovBad=[];
+  PAYOUTS.filter(x=>x.kind==='override'&&x.status==='paid').forEach(x=>{
+    const r=ROWS.find(q=>q.id===x.rowId); if(!r) return;
+    const should=netValue(r)*x.rate/100*x.share;
+    const cbs=PAYOUTS.filter(q=>q.rowId===x.rowId&&q.emp===x.emp&&q.kind==='manager-chargeback'&&q.status==='applied').reduce((a,q)=>a+q.amount,0);
+    const netPaid=x.amount+cbs;
+    if(netPaid-should>0.01) ovBad.push({x,r,should,netPaid});
+  });
+  add('hawkOvGross','bad','🦅 Manager override paid on more than the sale is worth',
+    'The override on these sales was journaled on a bigger value than the sale now earns (usually gross vs net after a reversal) and no chargeback covers the difference. The manager is over-paid until a correction is recorded.',
+    ovBad.slice(0,30).map(d=>({
+      text:'<b>'+esc(d.r.client)+'</b> · override '+money2(d.netPaid)+' paid, '+money2(d.should)+' earned',
+      sub:esc(empName(person(d.x.emp)))+' · sale net '+money(netValue(d.r))+' · paid '+fmt(d.x.paidOn),
+      act:'<button class="sm" onclick="setTab(\'adj\')">Adjustments</button>'
+    })));
+
+  /* --- 2. ledger gaps: paid with no payout record, or payouts pointing nowhere --- */
+  const gapRows=ROWS.filter(r=>r.paid && !rowHasLedger(r));
+  const strayPay=PAYOUTS.filter(x=>x.status!=='void' && (!ROWS.some(r=>r.id===x.rowId) || !person(x.emp)));
+  add('hawkLedgerGap','bad','🦅 Paid money the ledger cannot account for',
+    'A sale marked commission-paid with no payout record behind it (legacy — confirm it), or a payout entry pointing at a deleted sale or unknown employee. Until these are resolved, "who was paid what" has holes.',
+    gapRows.slice(0,20).map(r=>({
+      text:'<b>'+esc(r.client)+'</b> · paid '+fmt(r.paid)+' · '+money2(paidOut(r))+' unconfirmed',
+      sub:(r.payoutReview?esc(r.payoutReview):'no ledger entry')+' · '+esc(empName(person(r.rep))),
+      act:ADMIN?'<button class="sm p" onclick="payoutConfirm(\''+r.id+'\')">Confirm what was paid</button>':''
+    })).concat(strayPay.slice(0,10).map(x=>({
+      text:'Payout '+money2(x.amount)+' · '+esc(PAYOUT_KINDS[x.kind]||x.kind),
+      sub:(person(x.emp)?esc(empName(person(x.emp))):'unknown employee '+esc(x.emp))+' · sale '+esc(x.rowId)+(ROWS.some(r=>r.id===x.rowId)?'':' (deleted)'),
+      act:''
+    }))));
+
+  /* --- 3. reversals with no effective date --- */
+  const noVD=voidDateMissingRows();
+  add('hawkVoidDate','bad','🦅 Reversal with no effective date',
+    'A cancellation or refund with no date cannot place its chargeback in any month. Paid ones sit un-recovered; unpaid ones have no anchor in history. Set the date.',
+    noVD.slice(0,30).map(r=>({
+      text:'<b>'+esc(r.client)+'</b> · '+esc(VOID_LABEL[r.voidType]||r.voidType)+' · −'+money2(voidAmount(r)),
+      sub:(r.paid?'commission paid '+fmt(r.paid)+' — chargeback stuck':'not paid')+' · '+esc(empName(person(r.rep))),
+      act:ADMIN?'<button class="sm p" onclick="reversalSetDate(\''+r.id+'\')">Set effective date</button>':''
+    })));
+
+  /* --- 4. money forgiven outside the recovery window --- */
+  const forgivenEv=PAYOUTS.filter(x=>x.status==='forgiven');
+  add('hawkForgiven','warn','🦅 Chargebacks forgiven — economic loss on record',
+    'Reversals that landed outside the recovery window. Nothing is deducted, by policy — but this is real money the company ate, and management should see the running total.',
+    forgivenEv.slice(0,30).map(x=>{ const r=ROWS.find(q=>q.id===x.rowId);
+      return {text:'<b>'+esc(r?r.client:x.rowId)+'</b> · '+money2(-x.amount)+' forgiven',
+        sub:esc(empName(person(x.emp)))+' · '+esc(PAYOUT_KINDS[x.kind]||x.kind)+' · '+fmt(x.paidOn)+' · '+esc((x.reason||'').slice(0,80)),
+        act:''}; }));
+
+  /* --- 5. paid sales whose commission no longer matches the payout --- */
+  const varRows=[]; ROWS.filter(r=>r.paid&&rowHasLedger(r)).forEach(r=>{ const v=payoutVariance(r); if(v.length) varRows.push({r,v}); });
+  add('hawkVariance','warn','🦅 Paid sale drifted from its payout',
+    'The sale changed after the money went out (value, rate, split or owner), so today’s commission no longer matches what was paid. The payout stays as recorded — record a correction instead.',
+    varRows.slice(0,30).map(d=>({
+      text:'<b>'+esc(d.r.client)+'</b> · '+d.v.map(x=>esc(empShort(person(x.emp)))+' '+(x.diff>0?'under':'over')+'-paid '+money2(Math.abs(x.diff))).join(' · '),
+      sub:'paid '+fmt(d.r.paid)+' · '+money2(paidOut(d.r))+' on the ledger',
+      act:'<button class="sm" onclick="setTab(\'adj\')">Payout corrections</button>'
+    })));
+
+  /* --- 6. probable duplicate sales without a source ID --- */
+  const noId=ROWS.filter(r=>!r.voidType && !(r.src&&r.srcId));
+  const dupPairs=[]; const seenPair={};
+  for(let i=0;i<noId.length;i++){ const a=noId[i];
+    for(let j=0;j<ROWS.length;j++){ const b=ROWS[j]; if(a===b||b.voidType) continue;
+      if(a.rep!==b.rep) continue;
+      if(norm(a.client)!==norm(b.client)) continue;
+      const va=bookedValue(a), vb=bookedValue(b);
+      if(Math.abs(va-vb)>Math.max(va,vb)*0.01+0.01) continue;
+      if(Math.abs((dObj(a.date)-dObj(b.date))/86400000)>7) continue;
+      const k=[a.id,b.id].sort().join('|'); if(seenPair[k]) continue; seenPair[k]=1;
+      dupPairs.push({a,b});
+    } }
+  add('hawkNoIdDupes','warn','🦅 Probably the same sale twice (no source ID)',
+    'Two sales for the same client and rep, within 1% and a week of each other, at least one with no source record ID — the classic double-import. Both are earning commission until one goes.',
+    dupPairs.slice(0,20).map(d=>({
+      text:'<b>'+esc(d.a.client)+'</b> · '+money2(bookedValue(d.a))+' vs '+money2(bookedValue(d.b)),
+      sub:fmt(d.a.date)+' / '+fmt(d.b.date)+' · '+esc(empName(person(d.a.rep)))+' · '+esc(SRC_LABEL[d.a.src]||d.a.src)+' + '+esc(SRC_LABEL[d.b.src]||d.b.src),
+      act:'<button class="sm" onclick="rowInfo(\''+d.a.id+'\')">A</button> <button class="sm" onclick="rowInfo(\''+d.b.id+'\')">B</button>'
+    })));
+
+  /* --- 7. splits stuck in approval, or percentages that do not add up --- */
+  const stuck=ROWS.filter(r=>splitPending(r) && !r.voidType);
+  const oddPct=ROWS.filter(r=>Array.isArray(r.split)&&r.split.length&&Math.abs(r.split.reduce((a,x)=>a+(+x.pct||0),0)-100)>0.01);
+  add('hawkSplit','warn','🦅 Splits holding money or with odd percentages',
+    'A pending split pays NOBODY until every rep and an admin sign off — money sits in limbo. And a split whose percentages do not total 100 is silently re-proportioned, which is rarely what anyone meant.',
+    stuck.slice(0,20).map(r=>({
+      text:'<b>'+esc(r.client)+'</b> · '+money2(rowComm(r))+' held',
+      sub:'sold '+fmt(r.date)+' · '+rowShares(r).map(x=>esc(empShort(person(x.rep)))+' '+Math.round(x.frac*100)+'%').join(' / ')+' · waiting since '+fmt(r.date),
+      act:'<button class="sm" onclick="rowInfo(\''+r.id+'\')">Info</button>'
+    })).concat(oddPct.slice(0,10).map(r=>({
+      text:'<b>'+esc(r.client)+'</b> · split totals '+num(r.split.reduce((a,x)=>a+(+x.pct||0),0),1)+'%',
+      sub:r.split.map(x=>esc(empShort(person(x.rep)))+' '+x.pct+'%').join(' / ')+' — re-proportioned automatically',
+      act:'<button class="sm" onclick="editSplit(\''+r.id+'\')">Fix split</button>'
+    }))));
+
+  /* --- 8. production with a $0 commission plan behind it --- */
+  const prePlan=ROWS.filter(r=>{ if(r.voidType) return false; const p=person(r.rep); return p && r.date<(p.start||'0000') && r.date<=today; });
+  const ppBy={}; prePlan.forEach(r=>{ (ppBy[r.rep]=ppBy[r.rep]||[]).push(r); });
+  add('hawkPrePlan','warn','🦅 Sales earning $0 because the comp plan starts later',
+    'These sales are dated before the rep’s plan start, so they earn no commission and no production credit anywhere. If these people really are selling, the plan start date is wrong on Comp plans.',
+    Object.keys(ppBy).slice(0,10).map(id=>{ const p=person(id), L=ppBy[id];
+      return {text:'<b>'+esc(empName(p))+'</b> · '+L.length+' sale'+(L.length===1?'':'s')+' · '+money(L.reduce((a,r)=>a+netValue(r),0))+' earning $0',
+        sub:'plan starts '+fmtY(p.start)+' · earliest sale '+fmt(L.map(r=>r.date).sort()[0]),
+        act:ADMIN?'<button class="sm" onclick="setTab(\'plans\');selPerson(\''+id+'\')">Fix plan start</button>':''}; }));
+
+  /* --- 9. former team members still in the money --- */
+  const formerNew=ROWS.filter(r=>{ const p=person(r.rep); return p && !p.active && p.id!==EMP_UNASSIGNED && r.date>(p.ended||p.start||'0000') && !r.voidType; });
+  const formerOwed=PEOPLE.filter(p=>!p.active&&p.id!==EMP_UNASSIGNED).map(p=>({p, owed:ROWS.filter(r=>shareFor(r,p.id)>0&&!r.paid&&!r.voidType&&!splitPending(r)&&r.date>=(p.start||'0000')).reduce((a,r)=>a+rowComm(r)*shareFor(r,p.id),0)})).filter(x=>x.owed>0.01);
+  add('hawkFormer','warn','🦅 Former team members still in the money',
+    'New sales credited to somebody after they left (probably a mis-pick or a stale import default), and former people still owed unpaid commission that should be settled or reassigned deliberately.',
+    formerNew.slice(0,15).map(r=>({
+      text:'<b>'+esc(r.client)+'</b> · '+money2(bookedValue(r))+' credited to '+esc(empName(person(r.rep))),
+      sub:'sold '+fmt(r.date)+' · they left '+fmtY(person(r.rep).ended||person(r.rep).start),
+      act:'<button class="sm" onclick="openEdit(\''+r.id+'\')">Fix rep</button>'
+    })).concat(formerOwed.slice(0,10).map(x=>({
+      text:'<b>'+esc(empName(x.p))+'</b> · '+money2(x.owed)+' unpaid commission on the books',
+      sub:'former team member — settle it or reassign the sales deliberately',
+      act:'<button class="sm" onclick="openEmp(\''+x.p.id+'\')">Their page</button>'
+    }))));
+
+  /* --- 10. invoice numbers that match nothing in the invoice audit --- */
+  const invNos={}; INVOICES.forEach(x=>{ if(x.i) invNos[String(x.i).trim()]=1; });
+  const badNo=INVOICES.length?ROWS.filter(r=>r.invNo && String(r.invNo).trim() && !invNos[String(r.invNo).trim()] && !r.voidType):[];
+  add('hawkInvNo','warn','🦅 Invoice number matches nothing in the invoice audit',
+    'THE LAW says every paid sale carries its real invoice number — but these numbers do not exist in the imported invoice audit. A typo here quietly breaks the sale-to-billing link.',
+    badNo.slice(0,25).map(r=>({
+      text:'<b>'+esc(r.client)+'</b> · #'+esc(r.invNo),
+      sub:'sold '+fmt(r.date)+' · '+(r.paid?'commission PAID against this number':'invoiced '+(r.invoiced?fmt(r.invoiced):'—')),
+      act:'<button class="sm" onclick="openEdit(\''+r.id+'\')">Check number</button>'
+    })));
 
   return out;
 }

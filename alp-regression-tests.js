@@ -948,6 +948,67 @@
         results.push({name:'reversal engine exists (journalReversal/compPosition)', expected:true, actual:false, pass:false});
       }
 
+
+      /* ---------- DATA HAWK ×10: each new skill fires on its fixture, quiet when clean ---------- */
+      if(typeof runChecks==='function' && typeof PAYOUTS!=='undefined'){
+        var alertH=window.alert; window.alert=function(){};
+        var HA=mkPerson({id:'HKA', name:'Hawk Ann'}); HA.first='Hawk'; HA.last='Ann'; HA.roles=['sales']; HA.start='2026-01-01'; HA.commNew=10; HA.commUp=5; HA.mgr='HKM'; HA.aliases=[]; HA.log=[];
+        var HM=mkPerson({id:'HKM', name:'Hawk Mia'}); HM.first='Hawk'; HM.last='Mia'; HM.roles=['manager']; HM.start='2026-01-01'; HM.commOv=5; HM.commNew=0; HM.commUp=0; HM.aliases=[]; HM.log=[];
+        var HF=mkPerson({id:'HKF', name:'Hawk Fred'}); HF.first='Hawk'; HF.last='Fred'; HF.roles=['sales']; HF.start='2026-01-01'; HF.commNew=10; HF.commUp=5; HF.active=false; HF.ended='2026-05-01'; HF.aliases=[]; HF.log=[];
+        PEOPLE=[HA,HM,HF]; ROWS=[]; PAYOUTS=[]; DISPUTES=[]; CLIENTS=[]; INVOICES=[]; OPENINV=[]; TAKEOVERS=[]; EMP_IDX=null; GLOBAL.payLag=30; GLOBAL.policy.clawbackDays=180;
+        var hk=function(id){ var c=runChecks().find(function(x){return x.id===id;}); return c?c.items.length:0; };
+        var fx=function(o){ var r=mkRow(Object.assign({rep:'HKA', type:'new', value:1000, date:'2026-06-05', invoiced:'2026-06-10', client:'HawkCo'},o||{})); freezeDueLag(r); return r; };
+        check('HAWK10 clean slate: none of the new checks fire', 0,
+          ['hawkOvGross','hawkLedgerGap','hawkVoidDate','hawkForgiven','hawkVariance','hawkNoIdDupes','hawkSplit','hawkPrePlan','hawkFormer','hawkInvNo'].reduce(function(a,id){return a+hk(id);},0));
+        // 1. override journaled on gross after a partial reversal
+        var h1=fx({value:4000,voidType:'refunded',voidAmt:1000,voidDate:'2026-06-01'}); ROWS=[h1]; h1.paid='2026-07-15'; journalPaid(h1,'2026-07-15');
+        var ovE=PAYOUTS.find(function(x){return x.kind==='override';}); if(ovE){ ovE.basisValue=4000; ovE.amount=200; }   // reproduce the F1 defect shape
+        check('HAWK10 override-on-gross flagged', 1, hk('hawkOvGross'));
+        ROWS=[]; PAYOUTS=[];
+        // 2. ledger gap: paid with no payout entry
+        var h2=fx({paid:'2026-07-15',paidAmt:null}); h2.payoutReview='no frozen paid amount'; ROWS=[h2];
+        check('HAWK10 ledger gap flagged', 1, hk('hawkLedgerGap'));
+        ROWS=[];
+        // 3. reversal without an effective date
+        var h3=fx({voidType:'cancelled',voidAmt:1000,voidDate:''}); ROWS=[h3];
+        check('HAWK10 missing void date flagged', 1, hk('hawkVoidDate'));
+        ROWS=[];
+        // 4. forgiven chargeback surfaces
+        HA.start='2025-01-01'; var h4=fx({date:'2025-06-05',invoiced:'2025-06-10'}); ROWS=[h4]; h4.paid='2025-07-15'; journalPaid(h4,'2025-07-15'); h4.voidType='cancelled'; h4.voidAmt=1000; h4.voidDate='2026-06-01'; journalReversal(h4);
+        checkTrue('HAWK10 forgiven chargeback listed', hk('hawkForgiven')>=1, hk('hawkForgiven')); HA.start='2026-01-01';
+        ROWS=[]; PAYOUTS=[];
+        // 5. paid sale drifted from its payout
+        var h5=fx({}); ROWS=[h5]; h5.paid='2026-07-15'; journalPaid(h5,'2026-07-15'); h5.value=2500;
+        check('HAWK10 payout variance flagged', 1, hk('hawkVariance'));
+        ROWS=[]; PAYOUTS=[];
+        // 6. probable duplicate without a source id
+        ROWS=[fx({client:'Twin Co',value:900}), fx({client:'Twin Co',value:905,date:'2026-06-07'})];
+        check('HAWK10 no-id duplicate pair flagged', 1, hk('hawkNoIdDupes'));
+        ROWS=[];
+        // 7. pending split holds money; odd percentages
+        var h7=fx({split:[{rep:'HKA',pct:60},{rep:'HKM',pct:60}]}); ROWS=[h7];
+        check('HAWK10 pending + odd-pct split flagged (2 items)', 2, hk('hawkSplit'));
+        ROWS=[];
+        // 8. pre-plan production
+        HA.start='2026-09-01'; ROWS=[fx({date:'2026-06-05'})];
+        check('HAWK10 pre-plan sale flagged (grouped by person)', 1, hk('hawkPrePlan'));
+        HA.start='2026-01-01'; ROWS=[];
+        // 9. former team member credited after leaving + still owed
+        ROWS=[fx({rep:'HKF',date:'2026-06-05'})];
+        check('HAWK10 former member: new sale + owed commission (2 items)', 2, hk('hawkFormer'));
+        ROWS=[];
+        // 10. invoice number matching nothing
+        INVOICES=[{c:'HawkCo',i:'8001',d:'2026-06-11',s:'Mow',v:1000,t:0,k:'x',r:''}];
+        ROWS=[fx({invNo:'9999'})];
+        check('HAWK10 unknown invoice number flagged', 1, hk('hawkInvNo'));
+        ROWS=[fx({invNo:'8001'})];
+        check('HAWK10 matching invoice number stays quiet', 0, hk('hawkInvNo'));
+        ROWS=[]; INVOICES=[];
+        window.alert=alertH;
+      } else {
+        results.push({name:'hawk x10 present', expected:true, actual:false, pass:false});
+      }
+
       /* ---------- C2: tombstones stop deleted records resurrecting ---------- */
       if(typeof addTombstone==='function' && typeof isTombstoned==='function'){
         TOMBSTONES=[];
