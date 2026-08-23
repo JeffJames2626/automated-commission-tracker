@@ -111,7 +111,15 @@ a.emplink:hover{color:var(--grn-d);border-bottom-color:var(--grn)}
 .rcard.off{opacity:.6}
 .rcard .nm{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rcard .meta{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rcard .pills{margin-top:5px;display:flex;gap:4px;flex-wrap:wrap}
+.rcard .pills{margin-top:6px;display:flex;gap:4px;flex-wrap:wrap}
+.rcard .nmrow{display:flex;align-items:center;gap:7px;min-width:0}
+.rcard .chips2{margin-top:5px;display:flex;gap:5px;flex-wrap:wrap}
+.pill.sales{background:var(--grn);color:#fff;font-size:11.5px;padding:3px 10px;letter-spacing:.08em;box-shadow:0 1px 2px rgba(0,0,0,.15)}
+.pill.truck{background:var(--band);color:var(--ink);font-weight:600}
+.pill.phone{background:var(--band);color:var(--ink);font-weight:500;font-family:ui-monospace,Menlo,Consolas,monospace}
+.av.up{cursor:pointer;position:relative}
+.av.up:hover{outline:3px solid var(--gold);outline-offset:1px}
+.av.up:hover:after{content:"＋";position:absolute;right:-2px;bottom:-2px;width:16px;height:16px;border-radius:50%;background:var(--gold);color:#1c2119;font-size:12px;line-height:16px;text-align:center;font-weight:700}
 .ephead{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 .ephead .nm{font-size:21px;font-weight:700;letter-spacing:-.01em}
 .ephead .meta{font-size:13px;color:var(--muted);margin-top:2px}
@@ -524,6 +532,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
 <body>
 
 <div id="loginWall" style="display:none"></div>
+<input type="file" id="avFile" accept="image/*" style="display:none" onchange="empPhotoFromInput(event)">
 
 <header>
   <div class="wrap">
@@ -10614,10 +10623,36 @@ function empReconcile(id){
 // Manually uploaded photo wins; else a photo URL from the roster sheet; else initials.
 // A broken image swaps itself for the initials so the layout never shows a hole.
 function empPhotoSrc(p){ if(p.photo) return p.photo; const u=String(p.photoUrl||'').trim(); return /^https?:\/\//i.test(u)?u:''; }
-function empAvatar(p,size){
+function empAvatar(p,size,up){
   size=size||36; const src=empPhotoSrc(p);
+  const can=up && ADMIN;
   const st='width:'+size+'px;height:'+size+'px;font-size:'+Math.round(size*.38)+'px;background:'+pColor(p.id);
-  return '<span class="av" style="'+st+'" data-ini="'+esc(empInitials(p))+'">'+(src?'<img src="'+esc(src)+'" alt="" loading="lazy" onerror="empImgFail(this)">':esc(empInitials(p)))+'</span>';
+  return '<span class="av'+(can?' up':'')+'" style="'+st+'" data-ini="'+esc(empInitials(p))+'"'+(can?' title="Click to add or change the photo" onclick="event.stopPropagation();empPhotoPick(\''+esc(p.id)+'\')"':'')+'>'+
+    (src?'<img src="'+esc(src)+'" alt="" loading="lazy" onerror="empImgFail(this)">':esc(empInitials(p)))+'</span>';
+}
+function empPhotoPick(id){ if(!ADMIN) return; window.__avFor=id; const f=document.getElementById('avFile'); if(f){ f.value=''; f.click(); } }
+function empPhotoFromInput(ev){ const f=ev.target.files&&ev.target.files[0]; if(!f) return; const p=person(window.__avFor||EP_ID); if(p) empPhotoStore(f,p); }
+// Resize to 160px square, store on the record, log it. Shared by the page form and click-to-upload.
+function empPhotoStore(f,p){
+  if(!p||!ADMIN) return;
+  if(!/^image\//.test(f.type||'')){ alert('That is not an image file.'); return; }
+  if(f.size>25*1024*1024){ alert('That image is over 25 MB — please use a smaller one.'); return; }
+  const rd=new FileReader();
+  rd.onload=function(){
+    const img=new Image();
+    img.onerror=function(){ alert('Could not read that image.'); };
+    img.onload=function(){
+      const S=160, cv=document.createElement('canvas'); cv.width=S; cv.height=S;
+      const cx=cv.getContext('2d'); const r=Math.max(S/img.width,S/img.height), w=img.width*r, hh=img.height*r;
+      cx.fillStyle='#fff'; cx.fillRect(0,0,S,S);
+      cx.drawImage(img,(S-w)/2,(S-hh)/2,w,hh);
+      p.photo=cv.toDataURL('image/jpeg',.82);
+      empLog(p,'photo',{}); save(K_PEOPLE,PEOPLE); auditRecord('emp-edit',{emp:p.id,photo:true});
+      toast('Photo saved for '+empShort(p)); render(); if(EP_ID) renderEmp();
+    };
+    img.src=rd.result;
+  };
+  rd.readAsDataURL(f);
 }
 function empImgFail(img){ const w=img.parentNode; if(!w) return; w.textContent=w.getAttribute('data-ini')||'?'; }
 function empLink(id,label){
@@ -10663,17 +10698,23 @@ function renderRoster(){
   if(!list.length){ box.innerHTML='<div class="empty">Nobody matches.</div>'; return; }
   box.innerHTML=list.map(p=>{
     const a=empAccountStatus(p);
-    return '<div class="rcard'+(p.active?'':' off')+'" onclick="openEmp(\''+p.id+'\')">'+empAvatar(p,46)+
-      '<div style="min-width:0;flex:1"><div class="nm">'+esc(empName(p))+'</div>'+
+    return '<div class="rcard'+(p.active?'':' off')+'" onclick="openEmp(\''+p.id+'\')">'+empAvatar(p,52,true)+
+      '<div style="min-width:0;flex:1"><div class="nmrow"><div class="nm">'+esc(empName(p))+'</div>'+(empIsSales(p)?'<span class="pill sales">SALES</span>':'')+'</div>'+
       '<div class="meta">'+esc(p.title||'—')+(p.dept?' · '+esc(p.dept):'')+'</div>'+
-      '<div class="meta">'+(p.email?esc(p.email):'<span style="color:var(--red)">no company email</span>')+((p.phone||p.truck)?' · '+esc(p.phone||'')+(p.phone&&p.truck?' · ':'')+esc(p.truck||''):'')+'</div>'+
+      '<div class="meta">'+(p.email?esc(p.email):'<span style="color:var(--red)">no company email</span>')+'</div>'+
+      '<div class="chips2">'+empWhereChip(p)+(p.phone?'<span class="pill phone">☎ '+esc(p.phone)+'</span>':'')+'</div>'+
       '<div class="pills">'+(p.active?'<span class="pill ok">ACTIVE</span>':'<span class="pill n">FORMER</span>')+
-      (empIsSales(p)?'<span class="pill sa">SALES</span>':'')+
       ((p.roles||[]).indexOf('estimator')>-1?'<span class="pill el">ESTIMATOR</span>':'')+
       '<span class="pill '+a.cls+'" title="'+esc(a.detail)+'">'+a.label+'</span>'+
       ((p.google&&p.google.email)?'<span class="pill ok" title="Google account linked: '+esc(p.google.email)+'">GOOGLE ✓</span>':'')+
       '</div></div></div>';
   }).join('');
+}
+
+// Where they work from: their truck, or the office (with a location if one is set).
+function empWhereChip(p){
+  if(p.truck) return '<span class="pill truck" title="assigned truck">🚚 '+esc(p.truck)+'</span>';
+  return '<span class="pill truck" title="office-based">🏢 '+esc(p.location||'Office')+'</span>';
 }
 
 /* ---- ROSTER HEALTH: the numbers an admin needs after a sync ---- */
@@ -11104,11 +11145,11 @@ function renderEmp(){
   if(D.accts.length) secs.push(['accounts','Accounts ('+D.accts.length.toLocaleString()+')']);
   secs.push(['history','History']); secs.push(['account','Account']);
   if(!secs.some(x=>x[0]===EP_SEC)) EP_SEC='overview';
-  let h='<div class="ephead">'+empAvatar(p,72)+'<div style="flex:1;min-width:0"><div class="nm">'+esc(empName(p))+'</div>'+
+  let h='<div class="ephead">'+empAvatar(p,72,true)+'<div style="flex:1;min-width:0"><div class="nm">'+esc(empName(p))+(empIsSales(p)?' <span class="pill sales" style="vertical-align:middle">SALES</span>':'')+'</div>'+
     '<div class="meta">'+esc(p.title||'No title')+(p.dept?' · '+esc(p.dept):'')+(p.email?' · '+esc(p.email):' · no company email')+'</div>'+
-    ((p.phone||p.truck||p.ext)?'<div class="meta">'+[p.phone,p.truck,p.ext?'ext '+p.ext:''].filter(Boolean).map(esc).join(' · ')+'</div>':'')+
+    '<div class="chips2" style="margin-top:6px">'+empWhereChip(p)+(p.phone?'<span class="pill phone">☎ '+esc(p.phone)+'</span>':'')+(p.ext?'<span class="pill phone">ext '+esc(p.ext)+'</span>':'')+'</div>'+
     '<div class="pills">'+(p.active?'<span class="pill ok">ACTIVE</span>':'<span class="pill n">FORMER'+(p.ended?' · since '+esc(p.ended):'')+'</span>')+
-    (p.roles||[]).map(r=>'<span class="pill '+(r==='sales'?'sa':r==='estimator'?'el':'n')+'">'+esc((EMP_ROLES.find(x=>x[0]===r)||[r,r])[1].toUpperCase())+'</span>').join('')+
+    (p.roles||[]).filter(r=>r!=='sales').map(r=>'<span class="pill '+(r==='estimator'?'el':'n')+'">'+esc((EMP_ROLES.find(x=>x[0]===r)||[r,r])[1].toUpperCase())+'</span>').join('')+
     '<span class="pill '+a.cls+'" title="'+esc(a.detail)+'">'+a.label+'</span>'+
     ((p.google&&p.google.email)?'<span class="pill ok" title="'+esc(p.google.email)+'">GOOGLE CONNECTED</span>':'<span class="pill n">GOOGLE NOT CONNECTED</span>')+
     (ADMIN?((a.u&&a.u.role==='admin')?'<span class="pill mid">APP ADMIN</span>':'')+(p.admin?'<span class="pill mid" title="local PIN gate">PIN ADMIN</span>':''):'')+
@@ -11261,7 +11302,8 @@ function renderEmp(){
         '<div><label>Company email</label><input id="epEmail" type="email" value="'+esc(p.email||'')+'"></div>'+
         '<div><label>Other emails (comma-separated)</label><input id="epAlt" value="'+esc((p.altEmails||[]).join(', '))+'" placeholder="personal@gmail.com"></div>'+
         '<div><label>Phone</label><input id="epPhone" value="'+esc(p.phone||'')+'"></div>'+
-        '<div><label>Truck</label><input id="epTruck" value="'+esc(p.truck||'')+'" placeholder="GMC #014"></div>'+
+        '<div><label>Truck</label><input id="epTruck" value="'+esc(p.truck||'')+'" placeholder="GMC #014 (blank = office)"></div>'+
+        '<div><label>Office location</label><input id="epLoc" value="'+esc(p.location||'')+'" placeholder="Main shop / remote"></div>'+
         '<div><label>Phone ext</label><input id="epExt" value="'+esc(p.ext||'')+'"></div>'+
         '<div class="full"><label>Roles</label><div class="rolechips">'+EMP_ROLES.map(r=>'<label><input type="checkbox" class="epRole" value="'+r[0]+'"'+((p.roles||[]).indexOf(r[0])>-1?' checked':'')+'> '+r[1]+'</label>').join('')+'</div></div>'+
         '<div><label>Status</label><select id="epActive"><option value="1"'+(p.active?' selected':'')+'>Active</option><option value="0"'+(p.active?'':' selected')+'>Former team member</option></select></div>'+
@@ -11291,7 +11333,8 @@ function empSaveProfile(){
   if(display!==(p.display||'')){ p.display=display; changed.display=1; }
   if(title!==(p.title||'')){ p.title=title; changed.title=1; }
   if(dept!==(p.dept||'')){ p.dept=dept; changed.dept=1; }
-  const phone=g('epPhone'), truck=g('epTruck'), ext=g('epExt');
+  const phone=g('epPhone'), truck=g('epTruck'), ext=g('epExt'), loc=g('epLoc');
+  if(loc!==(p.location||'')){ p.location=loc; changed.location=1; }
   const alt=g('epAlt').toLowerCase().split(/[,;\s]+/).map(x=>x.trim()).filter(x=>x&&x.indexOf('@')>-1&&x!==email);
   for(const a of alt){ const hit=resolveEmployee('','*',{email:a}); if(hit && hit.id!==p.id){ alert(a+' already belongs to '+empName(person(hit.id))+'.'); return; } }
   if(phone!==(p.phone||'')){ p.phone=phone; changed.phone=1; }
@@ -11307,25 +11350,7 @@ function empSaveProfile(){
   auditRecord('emp-edit',{emp:p.id,name:p.name,active:p.active,roles:roles});
   toast('Profile saved'); render(); renderEmp();
 }
-function empPhotoPicked(ev){
-  const f=ev.target.files&&ev.target.files[0]; if(!f) return;
-  const p=person(EP_ID); if(!p||!ADMIN) return;
-  const rd=new FileReader();
-  rd.onload=function(){
-    const img=new Image();
-    img.onload=function(){
-      const S=160, cv=document.createElement('canvas'); cv.width=S; cv.height=S;
-      const cx=cv.getContext('2d'); const r=Math.max(S/img.width,S/img.height), w=img.width*r, hh=img.height*r;
-      cx.fillStyle='#fff'; cx.fillRect(0,0,S,S);
-      cx.drawImage(img,(S-w)/2,(S-hh)/2,w,hh);
-      p.photo=cv.toDataURL('image/jpeg',.82);
-      empLog(p,'photo',{}); save(K_PEOPLE,PEOPLE); auditRecord('emp-edit',{emp:p.id,photo:true});
-      toast('Photo saved'); render(); renderEmp();
-    };
-    img.src=rd.result;
-  };
-  rd.readAsDataURL(f);
-}
+function empPhotoPicked(ev){ const f=ev.target.files&&ev.target.files[0]; if(!f) return; empPhotoStore(f, person(EP_ID)); }
 function empGoogleUnlink(){ const p=person(EP_ID); if(!p||!ADMIN||!p.google) return; if(!confirm('Disconnect '+p.google.email+' from '+empName(p)+'?')) return; const em=p.google.email; delete p.google; empLog(p,'account-unlinked',{email:em}); save(K_PEOPLE,PEOPLE); EMP_IDX=null; auditRecord('emp-edit',{emp:p.id,googleUnlinked:em}); render(); renderEmp(); }
 function empPhotoRemove(){ const p=person(EP_ID); if(!p||!ADMIN) return; delete p.photo; empLog(p,'photo',{removed:true}); save(K_PEOPLE,PEOPLE); render(); renderEmp(); }
 
