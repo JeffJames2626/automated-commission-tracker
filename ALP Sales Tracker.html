@@ -1224,6 +1224,13 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
     </section>
 
     <section class="adminsec">
+      <div class="hdr"><h3>🔏 Audit trail</h3>
+        <span class="hint">Every change to a logged sale — who, when, from which device. Chained locally, vaulted on the server with IP and server time. Proof for the reps and for the company.</span></div>
+      <div class="note" id="auditStatus" style="margin-bottom:10px"></div>
+      <div class="scroll" id="auditBody"></div>
+    </section>
+
+    <section class="adminsec">
       <div class="hdr"><h3>Deleted imported records</h3>
         <span class="hint">Sales you deleted that will stay deleted through re-imports. Restore one to let the next import bring it back.</span></div>
       <div class="scroll" id="tombBody"></div>
@@ -2386,8 +2393,12 @@ function logEdit(r,f,from,to,by){
   from=from==null?'':String(from); to=to==null?'':String(to);
   if(from===to) return;
   if(!r.orig) r.orig=snapOrig(r);
-  (r.edits=r.edits||[]).push({on:todayISO(), f, from, to, by:by||'user'});
+  (r.edits=r.edits||[]).push({on:todayISO(), at:new Date().toISOString(), f, from, to, by:by||'user'});
   if(r.edits.length>80) r.edits=r.edits.slice(-80);
+  // every field change also lands on the audit trail (local chain + server vault)
+  if(typeof auditRecord==='function')
+    auditRecord('edit',{rowId:r.id, client:r.client, srcId:r.srcId||'', f:f, from:from.slice(0,120), to:to.slice(0,120),
+      by:by||'user', paid:r.paid||'', value:bookedValue(r)});
 }
 // Has a person (not a sync) changed this field? Syncs never overwrite a human.
 function userEdited(r,f){ return !!(r.edits && r.edits.some(e=>e.f===f && e.by!=='sync')); }
@@ -2407,7 +2418,8 @@ function addTombstone(r){
   const sk=tombSrcKey(r), ck=tombCompKey(r);
   if(TOMBSTONES.some(t=>(sk&&t.srcKey===sk)||t.compKey===ck)) return;
   TOMBSTONES.push({srcKey:sk, compKey:ck, src:r.src||'', srcId:r.srcId||'',
-    client:r.client||'', value:bookedValue(r), date:r.date||'', on:todayISO()});
+    client:r.client||'', value:bookedValue(r), date:r.date||'', on:todayISO(),
+    paid:r.paid||''});   // a deleted PAID sale is a red flag the hawk watches for
   if(TOMBSTONES.length>2000) TOMBSTONES=TOMBSTONES.slice(-2000);
   save(K_TOMB,TOMBSTONES);
 }
@@ -2422,6 +2434,100 @@ function restoreTombstone(key){
   TOMBSTONES=TOMBSTONES.filter(t=>t.srcKey!==key && t.compKey!==key);
   if(TOMBSTONES.length!==before) save(K_TOMB,TOMBSTONES);
   return before-TOMBSTONES.length;
+}
+
+/* ---- THE AUDIT TRAIL ----
+   Every change to a logged sale is recorded twice:
+   1. LOCALLY, in a hash chain — each entry carries the hash of the one before
+      it, so rewriting or deleting history breaks the chain and the Data Hawk
+      flags it. Tamper-EVIDENT.
+   2. ON THE SERVER, in an append-only vault stamped with the server's own
+      clock and the sender's IP address. There is no delete route — nobody
+      holding just the app password can erase what happened. Tamper-PROOF
+      up to the database itself.
+   Who: the self-declared device user, plus the unlocked admin when there is
+   one, plus timezone/language/platform of the device. */
+const K_AUDIT='alp_audit_v1', K_AUDITQ='alp_auditq_v1', K_DEVUSER='alp_device_user';
+let AUDIT  = load(K_AUDIT,[]);     // local hash-chained copy (capped)
+let AUDITQ = load(K_AUDITQ,[]);    // entries not yet shipped to the server vault
+let AUDIT_CHAIN={ok:true, brokenAt:-1, checked:0};
+let AUDIT_HASHQ=Promise.resolve();
+let AUDIT_SRV={total:null, at:0};
+
+function deviceUserQuiet(){ return localStorage.getItem(K_DEVUSER)||''; }
+function setDeviceUser(){
+  const p=prompt('Who uses this device? This name goes on the audit trail for every change made here.',
+    deviceUserQuiet());
+  if(p!=null && p.trim()){ localStorage.setItem(K_DEVUSER,p.trim()); render(); toast('Audit trail will name '+p.trim()); }
+}
+function deviceInfo(){
+  let tz=''; try{ tz=Intl.DateTimeFormat().resolvedOptions().timeZone||''; }catch(e){}
+  return {tz:tz, lang:navigator.language||'', plat:String(navigator.platform||'').slice(0,24),
+          ua:String(navigator.userAgent||'').slice(0,90)};
+}
+async function sha256hex(s){
+  const b=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('');
+}
+function auditBody(e){ return (e.ph||'')+'|'+JSON.stringify({t:e.t,action:e.action,user:e.user,admin:e.admin,det:e.det}); }
+// Record one event. Synchronous append; the hash is computed in strict order
+// on a queued promise so the chain never interleaves.
+function auditRecord(action, det){
+  try{
+    const pred=AUDIT.length?AUDIT[AUDIT.length-1]:null;   // captured now; its hash finishes before ours (queue order)
+    const e={t:new Date().toISOString(), action:action,
+      user:deviceUserQuiet()||'(unnamed device)',
+      admin:(typeof ADMIN!=='undefined'&&ADMIN&&currentAdmin())?currentAdmin().name:'',
+      dev:deviceInfo(), det:det||{}, ph:'', h:''};
+    AUDIT.push(e);
+    if(AUDIT.length>4000) AUDIT=AUDIT.slice(-3500);   // chain stays valid: verification roots at entry 0's ph
+    AUDITQ.push({t:e.t,action:e.action,user:e.user,admin:e.admin,dev:e.dev,det:e.det});
+    if(AUDITQ.length>2000) AUDITQ=AUDITQ.slice(-2000);
+    AUDIT_HASHQ=AUDIT_HASHQ.then(async function(){
+      // link to the predecessor HERE, where its hash is guaranteed computed —
+      // linking at push time raced the hasher and broke clean chains
+      e.ph = pred ? (pred.h||'') : '';
+      e.h  = await sha256hex(auditBody(e));
+      try{ localStorage.setItem(K_AUDIT,JSON.stringify(AUDIT)); }catch(x){}
+      try{ localStorage.setItem(K_AUDITQ,JSON.stringify(AUDITQ)); }catch(x){}
+    });
+    auditShipSoon();
+  }catch(err){ /* the audit trail must never break the app */ }
+}
+// Walk the chain and recompute every hash. Any mismatch = history was altered.
+async function verifyAuditChain(){
+  let prev=AUDIT.length?(AUDIT[0].ph||''):'';
+  for(let i=0;i<AUDIT.length;i++){
+    const e=AUDIT[i];
+    if((e.ph||'')!==prev) return {ok:false, brokenAt:i, checked:Date.now()};
+    if(!e.h) return {ok:true, brokenAt:-1, checked:Date.now(), unhashedTail:i};   // still being written
+    const h=await sha256hex(auditBody(e));
+    if(h!==e.h) return {ok:false, brokenAt:i, checked:Date.now()};
+    prev=e.h;
+  }
+  return {ok:true, brokenAt:-1, checked:Date.now()};
+}
+// Ship queued entries to the server vault (append-only, IP-stamped there).
+let AUDIT_SHIPPING=false, AUDIT_SHIPTIMER=null;
+function auditShipSoon(){ clearTimeout(AUDIT_SHIPTIMER); AUDIT_SHIPTIMER=setTimeout(auditShip,4000); }
+async function auditShip(){
+  if(AUDIT_SHIPPING || !AUDITQ.length) return;
+  if(typeof CLOUD==='undefined' || !CLOUD.on || !cloudPw()) return;   // vault lives with the cloud backend
+  AUDIT_SHIPPING=true;
+  try{
+    const batch=AUDITQ.slice(0,100);
+    const r=await fetch(CLOUD.url+'?audit=1',{method:'POST',
+      headers:{'content-type':'application/json','x-app-password':cloudPw()},
+      body:JSON.stringify({entries:batch})});
+    if(r.ok){
+      const j=await r.json();
+      AUDITQ=AUDITQ.slice(batch.length);
+      try{ localStorage.setItem(K_AUDITQ,JSON.stringify(AUDITQ)); }catch(x){}
+      if(j.total!=null){ AUDIT_SRV={total:j.total, at:Date.now()}; }
+      if(AUDITQ.length) auditShipSoon();
+    }
+  }catch(e){ /* offline — the queue keeps them until the vault is reachable */ }
+  AUDIT_SHIPPING=false;
 }
 
 /* ---- sale lifecycle ---- */
@@ -2977,6 +3083,35 @@ function renderAdmin(){
 
   renderChecks();
   renderTombstones();
+  renderAudit();
+}
+
+function renderAudit(){
+  const st=document.getElementById('auditStatus'), box=document.getElementById('auditBody');
+  if(!st||!box) return;
+  const chain = AUDIT_CHAIN.ok
+    ? '<span class="pill ok">CHAIN VERIFIED</span>'
+    : '<span class="pill no">CHAIN BROKEN at #'+AUDIT_CHAIN.brokenAt+'</span>';
+  st.innerHTML=chain+' · '+AUDIT.length.toLocaleString()+' local entries · server vault: '+
+    (AUDIT_SRV.total==null?'<span class="note">'+(CLOUD.on?'syncing…':'connects when ☁ is on')+'</span>':('<b>'+AUDIT_SRV.total.toLocaleString()+'</b> entries (append-only, IP-stamped)'))+
+    (AUDITQ.length?' · <b>'+AUDITQ.length+'</b> waiting to ship':'')+
+    ' · this device: <b>'+esc(deviceUserQuiet()||'(unnamed)')+'</b> '+
+    '<button class="sm" onclick="setDeviceUser()">Set name</button> '+
+    '<button class="sm" onclick="verifyAuditChain().then(function(r){AUDIT_CHAIN=r;renderAudit();toast(r.ok?\'Chain verified clean\':\'CHAIN BROKEN at #\'+r.brokenAt);})">Verify now</button>';
+  if(!AUDIT.length){ box.innerHTML='<div class="note">No changes recorded yet. From now on, every edit, delete, import and payout change lands here.</div>'; return; }
+  let x='<table><thead><tr><th>When</th><th>Who</th><th>What</th><th>Detail</th></tr></thead><tbody>';
+  AUDIT.slice(-40).reverse().forEach(function(e){
+    const d=e.det||{};
+    x+='<tr><td class="mono" style="white-space:nowrap">'+new Date(e.t).toLocaleString()+'</td>'+
+      '<td>'+esc(e.user||'?')+(e.admin?'<div class="note">admin: '+esc(e.admin)+'</div>':'')+
+        '<div class="note">'+esc((e.dev&&e.dev.tz)||'')+'</div></td>'+
+      '<td><b>'+esc(e.action)+'</b>'+(d.by==='sync'?' <span class="pill n">SYNC</span>':'')+'</td>'+
+      '<td>'+esc(d.client||d.src||'')+
+        (d.f?' · '+esc(d.f)+': "'+esc(String(d.from==null?'':d.from).slice(0,40))+'" → "'+esc(String(d.to==null?'':d.to).slice(0,40))+'"':'')+
+        (d.value!=null&&!d.f?' · '+money2(+d.value||0):'')+
+        (d.added!=null?' · +'+d.added+' new, '+d.updated+' updated':'')+'</td></tr>';
+  });
+  box.innerHTML=x+'</tbody></table>';
 }
 
 function renderTombstones(){
@@ -2995,6 +3130,7 @@ function renderTombstones(){
 function restoreDeleted(key){
   if(!confirm('Restore this deleted record?\n\nIt does not reappear now — the next import of the source file will bring it back as a single row.'))return;
   restoreTombstone(key);
+  auditRecord('restore',{key:key});
   toast('Restored — it will return on the next import');
   render();
 }
@@ -4960,6 +5096,8 @@ function quickSave(again){
     srcAt:new Date().toISOString()};
   row.orig=snapOrig(row);
   ROWS.push(row); save(K_ROWS,ROWS);
+  auditRecord('create',{rowId:row.id, client:row.client, value:bookedValue(row), type:row.type,
+    rep:(person(row.rep)||{}).name||row.rep, src:row.src});
   QADDED.unshift(row.id);
 
   GLOBAL.lastRep=rp; GLOBAL.lastSrc=row.src; save(K_GLOBAL,GLOBAL);
@@ -6554,7 +6692,9 @@ function pauseNudge(){ toast('Paused — this week’s data files have to be imp
 function pauseSnooze(){
   if(!ADMIN){ toast('Only an unlocked admin can do that'); return; }
   if(!confirm('Unlock the tracker until midnight without importing?\n\nThe pause comes straight back tomorrow.'))return;
-  GLOBAL.pauseSnooze=todayISO(); save(K_GLOBAL,GLOBAL); render();
+  GLOBAL.pauseSnooze=todayISO(); save(K_GLOBAL,GLOBAL);
+  auditRecord('pause-override',{until:'midnight'});
+  render();
 }
 function renderPauseBar(){
   let bar=document.getElementById('pauseBar');
@@ -6640,7 +6780,9 @@ function renderHawkChip(){
 function hawkCounts(){
   const HAWK_IDS={cross:'same job in both systems',dupes:'possible duplicates',hawkRep:'rep mismatches',
     hawkOwes:'commission moving while customer owes',hawkDrift:'source changed values',hawkDupInv:'doubled invoice lines',
-    hawkTax:'sale values that look tax-inclusive'};
+    hawkTax:'sale values that look tax-inclusive',
+    hawkChain:'AUDIT TRAIL TAMPERED', hawkAfterPaid:'money changed after payout',
+    hawkBump:'value raised right before payout', hawkPaidDel:'paid sales deleted', hawkNight:'dead-of-night changes'};
   const out={total:0,parts:[],items:{}};
   runChecks().forEach(c=>{
     if(HAWK_IDS[c.id] && c.items.length){
@@ -7294,6 +7436,73 @@ function runChecks(){
         sub:'pre-tax value should be '+money2(d.inv.pre)+' · sold '+fmt(d.r.date),
         act:'<button class="sm p" onclick="openEdit(\''+d.r.id+'\')">Edit the sale</button> '+
             '<button class="sm" onclick="rowInfo(\''+d.r.id+'\')">Info</button>'};
+    }));
+
+  /* --- THE DATA HAWK: the audit trail itself --- */
+  // Proof, not vibes. The local chain must verify, and certain patterns are
+  // exactly what digital theft looks like: money fields changed after a
+  // commission went out, a value bumped right before payout, a PAID sale
+  // deleted, changes landing in the dead of night.
+  if(!AUDIT_CHAIN.ok){
+    add('hawkChain','bad','🦅 AUDIT TRAIL BROKEN — records were altered outside the app',
+      'The local audit chain fails verification at entry #'+AUDIT_CHAIN.brokenAt+
+      '. Someone edited or deleted history directly (dev tools, storage edit). The server vault still holds the original copies — compare them.',
+      [{text:'<b>Chain verification failed</b> at entry #'+AUDIT_CHAIN.brokenAt,
+        sub:'Local entries: '+AUDIT.length+' · server vault: '+(AUDIT_SRV.total==null?'unknown':AUDIT_SRV.total)+' entries',
+        act:''}]);
+  }
+  const MONEY_FIELDS={value:1,type:1,rep:1,qty:1,basis:1,commRate:1,split:1};
+  const afterPaid=[];
+  ROWS.forEach(function(r){
+    if(!r.paid||!r.edits) return;
+    const bad=r.edits.filter(function(e){
+      return MONEY_FIELDS[e.f] && e.on>r.paid;
+    });
+    if(bad.length) afterPaid.push({r:r,e:bad[bad.length-1],n:bad.length});
+  });
+  add('hawkAfterPaid','bad','🦅 Money fields changed AFTER commission was paid',
+    'The commission on these sales already went out, then somebody changed the value, type, rep, or split. The paid month stays frozen, but this is exactly the pattern that hides a skim — every change here is on the audit trail with who and when.',
+    afterPaid.slice(0,30).map(function(d){
+      return {text:'<b>'+esc(d.r.client)+'</b> · '+d.e.f+': "'+esc(String(d.e.from).slice(0,30))+'" → "'+esc(String(d.e.to).slice(0,30))+'"',
+        sub:'commission paid '+fmt(d.r.paid)+' · changed '+fmt(d.e.on)+' ('+esc(d.e.by||'user')+')'+(d.n>1?' · +'+(d.n-1)+' more changes':''),
+        act:'<button class="sm" onclick="rowInfo(\''+d.r.id+'\')">Full history</button>'};
+    }));
+  const bumpThenPaid=[];
+  ROWS.forEach(function(r){
+    if(!r.paid||!r.edits) return;
+    r.edits.forEach(function(e){
+      if(e.f!=='value') return;
+      const up=(+e.to||0)>(+e.from||0);
+      const gap=(dObj(r.paid)-dObj(e.on))/86400000;
+      if(up && gap>=0 && gap<=3) bumpThenPaid.push({r:r,e:e,gap:Math.round(gap)});
+    });
+  });
+  add('hawkBump','warn','🦅 Value raised right before commission went out',
+    'The sale value went UP within three days of the commission being paid. Sometimes legitimate — always worth eyes.',
+    bumpThenPaid.slice(0,20).map(function(d){
+      return {text:'<b>'+esc(d.r.client)+'</b> · '+money2(+d.e.from||0)+' → '+money2(+d.e.to||0),
+        sub:'raised '+fmt(d.e.on)+', paid '+fmt(d.r.paid)+' ('+d.gap+'d later) · '+esc(d.e.by||'user'),
+        act:'<button class="sm" onclick="rowInfo(\''+d.r.id+'\')">Full history</button>'};
+    }));
+  const paidDeleted=TOMBSTONES.filter(function(t){return t.paid;});
+  add('hawkPaidDel','bad','🦅 A PAID sale was deleted',
+    'Commission was paid on these sales and then the record was deleted. The tombstone and the audit trail both keep the proof.',
+    paidDeleted.slice(0,20).map(function(t){
+      return {text:'<b>'+esc(t.client)+'</b> · '+money2(+t.value||0)+(t.srcId?' · '+esc(t.src)+' #'+esc(t.srcId):''),
+        sub:'commission paid '+fmt(t.paid)+' · deleted '+fmt(t.on),
+        act:''};
+    }));
+  const night=AUDIT.filter(function(e){
+    if(e.action!=='edit'&&e.action!=='delete') return false;
+    const h=new Date(e.t).getHours();
+    return h>=23||h<5;
+  });
+  add('hawkNight','warn','🦅 Changes made in the dead of night',
+    'Edits and deletions between 11pm and 5am local time. Not wrong by itself — but a burst of them is worth a look.',
+    night.slice(-15).reverse().map(function(e){
+      return {text:'<b>'+esc((e.det&&e.det.client)||'?')+'</b> · '+esc(e.action)+(e.det&&e.det.f?' '+esc(e.det.f):''),
+        sub:new Date(e.t).toLocaleString()+' · '+esc(e.user||'?')+(e.admin?' (admin: '+esc(e.admin)+')':''),
+        act:''};
     }));
 
   /* --- THE DATA HAWK: identical invoice lines counted twice --- */
@@ -8541,6 +8750,8 @@ function delRow(id){
   if(!confirm('Delete this sale?\n\n'+r.client+' · '+fmtY(r.date)+' · '+money2(bookedValue(r))+
     (imported?'\n\nThis came from an import. It will be remembered as deleted so re-importing the same file does not bring it back. You can restore it on the Admin tab.':'')))return;
   if(imported) addTombstone(r);   // remember the deletion so the next import respects it
+  auditRecord('delete',{rowId:r.id, client:r.client, srcId:r.srcId||'', value:bookedValue(r),
+    paid:r.paid||'', invoiced:r.invoiced||'', type:r.type});
   ROWS=ROWS.filter(x=>x.id!==id); save(K_ROWS,ROWS); render();
 }
 /* ---- searchable client picker ----
@@ -9407,6 +9618,9 @@ function doImport(){
     seen.add(k); ROWS.push(r); added++;
   });
   save(K_ROWS,ROWS);
+  auditRecord('import',{src:src, batch:batch, rows:out.length, added:added, updated:updated,
+    dupes:dupes, tombed:tombed, stale:stale.length,
+    total:Math.round(out.reduce((a,b)=>a+bookedValue(b),0))});
   IMPLOG.push({id:batch,on:todayISO(),at:new Date().toISOString().slice(11,16),src,
     rows:out.length,added,updated,dupes,
     total:Math.round(out.reduce((a,b)=>a+bookedValue(b),0))});
@@ -9718,6 +9932,10 @@ function cloudInit(){
   if(cloudHasBackend() && cloudPw()) cloudStart(true);
   // re-pull when the tab regains focus, so another device's changes show up
   document.addEventListener('visibilitychange',()=>{ if(!document.hidden && CLOUD.on) cloudPull(false); });
+  // audit trail: verify the local chain on boot, ship anything queued
+  verifyAuditChain().then(function(r){ AUDIT_CHAIN=r; HAWK_CACHE={at:0,c:null}; renderHawkChip(); renderAudit(); });
+  setTimeout(auditShip, 6000);
+  setInterval(auditShip, 120000);
 }
 
 /* ============================================================

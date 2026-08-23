@@ -52,7 +52,9 @@
     // ---- snapshot every global the tests touch ----
     var snap={ PEOPLE:PEOPLE, ROWS:ROWS, GLOBAL:GLOBAL, DISPUTES:DISPUTES,
                HOURS:(typeof HOURS!=='undefined'?HOURS:undefined),
-               TOMBSTONES:(typeof TOMBSTONES!=='undefined'?TOMBSTONES:undefined) };
+               TOMBSTONES:(typeof TOMBSTONES!=='undefined'?TOMBSTONES:undefined),
+               AUDIT:(typeof AUDIT!=='undefined'?AUDIT:undefined),
+               AUDITQ:(typeof AUDITQ!=='undefined'?AUDITQ:undefined) };
     try{
       var P = mkPerson();
       PEOPLE=[P]; DISPUTES=[]; if(typeof HOURS!=='undefined') HOURS=[];
@@ -222,6 +224,38 @@
       checkTrue('HAWK catches fuzzy cross-CRM double (spelling+$50+10d)',
         crossChk && crossChk.items.length>=1, crossChk?crossChk.items.length:'no check');
 
+      /* ---------- AUDIT TRAIL: every change lands on the trail ---------- */
+      if(typeof auditRecord==='function' && typeof AUDIT!=='undefined'){
+        AUDIT=[]; AUDITQ=[];
+        var ar=mkRow({client:'Audit Test Co', value:500});
+        ROWS=[ar];
+        logEdit(ar,'value','500','750','user'); ar.value=750;
+        checkTrue('AUDIT edit recorded', AUDIT.length===1 && AUDIT[0].action==='edit', AUDIT.length);
+        checkTrue('AUDIT entry carries who/when/device',
+          !!(AUDIT[0].t && AUDIT[0].user && AUDIT[0].dev && AUDIT[0].dev.tz!==undefined), JSON.stringify(AUDIT[0]).length);
+        checkTrue('AUDIT entry queued for the server vault', AUDITQ.length===1, AUDITQ.length);
+        checkTrue('AUDIT edits carry a full timestamp', !!ar.edits[0].at, ar.edits[0].at);
+        // hawk: money edit AFTER commission paid must flag
+        var hp=mkRow({client:'After Paid Co', value:1000, invoiced:'2026-06-01', paid:'2026-06-10', paidAmt:100});
+        hp.edits=[{on:'2026-06-20', at:'2026-06-20T10:00:00Z', f:'value', from:'1000', to:'1400', by:'user'}];
+        ROWS=[hp];
+        var hA=runChecks().find(function(c){return c.id==='hawkAfterPaid';});
+        checkTrue('HAWK flags money edit AFTER payout', hA && hA.items.length===1, hA?hA.items.length:'none');
+        // hawk: value bumped then paid within 3 days
+        var hb2=mkRow({client:'Bump Co', value:1400, invoiced:'2026-06-01', paid:'2026-06-12', paidAmt:140});
+        hb2.edits=[{on:'2026-06-10', at:'2026-06-10T10:00:00Z', f:'value', from:'1000', to:'1400', by:'user'}];
+        ROWS=[hb2];
+        var hB=runChecks().find(function(c){return c.id==='hawkBump';});
+        checkTrue('HAWK flags value raised right before payout', hB && hB.items.length===1, hB?hB.items.length:'none');
+        // hawk: deleting a PAID sale leaves a flagged tombstone
+        TOMBSTONES=[{srcKey:'SA|XX',compKey:'x',client:'Paid Deleted Co',value:900,on:'2026-06-15',paid:'2026-06-01',src:'SA',srcId:'XX'}];
+        var hD=runChecks().find(function(c){return c.id==='hawkPaidDel';});
+        checkTrue('HAWK flags a deleted PAID sale', hD && hD.items.length===1, hD?hD.items.length:'none');
+        TOMBSTONES=[];
+      } else {
+        results.push({name:'AUDIT machinery exists', expected:true, actual:false, pass:false});
+      }
+
       /* ---------- C2: tombstones stop deleted records resurrecting ---------- */
       if(typeof addTombstone==='function' && typeof isTombstoned==='function'){
         TOMBSTONES=[];
@@ -246,6 +280,8 @@
       PEOPLE=snap.PEOPLE; ROWS=snap.ROWS; GLOBAL=snap.GLOBAL; DISPUTES=snap.DISPUTES;
       if(typeof HOURS!=='undefined' && snap.HOURS!==undefined) HOURS=snap.HOURS;
       if(typeof TOMBSTONES!=='undefined' && snap.TOMBSTONES!==undefined) TOMBSTONES=snap.TOMBSTONES;
+      if(typeof AUDIT!=='undefined' && snap.AUDIT!==undefined) AUDIT=snap.AUDIT;
+      if(typeof AUDITQ!=='undefined' && snap.AUDITQ!==undefined) AUDITQ=snap.AUDITQ;
     }
 
     var pass=results.filter(function(r){return r.pass;}).length;
