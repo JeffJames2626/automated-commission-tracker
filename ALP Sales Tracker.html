@@ -598,9 +598,12 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
     <div class="card" id="planCard">
       <div class="pad">
         <div class="sechead"><h3 id="planName">Comp plan</h3>
+          <span class="pill ok" id="planSaved" style="display:none">✓ saved</span>
           <span class="hspace"></span>
           <button class="sm danger" onclick="delPerson()">Remove person</button>
         </div>
+        <div class="note">Every change on this page <b>saves itself instantly</b> — there is no Save button to press.
+          The ✓ lights up each time it writes<span id="planCloudNote"></span>.</div>
 
         <h2 style="margin:16px 0 8px">Identity</h2>
         <div class="frow">
@@ -1954,7 +1957,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
 
 <div class="toast" id="toast"></div>
 
-<footer>Data is stored in this browser only — nothing is uploaded anywhere. Use <b>Backup all</b> for a file you can keep.</footer>
+<footer id="appFooter">Every change saves itself instantly — there is no Save button anywhere in this app. Use <b>Backup all</b> for a file you can keep.</footer>
 
 <script>
 /* ============================================================
@@ -3875,10 +3878,22 @@ function savePlan(){
   p.acv=Math.max(1,pNum(g('acv').value)||ACV_DEFAULT);
   p.offMonths=[].slice.call(document.querySelectorAll('#pMonths input:checked')).map(e=>+e.dataset.m);
   save(K_PEOPLE,PEOPLE);
+  planSavedFlash();
   planLabels(p);
   document.querySelectorAll('#pMonths label').forEach((l,i)=>l.classList.toggle('on',p.offMonths.indexOf(i)>-1));
   document.getElementById('planName').innerHTML='<span class="dot" style="background:'+pColor(p.id)+'"></span>'+esc(p.name);
   renderPlanList(); renderScenarios(); renderHours(); renderTeam(); renderScore();
+}
+// Visible proof that the autosave fired — lights the ✓ for a moment on every write.
+let PLAN_SAVED_T=null;
+function planSavedFlash(){
+  const el=document.getElementById('planSaved'); if(!el) return;
+  el.style.display='inline-block';
+  el.textContent = (typeof CLOUD!=='undefined' && CLOUD.on) ? '✓ saved · syncing ☁' : '✓ saved';
+  const note=document.getElementById('planCloudNote');
+  if(note) note.textContent = (typeof CLOUD!=='undefined' && CLOUD.on) ? ' and syncs to the cloud' : '';
+  clearTimeout(PLAN_SAVED_T);
+  PLAN_SAVED_T=setTimeout(function(){ el.style.display='none'; }, 2500);
 }
 
 function addPerson(){
@@ -10159,6 +10174,11 @@ function cloudBadge(){
 }
 function cloudSetStatus(s,msg){
   CLOUD.status=s;
+  // keep the footer honest about where the data lives
+  const ft=document.getElementById('appFooter');
+  if(ft) ft.innerHTML = (s==='live'||s==='saving')
+    ? 'Every change saves itself instantly and syncs to your private cloud (☁) — no Save button anywhere. <b>Backup all</b> still makes a file you can keep.'
+    : 'Every change saves itself instantly to this browser — no Save button anywhere. Turn on ☁ to sync across devices, and use <b>Backup all</b> for a file you can keep.';
   const el=cloudBadge(); if(!el) return;
   const map={off:['☁ Cloud: off','#a9b3a5'],live:['☁ Live','#8fce8f'],
     saving:['☁ Saving…','#e6d38a'],offline:['☁ Offline','#e8a89f'],error:['☁ Cloud error','#e8a89f']};
