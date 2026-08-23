@@ -2533,6 +2533,10 @@ function commFor(r,pid){
 }
 // A paid sale whose current commission no longer matches what was paid — a
 // correction is owed (to or from somebody). Never changes the ledger by itself.
+function ledgerRepNet(r,emp){
+  return PAYOUTS.filter(x=>x.rowId===r.id && x.emp===emp && x.status!=='void' &&
+    ((['rep','adjustment'].indexOf(x.kind)>-1 && x.status==='paid') || (x.kind==='rep-chargeback' && x.status==='applied'))).reduce((a,x)=>a+x.amount,0);
+}
 function ledgerOverridePaid(r,emp){
   return PAYOUTS.filter(x=>x.rowId===r.id && x.emp===emp && x.status!=='void' &&
     (OV_KINDS.indexOf(x.kind)>-1 || (x.kind==='manager-chargeback' && x.status==='applied'))).reduce((a,x)=>a+x.amount,0);
@@ -2540,7 +2544,7 @@ function ledgerOverridePaid(r,emp){
 function payoutVariance(r){
   if(!r.paid || !rowHasLedger(r)) return [];
   const out=[]; const ids=new Set(rowShares(r).map(x=>x.rep).concat(payoutsFor(r.id,null,['rep','adjustment']).map(x=>x.emp)));
-  ids.forEach(id=>{ const now=round2(rowComm(r)*shareFor(r,id)), paid=round2(ledgerPaid(r,id)); if(Math.abs(now-paid)>=0.01) out.push({emp:id,kind:'rep',now,paid,diff:round2(now-paid)}); });
+  ids.forEach(id=>{ const now=round2(rowComm(r)*shareFor(r,id)), paid=round2(ledgerRepNet(r,id)); if(Math.abs(now-paid)>=0.01) out.push({emp:id,kind:'rep',now,paid,diff:round2(now-paid)}); });
   // the manager override on this sale, measured against its own frozen rate
   payoutsFor(r.id,null,['override']).forEach(o=>{
     const paid=round2(ledgerOverridePaid(r,o.emp)), now=round2(netValue(r)*o.rate/100*o.share);
@@ -2619,7 +2623,8 @@ function journalReversal(r,recon){
     if(cb>0.004) out.push(recordPayout({kind:'rep-chargeback',emp,rowId:r.id,period,basisValue:voidAmount(r),rate:o.rate,share:o.share,amount:-cb,paidOn:r.voidDate,status:inWin?'applied':'forgiven',adjOf:o.id,reason:why+tail,reconstructed:!!recon}));
   });
   payoutsFor(r.id,null,['override']).forEach(o=>{
-    const now=netValue(r)*o.rate/100*o.share, cb=round2(o.amount-now);
+    // prior chargebacks were voided above, so this is entry + any override corrections
+    const now=netValue(r)*o.rate/100*o.share, cb=round2(ledgerOverridePaid(r,o.emp)-now);
     if(cb>0.004) out.push(recordPayout({kind:'manager-chargeback',emp:o.emp,rowId:r.id,period,basisValue:voidAmount(r),rate:o.rate,share:o.share,amount:-cb,paidOn:r.voidDate,status:inWin?'applied':'forgiven',adjOf:o.id,reason:why+tail,reconstructed:!!recon}));
   });
   r.cbJournaled=true;
@@ -3801,7 +3806,7 @@ function renderPayoutLedgerCard(){
   const sum=k=>live.filter(x=>x.kind===k).reduce((a,x)=>a+x.amount,0);
   const rev=payoutReviewRows(); const mig=(GLOBAL.payoutMig||[]).slice(-1)[0];
   let h='<div class="tiles small">'+tile('Payout entries',live.length,(voided?voided+' voided · ':'')+PAYOUTS.filter(x=>x.reconstructed).length+' reconstructed from legacy')+
-    tile('Rep commission paid',money(sum('rep')),'all time, ledger')+tile('Corrections',money(sum('adjustment')),'net of + and −')+tile('Override paid',money(sum('override')),'managers')+
+    tile('Rep commission paid',money(sum('rep')),'all time, ledger')+tile('Corrections',money(sum('adjustment')+sum('override-adjustment')),'net of + and −')+tile('Override paid',money(sum('override')+sum('override-adjustment')),'managers')+
     tile('Legacy to confirm',rev.length,rev.length?money(rev.reduce((a,r)=>a+(r.paidCalc?r.paidCalc.amount:0),0))+' frozen at migration':'nothing waiting',rev.length?'bad':'ok')+
     tile('Chargebacks',money(-PAYOUTS.filter(x=>(x.kind==='rep-chargeback'||x.kind==='manager-chargeback')&&x.status==='applied').reduce((a,x)=>a+x.amount,0)),money(-PAYOUTS.filter(x=>x.status==='forgiven').reduce((a,x)=>a+x.amount,0))+' forgiven (outside window)')+
     tile('Reversals to review',reversalReviewRows().length+' / '+voidDateMissingRows().length,'paid without chargeback · missing effective date',(reversalReviewRows().length||voidDateMissingRows().length)?'bad':'ok')+'</div>';
@@ -4878,7 +4883,7 @@ function commissionFor(p, ym, basis, opts){
       let v=0, comm=0, paid=0;
       rs.forEach(r=>{ const anyOv=payoutsFor(r.id,null,['override'])[0];
         if(anyOv && anyOv.emp!==p.id) return;                     // override on this sale was already paid — to a different manager; nothing here
-        if(anyOv){ const adj=PAYOUTS.filter(x=>x.rowId===r.id&&x.emp===p.id&&x.kind==='override-adjustment'&&x.status!=='void').reduce((a,x)=>a+x.amount,0);
+        if(anyOv){ const adj=PAYOUTS.filter(q=>q.rowId===r.id&&q.emp===p.id&&q.kind==='override-adjustment'&&q.status!=='void').reduce((a,q)=>a+q.amount,0);   // q, not x: x is the report in the enclosing loop
           v+=anyOv.basisValue; comm+=anyOv.amount+adj; paid+=anyOv.amount+adj; }
         else { const nv=netValue(r); v+=nv; comm+=nv*p.commOv/100; } });
       if(v>0||comm>0) team.push({name:x.name, id:x.id, booked:v, comm:comm, paid:paid, since: lo>from?lo:null});
@@ -12299,7 +12304,7 @@ function renderEmp(){
       h+='<h3 style="margin:8px 0 6px">Payout ledger</h3><div class="note" style="margin-bottom:6px">Every dollar actually handed to '+esc(empShort(p))+' — permanent. Corrections are separate entries that point at the original; nothing here is ever rewritten.</div>';
       h+='<div class="scroll"><table><thead><tr><th>Paid</th><th>Period</th><th>Kind</th><th>Sale</th><th class="num">Basis</th><th class="num">Rate</th><th class="num">Share</th><th class="num">Amount</th><th>Recorded by</th><th></th></tr></thead><tbody>';
       myL.forEach(x=>{ const r=ROWS.find(q=>q.id===x.rowId);
-        h+='<tr'+(x.status==='void'?' style="opacity:.5;text-decoration:line-through"':'')+'><td class="mono">'+fmtY(x.paidOn)+'</td><td class="mono">'+esc(x.period)+'</td><td><span class="pill '+(x.kind==='adjustment'?'mid':x.kind==='override'?'el':'ok')+'">'+esc(PAYOUT_KINDS[x.kind]||x.kind)+'</span>'+(x.reconstructed?' <span class="pill n" title="reconstructed from the legacy record at migration">legacy</span>':'')+'</td>'+
+        h+='<tr'+(x.status==='void'?' style="opacity:.5;text-decoration:line-through"':'')+'><td class="mono">'+fmtY(x.paidOn)+'</td><td class="mono">'+esc(x.period)+'</td><td><span class="pill '+(x.kind==='adjustment'?'mid':OV_KINDS.indexOf(x.kind)>-1?'el':'ok')+'">'+esc(PAYOUT_KINDS[x.kind]||x.kind)+'</span>'+(x.reconstructed?' <span class="pill n" title="reconstructed from the legacy record at migration">legacy</span>':'')+'</td>'+
           '<td>'+(r?'<b>'+esc(r.client)+'</b><div class="note">'+fmtY(r.date)+' · '+esc(r.service||'')+'</div>':'<span class="note">sale '+esc(x.rowId)+' (deleted)</span>')+(x.reason?'<div class="note">'+esc(x.reason)+'</div>':'')+(x.status==='void'?'<div class="note">voided: '+esc(x.voidReason||'')+'</div>':'')+'</td>'+
           '<td class="num mono">'+money(x.basisValue)+'</td><td class="num mono">'+num(x.rate,1)+'%</td><td class="num mono">'+Math.round(x.share*100)+'%</td><td class="num mono"><b>'+(x.amount<0?'−':'')+money(Math.abs(x.amount))+'</b></td><td class="note">'+esc(x.by||'')+'<div>'+esc(String(x.at||'').slice(0,10))+'</div></td>'+
           '<td class="num">'+(r?'<button class="sm" onclick="rowInfo(\''+r.id+'\')">Info</button>':'')+'</td></tr>'; });

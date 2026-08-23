@@ -1082,6 +1082,28 @@
         var pos=compPosition(OM,todayISO().slice(0,7));
         check('OV7 balance identity holds', pos.closing, pos.opening+pos.earned+pos.override+pos.adjust-pos.chargebacks-pos.paid);
 
+        // O8 — REVIEW PANEL: a correction followed by a reversal must not recover twice
+        PAYOUTS=[]; var o8=mkO({}); ROWS=[o8]; o8.paid='2026-07-15'; journalPaid(o8,'2026-07-15');
+        var gross=ovOf(o8.id)[0]; gross.amount=250; gross.basisValue=5000;      // an override entry written too high
+        recordCorrection(o8.id,'OM',-50,'recorded on the wrong basis',{kind:'override'});
+        check('OV8 after correction the manager net-holds 200', 200, ovNet(o8.id));
+        o8.voidType='cancelled'; o8.voidAmt=4000; o8.voidDate='2026-08-05'; journalReversal(o8);
+        check('OV8 fully cancelled: chargeback recovers exactly what is held (200), not the entry alone', 0, ovNet(o8.id));
+        check('OV8 the chargeback event is 200', -200, PAYOUTS.filter(function(x){return x.rowId===o8.id&&x.kind==='manager-chargeback'&&x.status!=='void';}).reduce(function(a,x){return a+x.amount;},0));
+
+        // O9 — REVIEW PANEL: a rep chargeback already recovered the money, so no
+        // "over-paid" correction may be offered for it (that would recover it twice)
+        PAYOUTS=[]; var o9=mkO({}); ROWS=[o9]; o9.paid='2026-07-15'; journalPaid(o9,'2026-07-15');
+        check('OV9 rep paid 400', 400, ledgerPaid(o9,'OA'));
+        o9.voidType='cancelled'; o9.voidAmt=4000; o9.voidDate='2026-08-05'; journalReversal(o9);
+        check('OV9 rep chargeback −400 recorded', -400, PAYOUTS.filter(function(x){return x.rowId===o9.id&&x.kind==='rep-chargeback'&&x.status!=='void';}).reduce(function(a,x){return a+x.amount;},0));
+        check('OV9 rep now nets 0 — square', 0, ledgerRepNet(o9,'OA'));
+        check('OV9 NO phantom correction offered for the rep', 0, payoutVariance(o9).filter(function(x){return x.kind==='rep';}).length);
+        check('OV9 NO phantom correction offered for the manager', 0, payoutVariance(o9).filter(function(x){return x.kind==='override';}).length);
+        // a genuine drift on a reversed sale is still caught
+        o9.value=6000;
+        checkTrue('OV9 a real drift after the reversal is still flagged', payoutVariance(o9).length>0, payoutVariance(o9).length);
+
         window.alert=alertO; window.toast=toastO; PAYOUTS=[]; DISPUTES=[];
       } else {
         results.push({name:'override-on-net fix present', expected:true, actual:false, pass:false});
