@@ -170,6 +170,19 @@ a.emplink:hover{color:var(--grn-d);border-bottom-color:var(--grn)}
 .hawkbar{display:flex;gap:11px;flex-wrap:wrap;align-items:end;margin-bottom:12px}
 .hawkbar .frow{flex:1}
 .tile.needs{opacity:.62;border-style:dashed}
+.hverdict{background:var(--paper);border:1px solid var(--line);border-radius:11px;box-shadow:var(--shadow);padding:13px 15px;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.hverdict .hv1{font-size:15px}
+.hverdict .hv2{display:flex;gap:8px;align-items:center;flex:0 1 auto}
+.hverdict input{width:210px;max-width:45vw}
+.hbriefcard{margin-bottom:14px;border-left:4px solid var(--gold)}
+.hbrief{font-size:13.5px;line-height:1.55;margin-top:6px;white-space:normal}
+.hgroup{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin:18px 0 8px}
+details.hcheck{background:var(--paper);border:1px solid var(--line);border-radius:11px;box-shadow:var(--shadow);margin-bottom:8px}
+details.hcheck.hbad{border-left:4px solid var(--red)}
+details.hcheck summary{cursor:pointer;padding:11px 14px;display:flex;gap:9px;align-items:center;list-style:none}
+details.hcheck summary::-webkit-details-marker{display:none}
+details.hcheck summary .hmeta{margin-left:auto;font-size:12.5px;color:var(--muted);white-space:nowrap}
+details.hcheck .hbody{padding:0 14px 12px}
 .tile.needs .val{font-size:15px;font-weight:600;color:var(--muted)}
 .arrow-note{font-size:11px;color:var(--muted)}
 
@@ -647,12 +660,10 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
   <section>
     <div class="sechead"><h2>🦅 Data Hawk</h2>
       <span class="hint">The tracker’s discrepancy hunter — 25+ checks over every sale, invoice, payment, balance, payout and reversal. Detection here, decisions by you. 🚮🗑️ garbage in, garbage out.</span></div>
-    <div class="tiles" id="chkTiles" style="margin-bottom:16px"></div>
-    <div class="hawkbar">
-      <div class="frow" style="grid-template-columns:minmax(180px,2fr) auto"><div><label>Find</label><input id="hawkQ" placeholder="client, person, check name" oninput="renderChecks()"></div>
-      <div><label>Show</label><select id="hawkSev" onchange="renderChecks()"><option value="">Everything</option><option value="bad">Needs fixing</option><option value="warn">Worth a look</option></select></div></div>
-    </div>
+    <div id="chkTiles" style="margin-bottom:12px"></div>
+    <div id="hawkBriefWrap"></div>
     <div id="chkBody"></div>
+    <input id="hawkQ" type="hidden">
   </section>
 </div>
 
@@ -3936,11 +3947,7 @@ function tlink(h,js,tip){
   return h.replace('<div class="tile','<div onclick="'+js.replace(/"/g,'&quot;')+'" title="'+esc(tip)+'" class="tile click');
 }
 // Scroll to the data-checks detail on the Admin tab.
-function jumpToChecks(){
-  if(TAB!=='admin') setTab('admin');
-  const el=document.getElementById('chkBody');
-  if(el) el.scrollIntoView({behavior:'smooth',block:'start'});
-}
+function jumpToChecks(){ setTab('hawk'); }
 
 function renderTeam(){
   const act=PEOPLE.filter(p=>p.active);
@@ -8221,7 +8228,16 @@ function mapTo(zip,name){
 // is wrong right now, 'warn' is probably wrong, 'info' is worth a glance.
 function runChecks(){
   const today=todayISO(), out=[];
-  const add=(id,sev,title,why,items)=>{ if(items.length) out.push({id,sev,title,why,items}); };
+  // Every check reports through here. `impact` is dollars at stake where the check
+  // can honestly compute it. Items a human has muted (triage) are filtered HERE, so
+  // the chip, the tiles, the 30k view and the tab all respect the same judgment.
+  const mutedSet=new Set((GLOBAL.hawkMuted||[]).map(m=>m.k));
+  const add=(id,sev,title,why,items,impact)=>{
+    if(!items.length) return;
+    const kept=[], muted=[];
+    items.forEach(it=>{ const k=hawkItemKey(id,it); (mutedSet.has(k)?muted:kept).push(Object.assign({},it,{k})); });
+    if(kept.length||muted.length) out.push({id,sev,title,why,items:kept,muted,impact:+impact||0});
+  };
 
   /* --- the same sale entered twice --- */
   const seen={}, dupes=[];
@@ -8340,7 +8356,7 @@ function runChecks(){
       text:'<b>'+esc(r.client)+'</b> · '+money(bookedValue(r))+' · '+fmtY(r.date),
       sub:'source said: '+esc(r.repRaw||r.repOrphan||'(blank)')+' · credited to: '+esc(empName(person(r.rep))),
       act:'<button class="sm" onclick="openEdit(\''+r.id+'\')">Fix rep</button>'
-    })));
+    })), orphanRows.reduce((a,r)=>a+rowComm(r),0));
 
   /* --- THE DATA HAWK: commission moving on jobs the customer has not paid --- */
   const pastDueBy={}; OPENINV.forEach(v=>{ if(/past/i.test(v.s)) pastDueBy[norm(v.c)]=(pastDueBy[norm(v.c)]||0)+v.t; });
@@ -8694,7 +8710,7 @@ function runChecks(){
       text:'<b>'+esc(d.r.client)+'</b> · override '+money2(d.netPaid)+' paid, '+money2(d.should)+' earned',
       sub:esc(empName(person(d.x.emp)))+' · sale net '+money(netValue(d.r))+' · paid '+fmt(d.x.paidOn),
       act:'<button class="sm" onclick="setTab(\'adj\')">Adjustments</button>'
-    })));
+    })), ovBad.reduce((a,d)=>a+(d.netPaid-d.should),0));
 
   /* --- 2. ledger gaps: paid with no payout record, or payouts pointing nowhere --- */
   const gapRows=ROWS.filter(r=>r.paid && !rowHasLedger(r));
@@ -8709,7 +8725,7 @@ function runChecks(){
       text:'Payout '+money2(x.amount)+' · '+esc(PAYOUT_KINDS[x.kind]||x.kind),
       sub:(person(x.emp)?esc(empName(person(x.emp))):'unknown employee '+esc(x.emp))+' · sale '+esc(x.rowId)+(ROWS.some(r=>r.id===x.rowId)?'':' (deleted)'),
       act:''
-    }))));
+    }))), gapRows.reduce((a,r)=>a+paidOut(r),0)+strayPay.reduce((a,x)=>a+Math.abs(x.amount),0));
 
   /* --- 3. reversals with no effective date --- */
   const noVD=voidDateMissingRows();
@@ -8728,7 +8744,7 @@ function runChecks(){
     forgivenEv.slice(0,30).map(x=>{ const r=ROWS.find(q=>q.id===x.rowId);
       return {text:'<b>'+esc(r?r.client:x.rowId)+'</b> · '+money2(-x.amount)+' forgiven',
         sub:esc(empName(person(x.emp)))+' · '+esc(PAYOUT_KINDS[x.kind]||x.kind)+' · '+fmt(x.paidOn)+' · '+esc((x.reason||'').slice(0,80)),
-        act:''}; }));
+        act:''}; }), forgivenEv.reduce((a,x)=>a-x.amount,0));
 
   /* --- 5. paid sales whose commission no longer matches the payout --- */
   const varRows=[]; ROWS.filter(r=>r.paid&&rowHasLedger(r)).forEach(r=>{ const v=payoutVariance(r); if(v.length) varRows.push({r,v}); });
@@ -8738,7 +8754,7 @@ function runChecks(){
       text:'<b>'+esc(d.r.client)+'</b> · '+d.v.map(x=>esc(empShort(person(x.emp)))+' '+(x.diff>0?'under':'over')+'-paid '+money2(Math.abs(x.diff))).join(' · '),
       sub:'paid '+fmt(d.r.paid)+' · '+money2(paidOut(d.r))+' on the ledger',
       act:'<button class="sm" onclick="setTab(\'adj\')">Payout corrections</button>'
-    })));
+    })), varRows.reduce((a,d)=>a+d.v.reduce((q,x)=>q+Math.abs(x.diff),0),0));
 
   /* --- 6. probable duplicate sales without a source ID --- */
   const noId=ROWS.filter(r=>!r.voidType && !(r.src&&r.srcId));
@@ -8759,7 +8775,7 @@ function runChecks(){
       text:'<b>'+esc(d.a.client)+'</b> · '+money2(bookedValue(d.a))+' vs '+money2(bookedValue(d.b)),
       sub:fmt(d.a.date)+' / '+fmt(d.b.date)+' · '+esc(empName(person(d.a.rep)))+' · '+esc(SRC_LABEL[d.a.src]||d.a.src)+' + '+esc(SRC_LABEL[d.b.src]||d.b.src),
       act:'<button class="sm" onclick="rowInfo(\''+d.a.id+'\')">A</button> <button class="sm" onclick="rowInfo(\''+d.b.id+'\')">B</button>'
-    })));
+    })), dupPairs.reduce((a,d)=>a+Math.min(rowComm(d.a),rowComm(d.b)),0));
 
   /* --- 7. splits stuck in approval, or percentages that do not add up --- */
   const stuck=ROWS.filter(r=>splitPending(r) && !r.voidType);
@@ -8799,7 +8815,7 @@ function runChecks(){
       text:'<b>'+esc(empName(x.p))+'</b> · '+money2(x.owed)+' unpaid commission on the books',
       sub:'former team member — settle it or reassign the sales deliberately',
       act:'<button class="sm" onclick="openEmp(\''+x.p.id+'\')">Their page</button>'
-    }))));
+    }))), formerOwed.reduce((a,x)=>a+x.owed,0));
 
   /* --- 10. invoice numbers that match nothing in the invoice audit --- */
   const invNos={}; INVOICES.forEach(x=>{ if(x.i) invNos[String(x.i).trim()]=1; });
@@ -8843,54 +8859,154 @@ function logFromClient(name,sp){
   document.getElementById('qService').focus();
 }
 
+/* ---- HAWK TRIAGE ----
+   The Hawk remembers human judgment. Muting an item records who/when/why and
+   removes it from every count (chip, tiles, 30k view) until it is unmuted or
+   the underlying data changes enough to produce a different item. */
+function hawkItemKey(id,it){ return id+'|'+norm(String(it.text||'').replace(/<[^>]+>/g,'')).slice(0,80); }
+function hawkMute(k){
+  if(!ADMIN){ toast('Admins triage the Hawk'); return; }
+  const why=prompt('Why is this not a problem? (recorded with your name — the Hawk stops flagging it)','known and accepted');
+  if(why===null) return;
+  GLOBAL.hawkMuted=(GLOBAL.hawkMuted||[]).filter(m=>m.k!==k);
+  GLOBAL.hawkMuted.push({k,by:empWho(),on:todayISO(),why:why.trim()});
+  save(K_GLOBAL,GLOBAL); auditRecord('hawk-mute',{k,why:why.trim()});
+  HAWK_CACHE={at:0,c:null}; renderChecks(); renderHawkChip();
+}
+function hawkUnmute(k){
+  GLOBAL.hawkMuted=(GLOBAL.hawkMuted||[]).filter(m=>m.k!==k);
+  save(K_GLOBAL,GLOBAL); auditRecord('hawk-unmute',{k});
+  HAWK_CACHE={at:0,c:null}; renderChecks(); renderHawkChip();
+}
+/* ---- HAWK AI ----
+   With the Claude key from the Import tab, the Hawk does more than look: it
+   reads its own findings and writes a briefing — what matters most in dollars,
+   what shares a root cause, what is probably noise — and can dig into any one
+   finding on demand. Everything it says is grounded in the findings digest;
+   it is told to never invent figures. */
+function hawkDigest(checks){
+  return checks.map(c=>({check:c.id,severity:c.sev,title:c.title.replace('🦅 ',''),count:c.items.length,muted:c.muted.length,dollars_at_stake:Math.round(c.impact||0),
+    examples:c.items.slice(0,3).map(it=>String(it.text+' — '+it.sub).replace(/<[^>]+>/g,'').slice(0,160))}));
+}
+async function hawkBrief(){
+  const cfg=aiCfg(); const btn=document.getElementById('hawkBriefBtn');
+  if(!cfg.key){ alert('Set the Claude API key on the Import tab first — that is what turns the Hawk from a checklist into an analyst.'); return; }
+  const checks=runChecks().filter(c=>c.items.length);
+  if(btn){ btn.disabled=true; btn.textContent='🦅 thinking…'; }
+  try{
+    const digest=hawkDigest(checks);
+    const ctx={today:todayISO(), sales:ROWS.length, payout_entries:PAYOUTS.filter(x=>x.status!=='void').length,
+      active_people:PEOPLE.filter(p=>p.active&&p.id!==EMP_UNASSIGNED).length, open_ar:OPENINV.reduce((a,v)=>a+(+v.t||0),0)};
+    const body={model:cfg.model,max_tokens:1500,messages:[{role:'user',content:[{type:'text',text:
+      'You are the Data Hawk: the forensic bookkeeping analyst inside a lawn-care company\u2019s sales/commission tracker. '+
+      'Below are your automated findings (JSON). Write a briefing for the owner, in plain language:\n'+
+      '1. VERDICT \u2014 two sentences: can the money be trusted today, and what is the single most urgent thing.\n'+
+      '2. DO FIRST \u2014 the top 3 actions, ranked by dollars at stake; for each name the finding(s) it clears and the button/tab in the app to use.\n'+
+      '3. PATTERNS \u2014 findings that share one root cause (say the cause), so one fix clears several.\n'+
+      '4. PROBABLY NOISE \u2014 findings safe to mute, and why.\n'+
+      'Rules: use ONLY the figures in the findings; never invent or estimate numbers; if dollars_at_stake is 0 say the exposure is uncounted, not zero; keep it under 250 words; no markdown headers, use the section names above in caps.\n\n'+
+      'CONTEXT: '+JSON.stringify(ctx)+'\n\nFINDINGS:\n'+JSON.stringify(digest)}]}]};
+    const r=await fetch(AI_URL,{method:'POST',headers:{'content-type':'application/json','x-api-key':cfg.key,'anthropic-version':AI_VERSION,'anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify(body)});
+    const txt=await r.text(); let data; try{ data=JSON.parse(txt); }catch(e){ throw new Error('Unreadable reply: '+txt.slice(0,160)); }
+    if(!r.ok) throw new Error((data&&data.error&&data.error.message)||('API error '+r.status));
+    const block=(data.content||[]).find(b=>b.type==='text'); if(!block) throw new Error('No answer came back.');
+    const u=data.usage||{}, rate=AI_RATES[cfg.model]||AI_RATES['claude-opus-5'];
+    GLOBAL.aiCalls=(GLOBAL.aiCalls||0)+1; GLOBAL.aiCost=(GLOBAL.aiCost||0)+((u.input_tokens||0)/1e6)*rate[0]+((u.output_tokens||0)/1e6)*rate[1];
+    GLOBAL.hawkBrief={at:new Date().toISOString(),model:cfg.model,text:block.text.trim(),findings:checks.reduce((a,c)=>a+c.items.length,0)};
+    save(K_GLOBAL,GLOBAL); renderChecks();
+  }catch(e){ alert('The Hawk could not think: '+e.message); }
+  finally{ if(btn){ btn.disabled=false; btn.textContent='🦅 Brief me'; } }
+}
+const HAWK_AI={};
+async function hawkDig(checkId){
+  const cfg=aiCfg(); if(!cfg.key){ alert('Set the Claude API key on the Import tab first.'); return; }
+  const c=runChecks().find(x=>x.id===checkId); if(!c) return;
+  const box=document.getElementById('hdig-'+checkId); if(box) box.innerHTML='<div class="note">🦅 investigating…</div>';
+  try{
+    const items=c.items.slice(0,15).map(it=>String(it.text+' — '+it.sub).replace(/<[^>]+>/g,''));
+    const body={model:cfg.model,max_tokens:900,messages:[{role:'user',content:[{type:'text',text:
+      'You are the Data Hawk, forensic analyst inside a sales/commission tracker. One finding, all its items below. '+
+      'Answer in under 150 words, plain text: (a) the most likely ROOT CAUSE given the pattern across items; (b) exact STEPS to clear it in this app '+
+      '(the app has: Edit sale, Payout corrections and chargebacks on the Adjustments tab, Employee match needed and Comp plans in Admin, reversal effective-date buttons); '+
+      '(c) which items, if any, look like FALSE ALARMS and why. Use only the data shown; never invent figures.\n\n'+
+      'FINDING: '+c.title.replace('🦅 ','')+'\nWHY IT CHECKS: '+c.why+'\nDOLLARS AT STAKE: '+(c.impact?Math.round(c.impact):'uncounted')+'\nITEMS:\n'+items.join('\n')}]}]};
+    const r=await fetch(AI_URL,{method:'POST',headers:{'content-type':'application/json','x-api-key':cfg.key,'anthropic-version':AI_VERSION,'anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify(body)});
+    const txt=await r.text(); let data; try{ data=JSON.parse(txt); }catch(e){ throw new Error(txt.slice(0,160)); }
+    if(!r.ok) throw new Error((data&&data.error&&data.error.message)||('API error '+r.status));
+    const block=(data.content||[]).find(b=>b.type==='text'); if(!block) throw new Error('no answer');
+    const u=data.usage||{}, rate=AI_RATES[cfg.model]||AI_RATES['claude-opus-5'];
+    GLOBAL.aiCalls=(GLOBAL.aiCalls||0)+1; GLOBAL.aiCost=(GLOBAL.aiCost||0)+((u.input_tokens||0)/1e6)*rate[0]+((u.output_tokens||0)/1e6)*rate[1]; save(K_GLOBAL,GLOBAL);
+    HAWK_AI[checkId]=block.text.trim();
+    if(box) box.innerHTML='<div class="hbrief">'+esc(HAWK_AI[checkId]).replace(/\n/g,'<br>')+'</div>';
+  }catch(e){ if(box) box.innerHTML='<div class="note" style="color:var(--red)">'+esc(e.message)+'</div>'; }
+}
 function renderChecks(){
   if(!document.getElementById('chkTiles')||!ADMIN) return;
   const checks=runChecks();
-  const bad=checks.filter(c=>c.sev==='bad'), warn=checks.filter(c=>c.sev==='warn');
-  const count=s=>checks.filter(c=>c.sev===s).reduce((a,c)=>a+c.items.length,0);
-  let h='';
-  h+=tlink(tile('Needs fixing',count('bad'),bad.length?bad.length+' kind'+(bad.length===1?'':'s')+' of problem':'nothing broken',
-      count('bad')?'bad':'ok'),
-      "jumpToChecks()",'See the failing checks below');
-  h+=tlink(tile('Worth a look',count('warn'),warn.length+' kind'+(warn.length===1?'':'s')),
-      "jumpToChecks()",'See the flagged checks below');
-  h+=tlink(tile('Sales checked',ROWS.length.toLocaleString(),CLIENTS.length?'against '+CLIENTS.length.toLocaleString()+' clients':'no roster synced yet'),
-      "setTab('sales')",'Open the Sales tab');
-  const ls=lastSync();
-  h+=tlink(tile('Roster age', ls?Math.round((dObj(todayISO())-dObj(ls.on))/86400000)+' days':'—',
-      ls?'last synced '+fmtY(ls.on):'never synced', ls&&(dObj(todayISO())-dObj(ls.on))/86400000>7?'bad':''),
-      "setTab('clients')",'Open the Clients tab — roster and sync');
-  document.getElementById('chkTiles').innerHTML=h;
-
-  const box=document.getElementById('chkBody');
-  if(!checks.length){
-    box.innerHTML='<div class="card"><div class="empty">🦅 <b>All clear.</b> The Data Hawk swept every sale, invoice, payment and balance — '+
-      'no doubles, no drift, no dates out of order, nothing moving that shouldn’t. It keeps watching.</div></div>';
+  const live=checks.filter(c=>c.items.length);
+  const bad=live.filter(c=>c.sev==='bad'), warn=live.filter(c=>c.sev==='warn');
+  const count=L=>L.reduce((a,c)=>a+c.items.length,0);
+  const impact=L=>L.reduce((a,c)=>a+(c.impact||0),0);
+  const mutedN=checks.reduce((a,c)=>a+c.muted.length,0);
+  // verdict strip instead of tiles
+  const verdict = count(bad)
+    ? '<b style="color:var(--red)">'+count(bad)+' need'+(count(bad)===1?'s':'')+' fixing</b>'+(impact(bad)?' · <b>'+money(impact(bad))+' at stake</b>':'')
+    : '<b style="color:var(--grn-d)">Nothing broken.</b>';
+  document.getElementById('chkTiles').innerHTML=
+    '<div class="hverdict"><div class="hv1">🦅 '+verdict+' · '+count(warn)+' worth a look'+(impact(warn)?' ('+money(impact(warn))+')':'')+(mutedN?' · '+mutedN+' muted':'')+'</div>'+
+    '<div class="hv2"><input id="hawkQ2" placeholder="filter — client, person, check…" oninput="document.getElementById(\'hawkQ\')&&(document.getElementById(\'hawkQ\').value=this.value);renderChecksBody()">'+
+    '<button class="sm" onclick="HAWK_CACHE={at:0,c:null};renderChecks();renderHawkChip();toast(\'Swept \'+ROWS.length.toLocaleString()+\' sales, \'+INVOICES.length.toLocaleString()+\' invoice lines, \'+PAYOUTS.length.toLocaleString()+\' payouts\')">Sweep again</button>'+
+    '<button class="sm p" id="hawkBriefBtn" onclick="hawkBrief()">🦅 Brief me</button></div></div>';
+  // the analyst's briefing
+  const bb=GLOBAL.hawkBrief;
+  const briefHtml = bb
+    ? '<div class="card hbriefcard"><div class="pad"><div class="sechead"><h3>The Hawk’s read</h3><span class="hint">'+esc(String(bb.at).replace('T',' ').slice(0,16))+' · '+esc(bb.model)+' · '+bb.findings+' findings then</span></div>'+
+      '<div class="hbrief">'+esc(bb.text).replace(/^(VERDICT|DO FIRST|PATTERNS|PROBABLY NOISE)/gm,'<b>$1</b>').replace(/\n/g,'<br>')+'</div></div></div>'
+    : (aiCfg().key?'<div class="note" style="margin-bottom:12px">The Hawk can do more than look — <a href="#" onclick="hawkBrief();return false">ask it to think</a>: it reads its own findings and writes what to do first, what shares a root cause, and what is noise.</div>'
+                  :'<div class="note" style="margin-bottom:12px">Add the Claude API key on the <a href="#" onclick="setTab(\'import\');return false">Import tab</a> and the Hawk becomes an analyst: briefings, root causes, and per-finding investigation.</div>');
+  document.getElementById('hawkBriefWrap').innerHTML=briefHtml;
+  renderChecksBody(checks);
+}
+function renderChecksBody(checks){
+  const box=document.getElementById('chkBody'); if(!box) return;
+  checks=checks||runChecks();
+  const qEl=document.getElementById('hawkQ2')||document.getElementById('hawkQ');
+  const q=qEl?norm(qEl.value):'';
+  let live=checks.filter(c=>c.items.length);
+  if(q) live=live.map(c=>{ if(norm(c.title).indexOf(q)>-1) return c; const items=c.items.filter(it=>norm(String(it.text)+String(it.sub)).indexOf(q)>-1); return items.length?Object.assign({},c,{items}):null; }).filter(Boolean);
+  const mutedAll=checks.filter(c=>c.muted.length);
+  if(!live.length && !mutedAll.length){
+    box.innerHTML='<div class="card"><div class="empty">🦅 <b>All clear.</b> Every sale, invoice, payment, balance, payout and reversal swept — nothing to flag. It keeps watching.</div></div>';
     return;
   }
   const order={bad:0,warn:1,info:2};
-  checks.sort((a,b)=>order[a.sev]-order[b.sev]);
-  const qEl=document.getElementById('hawkQ'), sEl=document.getElementById('hawkSev');
-  const q=qEl?norm(qEl.value):'', sev=sEl?sEl.value:'';
-  let shown=checks;
-  if(sev) shown=shown.filter(c=>c.sev===sev);
-  if(q) shown=shown.map(c=>{ if(norm(c.title).indexOf(q)>-1) return c; const items=c.items.filter(it=>norm(String(it.text)+String(it.sub)).indexOf(q)>-1); return items.length?Object.assign({},c,{items}):null; }).filter(Boolean);
-  if(!shown.length){ box.innerHTML='<div class="card"><div class="empty">Nothing matches that filter.</div></div>'; return; }
-  box.innerHTML=shown.map(c=>{
-    const pill=c.sev==='bad'?'<span class="pill no">FIX</span>':
-               c.sev==='warn'?'<span class="pill mid">CHECK</span>':'<span class="pill n">FYI</span>';
-    let x='<div class="card" style="margin-bottom:16px"><div class="pad" style="padding-bottom:8px">'+
-      '<div class="sechead"><h3>'+esc(c.title)+'</h3>'+pill+
-      '<span class="pill n">'+c.items.length+'</span></div>'+
-      '<div class="note">'+c.why+'</div></div>';
+  live.sort((a,b)=>order[a.sev]-order[b.sev] || (b.impact||0)-(a.impact||0) || b.items.length-a.items.length);
+  const card=(c,open)=>{
+    const pill=c.sev==='bad'?'<span class="pill no">FIX</span>':'<span class="pill mid">CHECK</span>';
+    let x='<details class="hcheck'+(c.sev==='bad'?' hbad':'')+'"'+(open?' open':'')+'><summary>'+pill+' <b>'+esc(c.title.replace('🦅 ',''))+'</b>'+
+      '<span class="hmeta">'+c.items.length+(c.impact?' · <b>'+money(c.impact)+'</b>':'')+(c.muted.length?' · '+c.muted.length+' muted':'')+'</span></summary>'+
+      '<div class="hbody"><div class="note" style="margin:4px 0 8px">'+c.why+(aiCfg().key?' <a href="#" onclick="hawkDig(\''+c.id+'\');return false">🦅 investigate</a>':'')+'</div><div id="hdig-'+c.id+'">'+(HAWK_AI[c.id]?'<div class="hbrief">'+esc(HAWK_AI[c.id]).replace(/\n/g,'<br>')+'</div>':'')+'</div>';
     x+='<div class="scroll tallscroll"><table><tbody>';
     c.items.forEach(it=>{
       x+='<tr><td>'+it.text+'<div class="note">'+it.sub+'</div></td>'+
-        '<td class="num" style="width:1%;white-space:nowrap">'+(it.act||'')+'</td></tr>';
+        '<td class="num" style="width:1%;white-space:nowrap">'+(it.act||'')+(ADMIN?' <button class="sm" title="Not a problem — mute with a reason" onclick="hawkMute(\''+esc(it.k)+'\')">Mute</button>':'')+'</td></tr>';
     });
-    x+='</tbody></table></div></div>';
+    x+='</tbody></table></div></div></details>';
     return x;
-  }).join('');
+  };
+  let h='';
+  const badL=live.filter(c=>c.sev==='bad'), warnL=live.filter(c=>c.sev==='warn');
+  if(badL.length) h+='<div class="hgroup">Needs fixing</div>'+badL.map(c=>card(c,true)).join('');
+  if(warnL.length) h+='<div class="hgroup">Worth a look</div>'+warnL.map(c=>card(c,false)).join('');
+  if(mutedAll.length){
+    const muteMeta={}; (GLOBAL.hawkMuted||[]).forEach(m=>muteMeta[m.k]=m);
+    h+='<div class="hgroup">Muted — human said these are fine</div><details class="hcheck"><summary><span class="pill n">MUTED</span> <b>'+checks.reduce((a,c)=>a+c.muted.length,0)+' item'+(checks.reduce((a,c)=>a+c.muted.length,0)===1?'':'s')+'</b><span class="hmeta">not counted anywhere</span></summary><div class="hbody"><div class="scroll"><table><tbody>'+
+      mutedAll.map(c=>c.muted.map(it=>{ const m=muteMeta[it.k]||{};
+        return '<tr><td>'+it.text+'<div class="note">'+esc(c.title.replace('🦅 ',''))+' · muted by '+esc(m.by||'?')+' '+esc(m.on||'')+(m.why?' — “'+esc(m.why)+'”':'')+'</div></td>'+
+          '<td class="num" style="width:1%"><button class="sm" onclick="hawkUnmute(\''+esc(it.k)+'\')">Unmute</button></td></tr>'; }).join('')).join('')+
+      '</tbody></table></div></div></details>';
+  }
+  box.innerHTML=h;
 }
 
 /* ============================================================
