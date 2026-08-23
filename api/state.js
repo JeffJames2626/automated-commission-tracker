@@ -180,6 +180,21 @@ export default async function handler(req, res) {
   }
   const who = sess ? sess.e : '';   // verified identity, when there is one
 
+  // ---- Google Sheet → CSV (the sheet must be shared "anyone with the link") ----
+  // Server-side fetch because the browser cannot read docs.google.com cross-origin.
+  if (req.method === 'GET' && req.query && req.query.gsheet === '1') {
+    const id = String(req.query.id || ''), gid = String(req.query.gid || '0');
+    if (!/^[-\w]{20,}$/.test(id) || !/^\d{1,12}$/.test(gid)) return res.status(400).json({ error: 'bad sheet id or gid' });
+    try {
+      const g = await fetch('https://docs.google.com/spreadsheets/d/' + id + '/export?format=csv&gid=' + gid, { redirect: 'follow' });
+      const ct = String(g.headers.get('content-type') || '');
+      if (!g.ok || ct.indexOf('text/csv') < 0) return res.status(g.status === 200 ? 403 : g.status).json({ error: 'Google did not return the sheet as CSV (status ' + g.status + '). Share it as “Anyone with the link · Viewer”.' });
+      const csv = await g.text();
+      if (csv.length > 2_000_000) return res.status(413).json({ error: 'sheet too large' });
+      return res.status(200).json({ csv: csv });
+    } catch (e) { return res.status(502).json({ error: 'could not reach Google: ' + (e.message || e) }); }
+  }
+
   // ---- who am I: lets the page confirm its session is still good ----
   if (req.method === 'GET' && req.query && req.query.me === '1') {
     return res.status(200).json(sess

@@ -129,6 +129,14 @@ a.emplink:hover{color:var(--grn-d);border-bottom-color:var(--grn)}
 .epform{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:11px;align-items:end}
 .epform .full{grid-column:1/-1}
 .rolechips{display:flex;gap:6px;flex-wrap:wrap}
+.seas th.m,.seas td.m{width:34px;text-align:center;padding:6px 2px;font-size:11px}
+.seas td.m.on{background:var(--grn-l)}
+.seas td.m.on.now{background:var(--grn);color:#fff}
+.seas td.m.now{box-shadow:inset 0 0 0 2px var(--gold)}
+.seas tr.cat td{background:var(--band);font-weight:700;text-transform:uppercase;letter-spacing:.06em;font-size:11px;color:var(--muted)}
+.seas td.m[title]{cursor:help}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chips .pill{font-size:12px;padding:4px 10px}
 .rolechips label{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;border:1px solid var(--line);border-radius:20px;padding:4px 10px;cursor:pointer;text-transform:none;letter-spacing:0;font-weight:500;color:var(--ink);margin:0}
 
 label{display:block;font-size:11.5px;font-weight:650;color:var(--muted);text-transform:uppercase;
@@ -799,9 +807,21 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
       <div><label>&nbsp;</label><label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-weight:500"><input type="checkbox" id="rosterInactive" onchange="ROSTER_INACTIVE=this.checked;renderRoster()"> show former team members</label></div>
       <div id="rosterAddBtn"></div>
     </div>
+    <div class="note" id="rosterSyncNote" style="margin-bottom:10px"></div>
     <div id="rosterAddForm" style="display:none" class="card pad"></div>
+    <div id="rosterDir" style="display:none" class="card pad"></div>
     <div class="roster" id="rosterBox"></div>
     <div class="note" style="margin-top:12px">One record per person, for good. A name is how we show somebody; the record is how the tracker knows them — every sale, invoice line, commission and login points at it. Leaving the company makes a record <b>former</b>, never deleted.</div>
+  </section>
+</div>
+
+<div class="tab" id="tab-svc">
+  <section>
+    <div class="sechead"><h2>What we do &amp; when</h2><span class="hint" id="svcHint"></span></div>
+    <div id="svcNow" style="margin-bottom:14px"></div>
+    <div id="svcSheet" style="display:none" class="card pad"></div>
+    <div class="scroll"><table class="seas" id="svcGrid"></table></div>
+    <div class="note" style="margin-top:10px">Green = in season. Hover a month for the field note. Pulled from the company Services &amp; Seasonality sheet; the Data Hawk flags work completed outside its window.</div>
   </section>
 </div>
 
@@ -2332,7 +2352,7 @@ function empSplitName(raw){
 
 let EMP_IDX=null;
 function empIndex(){
-  const sig=PEOPLE.map(p=>[p.id,p.name,p.first||'',p.last||'',p.display||'',p.email||'',(p.google&&p.google.email)||'',JSON.stringify(p.aliases||[]),JSON.stringify(p.extIds||{})].join('\u0001')).join('\u0002');
+  const sig=PEOPLE.map(p=>[p.id,p.name,p.first||'',p.last||'',p.display||'',p.email||'',(p.google&&p.google.email)||'',(p.altEmails||[]).join(','),JSON.stringify(p.aliases||[]),JSON.stringify(p.extIds||{})].join('\u0001')).join('\u0002');
   if(EMP_IDX && EMP_IDX.sig===sig) return EMP_IDX;
   const ix={sig:sig, byEmail:{}, byKey:{}, byAlias:{}, byExt:{}};
   const addKey=(k,id)=>{ if(!k) return; const L=(ix.byKey[k]=ix.byKey[k]||[]); if(L.indexOf(id)<0) L.push(id); };
@@ -2340,6 +2360,7 @@ function empIndex(){
     if(p.id===EMP_UNASSIGNED) return;
     if(p.email) ix.byEmail[String(p.email).toLowerCase().trim()]=p.id;
     if(p.google&&p.google.email) ix.byEmail[String(p.google.email).toLowerCase().trim()]=p.id;
+    (p.altEmails||[]).forEach(e=>{ e=String(e||'').toLowerCase().trim(); if(e) ix.byEmail[e]=p.id; });
     addKey(empKey(p.name),p.id);
     addKey(empKey(empFirst(p)+' '+empLast(p)),p.id);
     if(p.display) addKey(empKey(p.display),p.id);
@@ -2401,6 +2422,7 @@ function empCreate(o){
   const p=newPerson(name); p.id=empId(first||name,last);
   p.first=first||empFirst(p); p.last=last||empLast(p);
   if(o.title!=null) p.title=o.title; if(o.dept) p.dept=o.dept; if(em) p.email=em;
+  if(o.phone) p.phone=o.phone; if(o.truck) p.truck=o.truck; if(o.ext) p.ext=o.ext; if(o.altEmails&&o.altEmails.length) p.altEmails=o.altEmails.slice();
   p.roles=o.roles||['sales']; p.active=o.active!==false; if(o.ended) p.ended=o.ended;
   if(o.active===false){ p.scored=false; p.salesPct=0; p.commNew=0; p.commUp=0; p.commRenew=0; p.commOv=0; p.hrsIn=0; p.hrsOff=0; }
   if(o.note) p.note=o.note; p.created={at:new Date().toISOString(),by:empWho()};
@@ -3188,6 +3210,7 @@ const TABS=[
   ['hours','Hours',false,'Sales hours logged against the projection'],
   ['clients','Clients',false,'The Service Autopilot roster, leads and sources'],
   ['roster','Team',false,'Everyone on the roster — open anyone for their complete sales, commission and account history'],
+  ['svc','Services',false,'What we do and when we do it — every service and its season'],
   ['prop','Property',false,'Property measurements against what gets sold'],
   ['map','Map',false,'Locations, proximity and canvassing prompts'],
   ['team','Team cost',true,'Every rep\u2019s production, pay and cost side by side'],
@@ -3270,7 +3293,7 @@ function render(){
   renderTeam(); renderScore(); renderPlanList(); planToForm(); renderScenarios(); renderHours();
   renderData(); renderSeason(); renderHoursTab(); renderPipe(); renderOSC(); renderAdj(); renderComm();
   renderClients(); renderTakeover(); renderProperty(); renderMap(); renderRevenue(); renderPayments(); renderBalances(); renderAlerts(); renderAIStatus();
-  renderRoster(); if(EP_ID) renderEmp();
+  renderRoster(); renderServices(); if(EP_ID) renderEmp();
   renderPauseBar(); renderHawkChip();
 }
 function setHWho(v){ HWHO=v; renderHoursTab(); }
@@ -7274,7 +7297,7 @@ function hawkCounts(){
     hawkNoInv:'sales missing their real invoice',
     hawkChain:'AUDIT TRAIL TAMPERED', hawkAfterPaid:'money changed after payout',
     hawkBump:'value raised right before payout', hawkPaidDel:'paid sales deleted', hawkNight:'dead-of-night changes',
-    hawkEmp:'sales not tied to a real employee'};
+    hawkEmp:'sales not tied to a real employee', hawkSeason:'work completed out of season'};
   const out={total:0,parts:[],items:{}};
   runChecks().forEach(c=>{
     if(HAWK_IDS[c.id] && c.items.length){
@@ -7869,6 +7892,21 @@ function runChecks(){
       sub:'sale: '+esc(person(d.r.rep)?person(d.r.rep).name:'?')+' · invoice lines: '+esc(d.others.join(', ')),
       act:'<button class="sm" onclick="rowInfo(\''+d.r.id+'\')">Info</button> '+
           '<button class="sm" onclick="editSplit(\''+d.r.id+'\')">Split it</button>'
+    })));
+
+  /* --- THE DATA HAWK: work completed outside the service's season --- */
+  const offSeason=[];
+  ROWS.filter(r=>!r.voidType && r.completed).forEach(r=>{
+    const v=svcFor(r.service); if(!v || !v.months.some(Boolean)) return;
+    const m=+String(r.completed).slice(5,7)-1;
+    if(!v.months[m]) offSeason.push({r, v, m});
+  });
+  add('hawkSeason','warn','🦅 Work completed outside its season',
+    'The services sheet says this service is not done in that month. Either the completed date is wrong, the service name is wrong, or the sheet needs updating.',
+    offSeason.slice(0,30).map(d=>({
+      text:'<b>'+esc(d.r.client)+'</b> · '+esc(d.r.service)+' · completed '+fmtY(d.r.completed),
+      sub:'season: '+esc(d.v.window||d.v.months.map((x,i)=>x?MON[i]:'').filter(Boolean).join(', ')),
+      act:'<button class="sm" onclick="openEdit(\''+d.r.id+'\')">Check</button>'
     })));
 
   /* --- THE DATA HAWK: sales not tied to a real employee --- */
@@ -9368,6 +9406,7 @@ function serviceCatalog(){
     seen[norm(s.n)]=1;
     out.push({n:s.n, sub:s.c+(s.r?' · $'+s.r.toFixed(2):''), w:0});
   });
+  (GLOBAL.services||[]).forEach(function(v){ if(seen[norm(v.n)]) return; seen[norm(v.n)]=1; out.push({n:v.n, sub:(v.cat?v.cat+' · ':'')+(v.window||'season on the sheet'), w:0}); });
   const counts={};
   INVOICES.forEach(function(x){ if(x.s) counts[x.s]=(counts[x.s]||0)+1; });
   ROWS.forEach(function(r){ if(r.service) counts[r.service]=(counts[r.service]||0)+1; });
@@ -10584,14 +10623,17 @@ function renderRoster(){
   const cnt=document.getElementById('rosterCount');
   if(cnt) cnt.textContent=PEOPLE.filter(p=>p.active&&p.id!==EMP_UNASSIGNED).length+' active · '+PEOPLE.filter(p=>!p.active&&p.id!==EMP_UNASSIGNED).length+' former';
   const ab=document.getElementById('rosterAddBtn');
-  if(ab) ab.innerHTML=ADMIN?'<label>&nbsp;</label><button class="p" onclick="empAddToggle()">+ Add team member</button>':'';
-  if(!ADMIN){ const f=document.getElementById('rosterAddForm'); if(f) f.style.display='none'; }
+  if(ab) ab.innerHTML=ADMIN?'<label>&nbsp;</label><span style="display:flex;gap:6px;flex-wrap:wrap"><button class="p" onclick="empAddToggle()">+ Add team member</button><button onclick="rosterSync(false)" title="Pull the Team Members sheet">⟳ Sync roster</button><button onclick="empDirToggle()">Import CSV</button></span>':'';
+  const rb=document.getElementById('rosterSyncNote');
+  if(rb){ const g=GLOBAL.gsheet||{}; rb.innerHTML=g.rosterAt?'Roster synced from the sheet '+esc(String(g.rosterAt).replace('T',' ').slice(0,16))+(g.rosterPending?' · <b style="color:var(--red)">'+g.rosterPending+' row'+(g.rosterPending===1?'':'s')+' need a decision</b> — <a href="#" onclick="rosterSync(false);return false">review</a>':'') : (ADMIN?'Roster not synced from the sheet yet — ⟳ Sync roster (needs the sheet shared as “anyone with the link”).':''); }
+  if(!ADMIN){ ['rosterAddForm','rosterDir'].forEach(id=>{ const f=document.getElementById(id); if(f) f.style.display='none'; }); }
   if(!list.length){ box.innerHTML='<div class="empty">Nobody matches.</div>'; return; }
   box.innerHTML=list.map(p=>{
     const a=empAccountStatus(p);
     return '<div class="rcard'+(p.active?'':' off')+'" onclick="openEmp(\''+p.id+'\')">'+empAvatar(p,46)+
       '<div style="min-width:0;flex:1"><div class="nm">'+esc(empName(p))+'</div>'+
       '<div class="meta">'+esc(p.title||'—')+(p.dept?' · '+esc(p.dept):'')+'</div>'+
+      ((p.phone||p.truck)?'<div class="meta">'+esc(p.phone||'')+(p.phone&&p.truck?' · ':'')+esc(p.truck||'')+'</div>':'')+
       '<div class="pills">'+(p.active?'<span class="pill ok">ACTIVE</span>':'<span class="pill n">FORMER</span>')+
       (empIsSales(p)?'<span class="pill sa">SALES</span>':'')+
       ((p.roles||[]).indexOf('estimator')>-1?'<span class="pill el">ESTIMATOR</span>':'')+
@@ -10619,6 +10661,246 @@ function empAddSave(){
   if(r.error){ alert(r.error); return; }
   document.getElementById('rosterAddForm').style.display='none';
   toast(empName(person(r.id))+' added'); render(); openEmp(r.id);
+}
+
+/* ---- TEAM DIRECTORY IMPORT ----
+   The company directory (Google Sheet → CSV: Team Member, Role, Phone,
+   Email, Truck, Ring Central ext) creates or updates employee records.
+   Matching: verified email → exact full name → a SUGGESTION the admin
+   confirms (merge + alias) → otherwise a new active person. Nothing is
+   merged on a guess; every row shows its decision before anything saves. */
+let DIR_ROWS=null;
+function empDirToggle(){
+  const f=document.getElementById('rosterDir'); if(!f) return;
+  if(f.style.display!=='none'){ f.style.display='none'; DIR_ROWS=null; return; }
+  f.style.display='';
+  f.innerHTML='<div class="sechead"><h3>Import the team directory</h3><span class="hint">From the Team Members sheet: File → Download → CSV, then drop it here (or paste). Columns it understands: Team Member / Name, Role / Title, Phone, Email, Truck, Ring Central ext, Department.</span></div>'+
+    '<div class="frow" style="margin-bottom:10px"><div><label>CSV file</label><input type="file" id="dirFile" accept=".csv,text/csv" onchange="empDirFile(event)"></div>'+
+    '<div style="grid-column:span 2"><label>…or paste</label><textarea id="dirText" rows="3" style="width:100%" placeholder="Team Member,Role,Phone Number,Email,Truck,Ring Central ext" oninput="empDirPreview(this.value)"></textarea></div></div>'+
+    '<div id="dirPreview"></div>';
+}
+function empDirFile(ev){ const f=ev.target.files&&ev.target.files[0]; if(!f) return; const fr=new FileReader(); fr.onload=e=>{ document.getElementById('dirText').value=String(e.target.result); empDirPreview(String(e.target.result)); }; fr.readAsText(f); }
+function empDirRoles(role){
+  const t=String(role||'').toLowerCase(), r=[];
+  if(/sales/.test(t)) r.push('sales');
+  if(/estimat/.test(t)) r.push('estimator');
+  if(/tech|mow|laborer|lead|mechanic|spray|operations|irrigation|landscape|floater/.test(t) && !/manager|coordinator|csr/.test(t)) r.push('tech');
+  if(/csr|billing|coordinator|customer exp|admin|office/.test(t)) r.push('office');
+  if(/owner|president|manager|general manager|implementor|director|\bgm\b/.test(t)) r.push('manager');
+  return r;
+}
+function empDirParse(text){
+  const rows=parseCSV(String(text||'')); if(rows.length<2) return {error:'Need a header row plus at least one person.'};
+  const head=rows[0].map(h=>norm(h));
+  const col=(...names)=>{ for(const n of names){ const i=head.findIndex(h=>h===norm(n)); if(i>-1) return i; } for(const n of names){ const i=head.findIndex(h=>h.indexOf(norm(n))>-1); if(i>-1) return i; } return -1; };
+  const cName=col('team member','name','employee','full name'), cRole=col('role','title','position'), cPhone=col('phone number','phone','cell'),
+        cEmail=col('email'), cTruck=col('truck','vehicle'), cExt=col('ring central ext','ext','extension'), cDept=col('department','dept','division');
+  if(cName<0) return {error:'No name column found (looking for "Team Member" or "Name").'};
+  const clean=v=>{ v=String(v==null?'':v).trim(); return /^(n\/a|na|none|-)$/i.test(v)?'':v; };
+  const out=[];
+  rows.slice(1).forEach(r=>{
+    const name=clean(r[cName]); if(!name) return;
+    const emails=clean(cEmail>-1?r[cEmail]:'').toLowerCase().split(/[;,\s]+/).map(x=>x.trim()).filter(x=>x.indexOf('@')>-1);
+    const company=emails.find(x=>/@automatedlawnandpest\.com$/.test(x))||emails[0]||'';
+    const alt=emails.filter(x=>x!==company);
+    const x=empSplitName(name);
+    const d={name:name, first:x.first, last:x.last, title:clean(cRole>-1?r[cRole]:''), phone:clean(cPhone>-1?r[cPhone]:''), email:company, altEmails:alt,
+      truck:clean(cTruck>-1?r[cTruck]:''), ext:clean(cExt>-1?r[cExt]:'').replace(/^#/,''), dept:clean(cDept>-1?r[cDept]:''), roles:empDirRoles(cRole>-1?r[cRole]:'')};
+    // decision: email → name → suggestion → create
+    let hit=null, how='';
+    for(const e of emails){ const rr=resolveEmployee('','*',{email:e}); if(rr){ hit=rr.id; how='email'; break; } }
+    if(!hit){ const rr=resolveEmployee(name,'*'); if(rr){ hit=rr.id; how='name'; } }
+    let sug=null; if(!hit){ sug=empSuggest(name); }
+    d.match=hit; d.how=how; d.suggest=sug; d.choice=hit?hit:(sug?sug:'new');
+    out.push(d);
+  });
+  return {rows:out};
+}
+function empDirPreview(text, onlyUndecided){
+  const box=document.getElementById('dirPreview'); if(!box) return;
+  const P=empDirParse(text);
+  if(P.error){ box.innerHTML='<div class="warnbox">'+esc(P.error)+'</div>'; DIR_ROWS=null; return; }
+  DIR_ROWS=onlyUndecided?P.rows.filter(d=>!d.match):P.rows;
+  if(!DIR_ROWS.length){ box.innerHTML='<div class="note"><b>Everyone on the sheet already has a record.</b> Nothing to decide.</div>'; return; }
+  const opts=PEOPLE.filter(p=>p.id!==EMP_UNASSIGNED).map(p=>'<option value="'+p.id+'">update '+esc(empName(p))+'</option>').join('');
+  let h='<div class="scroll"><table><thead><tr><th>Directory row</th><th>Role</th><th>Contact</th><th>Decision</th></tr></thead><tbody>';
+  DIR_ROWS.forEach((d,i)=>{
+    const m=d.match?person(d.match):null, sg=d.suggest?person(d.suggest):null;
+    const label=m?'<span class="pill ok">MATCH</span> <span class="note">by '+d.how+' → '+esc(empName(m))+(m.active?'':' · <b>marked former — will be reactivated</b>')+'</span>'
+               : sg?'<span class="pill mid">LOOKS LIKE</span> <span class="note">'+esc(empName(sg))+' — merging adds “'+esc(d.name)+'” as their alias</span>'
+               : '<span class="pill sa">NEW</span>';
+    h+='<tr><td><b>'+esc(d.name)+'</b><div>'+label+'</div></td><td class="note">'+esc(d.title||'—')+(d.roles.length?'<div>'+d.roles.map(r=>'<span class="pill n">'+esc(r)+'</span>').join(' ')+'</div>':'')+'</td>'+
+      '<td class="note">'+[d.email,d.altEmails.join(', '),d.phone,d.truck,d.ext?'ext '+d.ext:''].filter(Boolean).map(esc).join('<br>')+'</td>'+
+      '<td><select id="dir'+i+'"><option value="new"'+(d.choice==='new'?' selected':'')+'>create new record</option><option value="skip">skip</option>'+opts.replace('value="'+d.choice+'"','value="'+d.choice+'" selected')+'</select></td></tr>';
+  });
+  h+='</tbody></table></div><div style="margin-top:10px;display:flex;gap:8px;align-items:center"><button class="p" onclick="empDirApply()">Apply '+DIR_ROWS.length+' rows</button><span class="note">Updates fill in blanks and refresh title/phone/truck/ext; they never rename a record; anyone on the sheet who was marked former is reactivated.</span></div>';
+  box.innerHTML=h;
+}
+function empDirApply(){
+  if(!DIR_ROWS||!ADMIN) return;
+  const R=empDirApplyRows(DIR_ROWS, i=>{ const sel=document.getElementById('dir'+i); return sel?sel.value:DIR_ROWS[i].choice; });
+  DIR_ROWS=null; const f=document.getElementById('rosterDir'); if(f) f.style.display='none';
+  render();
+  alert('Directory applied: '+R.made+' new, '+R.upd+' updated, '+R.skipped+' skipped.'+(R.errs.length?'\n\nNot applied:\n• '+R.errs.join('\n• '):''));
+}
+function empDirApplyRows(rows, choiceOf){
+  let made=0, upd=0, skipped=0; const errs=[];
+  rows.forEach((d,i)=>{
+    const choice=choiceOf(i);
+    if(choice==='skip'){ skipped++; return; }
+    if(choice==='new'){
+      const r=empCreate({first:d.first,last:d.last,title:d.title,dept:d.dept,email:d.email,altEmails:d.altEmails,phone:d.phone,truck:d.truck,ext:d.ext,roles:d.roles.length?d.roles:['tech'],active:true,from:'directory'});
+      if(r.error){ errs.push(d.name+': '+r.error); return; } made++; return;
+    }
+    const p=person(choice); if(!p){ errs.push(d.name+': record not found'); return; }
+    const changed={};
+    if(d.email && !p.email){ const hit=resolveEmployee('','*',{email:d.email}); if(hit&&hit.id!==p.id){ errs.push(d.name+': '+d.email+' belongs to '+empName(person(hit.id))); return; } p.email=d.email; empLog(p,'email',{from:'',to:d.email}); }
+    else if(d.email && p.email && d.email!==p.email && (p.altEmails||[]).indexOf(d.email)<0){ p.altEmails=(p.altEmails||[]).concat([d.email]); changed.altEmails=1; }
+    d.altEmails.forEach(e=>{ if(e!==p.email && (p.altEmails||[]).indexOf(e)<0){ const hit=resolveEmployee('','*',{email:e}); if(!hit||hit.id===p.id){ p.altEmails=(p.altEmails||[]).concat([e]); changed.altEmails=1; } } });
+    if(d.title && d.title!==(p.title||'')){ p.title=d.title; changed.title=1; }
+    if(d.phone && d.phone!==(p.phone||'')){ p.phone=d.phone; changed.phone=1; }
+    if(d.truck && d.truck!==(p.truck||'')){ p.truck=d.truck; changed.truck=1; }
+    if(d.ext && d.ext!==(p.ext||'')){ p.ext=d.ext; changed.ext=1; }
+    if(d.dept && !p.dept){ p.dept=d.dept; changed.dept=1; }
+    if(!p.first && d.first){ p.first=d.first; } if(!p.last && d.last){ p.last=d.last; }
+    const roles=(p.roles||[]).slice(); d.roles.forEach(r=>{ if(roles.indexOf(r)<0) roles.push(r); });
+    if(roles.join()!==(p.roles||[]).join()){ empLog(p,'roles',{from:p.roles||[],to:roles}); p.roles=roles; }
+    if(!resolveEmployee(d.name,'*') || resolveEmployee(d.name,'*').id!==p.id){ if(!empAddAlias(p.id,d.name,'*')){ errs.push(d.name+': alias refused'); return; } }
+    if(!p.active){ p.active=true; delete p.ended; empLog(p,'active',{to:true,from:'directory'}); changed.reactivated=1; }   // the sheet lists current staff
+    if(Object.keys(changed).length) empLog(p,'profile',Object.assign({from:'directory'},changed));
+    upd++;
+  });
+  save(K_PEOPLE,PEOPLE); EMP_IDX=null;
+  if(made||upd) auditRecord('emp-directory',{created:made,updated:upd,skipped:skipped});
+  return {made,upd,skipped,errs};
+}
+
+/* ---- GOOGLE SHEET SYNC ----
+   The company sheet (Team Members tab + Services & Seasonality tab) is the
+   live source. The server fetches it as CSV (the sheet must be shared as
+   "anyone with the link"); the app never stores Google credentials.
+   Roster rows that match an existing record by email or exact name update
+   silently; anything new or merely similar waits for an admin's click. */
+function gsheetCfg(){ if(!GLOBAL.gsheet) GLOBAL.gsheet={id:'1yYKHClVd5Av8sDdt-QXDS_BdDnt6zNO7cO2OlalWUMs',rosterGid:'0',seasonGid:''}; return GLOBAL.gsheet; }
+async function gsheetPull(gid){
+  if(!cloudHasBackend()) throw new Error('Sheet sync needs the app opened from automatedpest.com');
+  const g=gsheetCfg(); if(!g.id) throw new Error('No sheet id set');
+  const r=await fetch(CLOUD.url+'?gsheet=1&id='+encodeURIComponent(g.id)+'&gid='+encodeURIComponent(gid||'0'),{headers:authHeaders()});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+  return j.csv||'';
+}
+async function rosterSync(auto){
+  if(!ADMIN && !auto) { toast('Admins sync the roster'); return; }
+  const g=gsheetCfg();
+  let csv; try{ csv=await gsheetPull(g.rosterGid||'0'); }catch(e){ if(!auto) alert('Could not read the Team Members sheet:\n'+e.message+'\n\nShare the sheet as “Anyone with the link · Viewer”, or use Import CSV.'); return; }
+  const P=empDirParse(csv); if(P.error){ if(!auto) alert(P.error); return; }
+  // matched rows update on their own; the rest need a person to decide
+  const matched=P.rows.filter(d=>d.match), pending=P.rows.filter(d=>!d.match);
+  const R=ADMIN?empDirApplyRows(matched, i=>matched[i].choice):{made:0,upd:0,skipped:0,errs:[]};
+  g.rosterAt=new Date().toISOString(); g.rosterPending=pending.length; save(K_GLOBAL,GLOBAL);
+  if(pending.length && ADMIN && !auto){
+    const f=document.getElementById('rosterDir'); if(f){ empDirToggle(); if(f.style.display==='none') empDirToggle(); }
+    const ta=document.getElementById('dirText'); if(ta) ta.value=csv;
+    empDirPreview(csv,true);
+    document.getElementById('rosterDir').scrollIntoView({behavior:'smooth',block:'start'});
+  }
+  if(!auto) toast('Roster synced: '+R.upd+' updated'+(pending.length?', '+pending.length+' to decide':''));
+  else if(R.upd) toast('Roster: '+R.upd+' record'+(R.upd===1?'':'s')+' refreshed from the sheet');
+  render();
+}
+
+/* ---- SERVICES & SEASONALITY ---- */
+const MONTH_NAMES=['january','february','march','april','may','june','july','august','september','october','november','december'];
+function monthIdx(t){ t=String(t||'').toLowerCase().replace(/[^a-z]/g,''); if(!t) return -1; const i=MONTH_NAMES.findIndex(m=>m.indexOf(t.slice(0,3))===0); return t.length>=3?i:-1; }
+// "(3/1 to 9/15)", "(2/17-4/13)", "(4/1 to 5/31) OR (8/1 to 9/30)", "Late Mar--Early April", "Sept--Dec", "Year-round"
+function parseWindows(text){
+  const t=String(text||''); const out=[];
+  const re=/(\d{1,2})\/(\d{1,2})\s*(?:to|-|–|—)\s*(\d{1,2})\/(\d{1,2})/g; let m;
+  while((m=re.exec(t))) out.push([+m[1],+m[2],+m[3],+m[4]]);
+  if(!out.length){
+    const re2=/(?:early|mid|late)?\s*([A-Za-z]{3,9})\.?\s*(?:--|–|—|-|to)\s*(?:early|mid|late)?\s*([A-Za-z]{3,9})/gi;
+    while((m=re2.exec(t))){ const a=monthIdx(m[1]), b=monthIdx(m[2]); if(a>-1&&b>-1) out.push([a+1,1,b+1,31]); }
+  }
+  if(!out.length && /year[- ]?(round|around)/i.test(t)) out.push([1,1,12,31]);
+  if(!out.length && /spring or summer/i.test(t)) out.push([3,1,8,31]);
+  return out;
+}
+function windowMonths(ranges){
+  const on=Array(12).fill(false);
+  ranges.forEach(r=>{ let a=r[0]-1, b=r[2]-1; if(a<0||a>11||b<0||b>11) return; if(a<=b){ for(let i=a;i<=b;i++) on[i]=true; } else { for(let i=a;i<12;i++) on[i]=true; for(let i=0;i<=b;i++) on[i]=true; } });
+  return on;
+}
+function parseSeasonSheet(csv){
+  const rows=parseCSV(csv); if(rows.length<2) return {error:'Empty sheet'};
+  // find the header row: the one that names most months
+  let hi=-1, best=0;
+  rows.slice(0,6).forEach((r,i)=>{ const n=r.filter(c=>monthIdx(c)>-1).length; if(n>best){ best=n; hi=i; } });
+  if(hi<0||best<6) return {error:'Could not find the month columns (January … December) in the header.'};
+  const head=rows[hi]; const mcols=Array.from({length:12},()=>[]);
+  let cur=-1; head.forEach((c,i)=>{ const mi=monthIdx(c); if(mi>-1){ cur=mi; mcols[mi].push(i); } else if(cur>-1 && i>3 && String(c).trim()===''){ mcols[cur].push(i); } });
+  const firstMonthCol=Math.min(...mcols.flat());
+  const textCols=head.slice(0,firstMonthCol).map((c,i)=>({i,h:norm(c)}));
+  const cWhen=(textCols.find(x=>/when|schedule|range/.test(x.h))||{}).i, cOver=(textCols.find(x=>/overview|process|notes|doc/.test(x.h))||{}).i;
+  const out=[]; let cat='';
+  rows.slice(hi+1).forEach(r=>{
+    const name=String(r[0]||'').trim(); if(!name) return;
+    const when=cWhen!=null?String(r[cWhen]||'').trim():'';
+    const notes=mcols.map(cols=>cols.map(i=>String(r[i]||'').trim()).filter(Boolean).join(' ').replace(/\[merged\]\s*/g,''));
+    const anyNote=notes.some(Boolean);
+    const over=cOver!=null?String(r[cOver]||'').trim():'';
+    if(!when && !anyNote && !over){ cat=name; return; }      // a category header row
+    const ranges=parseWindows(when); const months=windowMonths(ranges);
+    notes.forEach((n,i)=>{ if(n) months[i]=true; });
+    out.push({n:name, cat:cat, window:when, ranges:ranges, months:months, notes:notes, overview:over});
+  });
+  return {services:out};
+}
+function svcFor(name){ const k=norm(name); if(!k) return null; const L=GLOBAL.services||[]; return L.find(v=>norm(v.n)===k)||L.find(v=>k.indexOf(norm(v.n))>-1||norm(v.n).indexOf(k)>-1)||null; }
+async function seasonSync(auto){
+  const g=gsheetCfg();
+  if(!g.seasonGid){ if(!auto) alert('Set the Services & Seasonality tab gid first (click that tab in Google Sheets and copy the number after #gid= in the address bar).'); return; }
+  let csv; try{ csv=await gsheetPull(g.seasonGid); }catch(e){ if(!auto) alert('Could not read the seasonality sheet:\n'+e.message); return; }
+  const P=parseSeasonSheet(csv); if(P.error){ if(!auto) alert(P.error); return; }
+  GLOBAL.services=P.services; g.seasonAt=new Date().toISOString(); save(K_GLOBAL,GLOBAL); svcDirty();
+  if(!auto) toast(P.services.length+' services loaded from the sheet');
+  render();
+}
+function seasonPaste(){
+  const t=prompt('Paste the Services & Seasonality tab as CSV (File → Download → CSV, then open it and copy everything):',''); if(!t) return;
+  const P=parseSeasonSheet(t); if(P.error){ alert(P.error); return; }
+  const g=gsheetCfg(); GLOBAL.services=P.services; g.seasonAt=new Date().toISOString(); save(K_GLOBAL,GLOBAL); svcDirty(); render();
+  toast(P.services.length+' services loaded');
+}
+function gsheetSave(){
+  const g=gsheetCfg();
+  g.id=(document.getElementById('gsId').value.trim().match(/[-\w]{25,}/)||[''])[0]||document.getElementById('gsId').value.trim();
+  g.rosterGid=document.getElementById('gsRoster').value.trim()||'0'; g.seasonGid=document.getElementById('gsSeason').value.trim();
+  save(K_GLOBAL,GLOBAL); toast('Sheet settings saved'); render();
+}
+function svcSheetToggle(){ const f=document.getElementById('svcSheet'); if(!f) return; f.style.display=f.style.display==='none'?'':'none'; }
+function renderServices(){
+  const grid=document.getElementById('svcGrid'); if(!grid) return;
+  const g=gsheetCfg(), L=GLOBAL.services||[], now=new Date().getMonth();
+  const hint=document.getElementById('svcHint');
+  if(hint) hint.innerHTML=(L.length?L.length+' services · synced '+esc(String(g.seasonAt||'').replace('T',' ').slice(0,16)):'not loaded yet')+(ADMIN?' · <a href="#" onclick="svcSheetToggle();return false">sheet settings</a> · <a href="#" onclick="seasonSync(false);return false">⟳ sync now</a>':'');
+  const sheet=document.getElementById('svcSheet');
+  if(sheet && ADMIN) sheet.innerHTML='<div class="epform"><div class="full"><label>Google Sheet id or URL</label><input id="gsId" value="'+esc(g.id||'')+'"></div>'+
+    '<div><label>Team Members tab gid</label><input id="gsRoster" value="'+esc(g.rosterGid||'0')+'"></div><div><label>Services &amp; Seasonality tab gid</label><input id="gsSeason" value="'+esc(g.seasonGid||'')+'" placeholder="number after #gid= in the URL"></div>'+
+    '<div class="full" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="p" onclick="gsheetSave()">Save</button><button onclick="seasonSync(false)">⟳ Sync seasonality</button><button onclick="rosterSync(false)">⟳ Sync roster</button><button onclick="seasonPaste()">Paste CSV instead</button>'+
+    '<span class="note">The sheet must be shared as <b>Anyone with the link · Viewer</b>. Both tabs sync on open.</span></div></div>';
+  const nowBox=document.getElementById('svcNow');
+  if(!L.length){ grid.innerHTML=''; if(nowBox) nowBox.innerHTML='<div class="empty">No services loaded yet.'+(ADMIN?' Open sheet settings above, add the seasonality tab gid, and sync.':'')+'</div>'; return; }
+  const inNow=L.filter(v=>v.months[now]);
+  if(nowBox) nowBox.innerHTML='<div class="note" style="margin-bottom:6px"><b>In season now · '+MON[now]+'</b> — '+inNow.length+' of '+L.length+'</div><div class="chips">'+inNow.map(v=>'<span class="pill ok" title="'+esc(v.window||'')+'">'+esc(v.n)+'</span>').join('')+'</div>';
+  let h='<thead><tr><th>Service</th><th>When we schedule</th>'+MON.map((m,i)=>'<th class="m'+(i===now?' now':'')+'">'+m.slice(0,1)+'</th>').join('')+'</tr></thead><tbody>';
+  let cat=null;
+  L.forEach(v=>{
+    if(v.cat!==cat){ cat=v.cat; if(cat) h+='<tr class="cat"><td colspan="14">'+esc(cat)+'</td></tr>'; }
+    h+='<tr><td><b>'+esc(v.n)+'</b>'+(v.overview?'<div class="note">'+esc(v.overview)+'</div>':'')+'</td><td class="note">'+esc(v.window||'—')+'</td>'+
+      v.months.map((on,i)=>'<td class="m'+(on?' on':'')+(i===now?' now':'')+'"'+(v.notes[i]?' title="'+esc(v.notes[i])+'"':'')+'>'+(on?'●':'')+'</td>').join('')+'</tr>';
+  });
+  grid.innerHTML=h+'</tbody>';
 }
 
 function openEmp(id){
@@ -10729,6 +11011,7 @@ function renderEmp(){
   if(!secs.some(x=>x[0]===EP_SEC)) EP_SEC='overview';
   let h='<div class="ephead">'+empAvatar(p,72)+'<div style="flex:1;min-width:0"><div class="nm">'+esc(empName(p))+'</div>'+
     '<div class="meta">'+esc(p.title||'No title')+(p.dept?' · '+esc(p.dept):'')+(p.email?' · '+esc(p.email):' · no company email')+'</div>'+
+    ((p.phone||p.truck||p.ext)?'<div class="meta">'+[p.phone,p.truck,p.ext?'ext '+p.ext:''].filter(Boolean).map(esc).join(' · ')+'</div>':'')+
     '<div class="pills">'+(p.active?'<span class="pill ok">ACTIVE</span>':'<span class="pill n">FORMER'+(p.ended?' · since '+esc(p.ended):'')+'</span>')+
     (p.roles||[]).map(r=>'<span class="pill '+(r==='sales'?'sa':r==='estimator'?'el':'n')+'">'+esc((EMP_ROLES.find(x=>x[0]===r)||[r,r])[1].toUpperCase())+'</span>').join('')+
     (p.admin?'<span class="pill mid">ADMIN</span>':'')+'<span class="pill '+a.cls+'" title="'+esc(a.detail)+'">'+a.label+'</span>'+
@@ -10833,6 +11116,10 @@ function renderEmp(){
         '<div><label>Display name (optional)</label><input id="epDisplay" value="'+esc(p.display||'')+'" placeholder="'+esc(empFirst(p)+' '+empLast(p))+'"></div>'+
         '<div><label>Title</label><input id="epTitleIn" value="'+esc(p.title||'')+'"></div><div><label>Department</label><input id="epDept" value="'+esc(p.dept||'')+'"></div>'+
         '<div><label>Company email</label><input id="epEmail" type="email" value="'+esc(p.email||'')+'"></div>'+
+        '<div><label>Other emails (comma-separated)</label><input id="epAlt" value="'+esc((p.altEmails||[]).join(', '))+'" placeholder="personal@gmail.com"></div>'+
+        '<div><label>Phone</label><input id="epPhone" value="'+esc(p.phone||'')+'"></div>'+
+        '<div><label>Truck</label><input id="epTruck" value="'+esc(p.truck||'')+'" placeholder="GMC #014"></div>'+
+        '<div><label>Phone ext</label><input id="epExt" value="'+esc(p.ext||'')+'"></div>'+
         '<div class="full"><label>Roles</label><div class="rolechips">'+EMP_ROLES.map(r=>'<label><input type="checkbox" class="epRole" value="'+r[0]+'"'+((p.roles||[]).indexOf(r[0])>-1?' checked':'')+'> '+r[1]+'</label>').join('')+'</div></div>'+
         '<div><label>Status</label><select id="epActive"><option value="1"'+(p.active?' selected':'')+'>Active</option><option value="0"'+(p.active?'':' selected')+'>Former team member</option></select></div>'+
         '<div><label>Left on</label><input id="epEnded" type="date" value="'+esc(p.ended||'')+'"></div>'+
@@ -10861,6 +11148,13 @@ function empSaveProfile(){
   if(display!==(p.display||'')){ p.display=display; changed.display=1; }
   if(title!==(p.title||'')){ p.title=title; changed.title=1; }
   if(dept!==(p.dept||'')){ p.dept=dept; changed.dept=1; }
+  const phone=g('epPhone'), truck=g('epTruck'), ext=g('epExt');
+  const alt=g('epAlt').toLowerCase().split(/[,;\s]+/).map(x=>x.trim()).filter(x=>x&&x.indexOf('@')>-1&&x!==email);
+  for(const a of alt){ const hit=resolveEmployee('','*',{email:a}); if(hit && hit.id!==p.id){ alert(a+' already belongs to '+empName(person(hit.id))+'.'); return; } }
+  if(phone!==(p.phone||'')){ p.phone=phone; changed.phone=1; }
+  if(truck!==(p.truck||'')){ p.truck=truck; changed.truck=1; }
+  if(ext!==(p.ext||'')){ p.ext=ext; changed.ext=1; }
+  if(alt.join(',')!==(p.altEmails||[]).join(',')){ p.altEmails=alt; changed.altEmails=1; }
   if(email!==(p.email||'')){ empLog(p,'email',{from:p.email||'',to:email}); p.email=email; }
   if(JSON.stringify(roles)!==JSON.stringify(p.roles||[])){ empLog(p,'roles',{from:p.roles||[],to:roles}); p.roles=roles; }
   if(active!==!!p.active){ empLog(p,'active',{to:active,ended:active?'':ended}); p.active=active; }
@@ -11269,6 +11563,8 @@ function cloudInit(){
   verifyAuditChain().then(function(r){ AUDIT_CHAIN=r; HAWK_CACHE={at:0,c:null}; renderHawkChip(); renderAudit(); });
   setTimeout(auditShip, 6000);
   setInterval(auditShip, 120000);
+  // the company sheet is the live source for the roster and the service calendar
+  setTimeout(function(){ if(cloudHasBackend() && authOK() && cloudAuthed()){ rosterSync(true); if(gsheetCfg().seasonGid) seasonSync(true); } }, 5000);
 }
 
 /* ============================================================
