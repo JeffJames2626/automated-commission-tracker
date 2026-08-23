@@ -1791,8 +1791,9 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
       </div>
       <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
         <div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap">
-          <button class="sm" onclick="document.getElementById('ePdf').click()">🦅 Read an invoice PDF</button>
-          <span class="note">The Data Hawk reads it, proposes corrections, and stores the PDF with this sale as evidence.</span>
+          <button class="sm" onclick="document.getElementById('ePdf').click()">📎 Upload the invoice PDF</button>
+          <button class="sm" onclick="pickPdfFolder()" title="Pick a folder on this computer once — every uploaded PDF also saves a copy there (Chrome/Edge)">📁 PDF folder</button>
+          <span class="note">The PDF is stored as evidence no matter what; with a Claude key set, the 🦅 Hawk also reads it and proposes corrections.</span>
         </div>
         <input type="file" id="ePdf" accept="application/pdf,.pdf" style="display:none" onchange="editPdfPicked(event)">
         <div id="eFiles" class="note" style="margin-top:8px"></div>
@@ -8980,6 +8981,47 @@ function openEdit(id){
 function closeEdit(){ EDIT_ID=null; document.getElementById('editModal').classList.remove('on');
   document.getElementById('eFound').innerHTML=''; }
 
+/* ---- local PDF archive folder ----
+   Chrome/Edge on a computer can be granted ONE folder (pick it once — e.g. the
+   SALES TRACKER folder the exports live in) and every uploaded invoice PDF also
+   gets saved there automatically. The server vault stays the official evidence;
+   this is the on-disk copy that lives with the rest of the paperwork. */
+function fsdb(){ return new Promise(function(res,rej){ const q=indexedDB.open('alp-fs',1);
+  q.onupgradeneeded=function(){ q.result.createObjectStore('h'); };
+  q.onsuccess=function(){ res(q.result); }; q.onerror=function(){ rej(q.error); }; }); }
+async function fsGet(k){ try{ const db=await fsdb(); return await new Promise(function(res){
+  const t=db.transaction('h').objectStore('h').get(k);
+  t.onsuccess=function(){res(t.result||null)}; t.onerror=function(){res(null)}; }); }catch(e){ return null; } }
+async function fsSet(k,v){ try{ const db=await fsdb(); return await new Promise(function(res){
+  const t=db.transaction('h','readwrite').objectStore('h').put(v,k);
+  t.onsuccess=function(){res(true)}; t.onerror=function(){res(false)}; }); }catch(e){ return false; } }
+async function pickPdfFolder(){
+  if(!window.showDirectoryPicker){
+    alert('This browser cannot save into a folder — that works in Chrome or Edge on a computer.\n\nThe evidence vault still stores every PDF either way.');
+    return;
+  }
+  try{
+    const h=await showDirectoryPicker({mode:'readwrite'});
+    await fsSet('pdfdir',h);
+    toast('Invoice PDFs will also be saved into “'+h.name+'”');
+    auditRecord('pdf-folder',{folder:h.name});
+  }catch(e){ /* user cancelled */ }
+}
+async function archivePdfLocal(fname,b64){
+  try{
+    if(!window.showDirectoryPicker) return null;
+    const h=await fsGet('pdfdir'); if(!h) return null;
+    let perm=await h.queryPermission({mode:'readwrite'});
+    if(perm!=='granted'){ perm=await h.requestPermission({mode:'readwrite'}); if(perm!=='granted') return null; }
+    const clean=String(fname).replace(/[\\/:*?"<>|]+/g,'-').slice(0,150);
+    const bin=atob(b64); const arr=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+    const fh=await h.getFileHandle(clean,{create:true});
+    const w=await fh.createWritable(); await w.write(arr); await w.close();
+    return h.name+'/'+clean;
+  }catch(e){ return null; }
+}
+
 /* ---- the Hawk reads an invoice PDF against THIS sale ----
    Extracts client, date, and totals with Claude, shows a field-by-field
    diff against the sale, applies only what you click, and stores the PDF
@@ -9003,45 +9045,73 @@ async function editPdfPicked(ev){
   const f=ev.target.files[0]; ev.target.value=''; if(!f) return;
   const r=ROWS.find(function(x){return x.id===EDIT_ID;}); if(!r) return;
   const box=document.getElementById('eFound');
-  const cfg=aiCfg();
-  if(!cfg.key){ box.innerHTML='<div class="warnbox">No Claude API key set — Import tab → "Reading PDFs with Claude". The PDF was not stored.</div>'; return; }
+  if(!/pdf$/i.test(f.name) && f.type!=='application/pdf'){ box.innerHTML='<div class="warnbox">That is not a PDF.</div>'; return; }
   if(f.size>5*1024*1024){ box.innerHTML='<div class="warnbox">That PDF is over 5MB.</div>'; return; }
-  box.innerHTML='<div class="note">🦅 Reading '+esc(f.name)+'…</div>';
-  try{
-    const b64=await fileToBase64(f);
-    // 1) store the evidence FIRST, so the PDF exists even if nothing gets applied
-    let fileRef=null;
-    if(CLOUD.on && cloudPw()){
+  const lines=[];
+  let b64;
+  try{ b64=await fileToBase64(f); }
+  catch(e){ box.innerHTML='<div class="warnbox">Could not read that file.</div>'; return; }
+
+  // ---- STEP 1: STORE THE EVIDENCE. Always. Never depends on the AI key. ----
+  box.innerHTML='<div class="note">📎 Storing '+esc(f.name)+' in the evidence vault…</div>';
+  let fileRef=null;
+  if(CLOUD.on && cloudPw()){
+    try{
       const sha=await sha256hex(b64.slice(0,100000)+':'+b64.length);
       const up=await fetch(CLOUD.url+'?file=1',{method:'POST',
         headers:{'content-type':'application/json','x-app-password':cloudPw()},
         body:JSON.stringify({name:f.name,sha:sha,data:b64})});
-      if(up.ok){ const j=await up.json();
+      if(up.ok){
+        const j=await up.json();
         fileRef={id:j.id,name:f.name,kb:Math.round(f.size/1024),sha:sha,at:todayISO()};
         (r.files=r.files||[]).push(fileRef); save(K_ROWS,ROWS);
         auditRecord('pdf-attach',{rowId:r.id,client:r.client,file:f.name,kb:fileRef.kb,sha:sha,vaultId:j.id});
         renderEditFiles(r);
+        lines.push('✅ <b>Stored</b> in the evidence vault as file #'+j.id+' — the PDF half of THE LAW is satisfied.');
+      } else {
+        const jj=await up.json().catch(function(){return {};});
+        lines.push('🚨 The vault refused the file ('+esc(jj.error||('HTTP '+up.status))+') — <b>the PDF is NOT stored.</b>');
       }
+    }catch(e){
+      lines.push('🚨 Could not reach the vault ('+esc(e.message||'offline')+') — <b>the PDF is NOT stored.</b> Try again when online.');
     }
-    // 2) read it
+  } else {
+    lines.push('🚨 <b>Cloud sync is OFF on this device, so the PDF was NOT stored in the vault.</b> Click the ☁ button at the top, enter the password, then upload again — THE LAW needs the stored PDF.');
+  }
+
+  // ---- STEP 1b: also drop a copy into the local PDF folder, when one is set ----
+  const archName=(r.invNo?('INV '+r.invNo+' - '):'')+r.client+' - '+f.name;
+  const localPath=await archivePdfLocal(archName,b64);
+  if(localPath) lines.push('🗂 Copy saved to your folder: '+esc(localPath));
+  else if(window.showDirectoryPicker) lines.push('<span class="note">No local PDF folder set — the 📁 button picks one (e.g. your SALES TRACKER folder) and every future upload lands there too.</span>');
+
+  // ---- STEP 2: READ IT (optional — needs the Claude key). ----
+  const cfg=aiCfg();
+  if(!cfg.key){
+    lines.push('ℹ️ No Claude API key set (Import tab → “Reading PDFs with Claude”), so the Hawk could not read it. Type the invoice # into the field above by hand — or set the key and it fills in automatically next time.');
+    box.innerHTML='<div class="found"><h5>📎 '+esc(f.name)+'</h5><div class="note">'+lines.join('<br><br>')+'</div></div>';
+    return;
+  }
+  box.innerHTML='<div class="found"><h5>📎 '+esc(f.name)+'</h5><div class="note">'+lines.join('<br><br>')+'<br><br>🦅 Reading it…</div></div>';
+  try{
     const {out}=await askClaude(b64, cfg.model, cfg.key);
     const diffs=pdfDiffFor(r,out);
     window.__EPDF={diffs:diffs};
+    let h='<div class="found"><h5>📎 '+esc(f.name)+'</h5><div class="note">'+lines.join('<br><br>')+'</div>';
     if(!diffs.length){
-      box.innerHTML='<div class="found"><h5>🦅 '+esc(f.name)+'</h5><div class="note">The invoice agrees with this sale — client, date and money all line up.'+
-        (fileRef?' PDF stored in the evidence vault (#'+fileRef.id+').':' <b>Cloud is off, so the PDF was NOT stored.</b>')+'</div></div>';
-      return;
+      h+='<div class="note" style="margin-top:8px">🦅 The invoice <b>agrees</b> with this sale — client, date, invoice # and money all line up.</div>';
+    } else {
+      h+='<div class="note" style="margin-top:10px"><b>🦅 The invoice disagrees with this sale:</b></div>';
+      diffs.forEach(function(d,i){
+        h+='<div class="li"><span class="g"><b>'+esc(d.f==='invNo'?'invoice #':d.f)+'</b>: "'+esc(String(d.from).slice(0,40))+'" → "'+esc(String(d.to).slice(0,40))+'"</span>'+
+          '<button class="sm p" onclick="applyPdfField('+i+')">Apply</button></div>';
+      });
+      h+='<div class="note" style="margin-top:8px">Only what you click gets applied — each change is logged with the PDF as backing evidence.</div>';
     }
-    let h='<div class="found"><h5>🦅 The invoice disagrees with this sale</h5>';
-    diffs.forEach(function(d,i){
-      h+='<div class="li"><span class="g"><b>'+esc(d.f)+'</b>: "'+esc(String(d.from).slice(0,40))+'" → "'+esc(String(d.to).slice(0,40))+'"</span>'+
-        '<button class="sm p" onclick="applyPdfField('+i+')">Apply</button></div>';
-    });
-    h+='<div class="note" style="margin-top:8px">Only what you click gets applied — each change is logged with the PDF as backing evidence.'+
-      (fileRef?' Stored as vault file #'+fileRef.id+'.':' <b>Cloud is off, so the PDF was NOT stored.</b>')+'</div></div>';
-    box.innerHTML=h;
+    box.innerHTML=h+'</div>';
   }catch(e){
-    box.innerHTML='<div class="warnbox">'+esc(e.message||String(e))+'</div>';
+    lines.push('⚠️ The Hawk could not read it: '+esc(e.message||String(e)));
+    box.innerHTML='<div class="found"><h5>📎 '+esc(f.name)+'</h5><div class="note">'+lines.join('<br><br>')+'</div></div>';
   }
 }
 function applyPdfField(i){
