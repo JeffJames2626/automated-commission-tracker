@@ -69,6 +69,213 @@ async function ensureUsers(sql) {
   if (!n[0].n) await sql`INSERT INTO users (email, name, role, added_by) VALUES (${ROOT_ADMIN}, 'Jeff James', 'admin', 'bootstrap')`;
 }
 
+// ===== ROLE PROJECTION =====
+// The browser can hide a number; only the server can decline to send it. A
+// non-admin session gets a state document with other people's compensation,
+// other people's sales, ledger, hours and the company's billing removed — so
+// "hidden" is not the only thing standing between a rep and the payroll of the
+// whole company.
+// The mirror rule applies on the way back in: a client may not change what it
+// was never sent, so every withheld record is restored from the stored document
+// before a non-admin's save is written.
+// Scope comes from the STORED roster (which only an admin can edit) plus the
+// session role. A person cannot widen their own scope by editing their own
+// record, because their record is one of the things they may not write.
+const COMP_FIELDS = ['rate','hrsIn','hrsOff','offMonths','commNew','commUp','commRenew','commOv',
+  'std','win','val','hit','goal','floor','salesPct','acv','pin','caps','hours','note','payFrom','scored'];
+// Never writable from a non-admin session, for ANYONE — including themselves.
+// A rep raising their own commission rate, or handing themselves a capability
+// or the admin flag, is the obvious attack and it must not depend on the UI.
+const WRITE_PROTECTED = COMP_FIELDS.concat(['admin']);
+// Mirror of the client's bundles. Kept deliberately in step with ROLE_CAPS in
+// the app; the two are compared by the projection tests.
+const ROLE_CAPS = {
+  manager:  ['view_own_sales','view_team_sales','view_own_commission','view_team_commission',
+             'view_clients','edit_clients','view_properties','edit_sales','view_data_hawk','view_revenue'],
+  sales:    ['view_own_sales','view_own_commission','view_clients','view_properties','edit_sales','edit_clients'],
+  estimator:['view_own_sales','view_own_commission','view_clients','view_properties','edit_sales','edit_clients'],
+  csr:      ['view_clients','edit_clients','view_properties','view_data_hawk'],
+  office:   ['view_clients','edit_clients','view_properties','view_data_hawk'],
+  billing:  ['view_clients','view_properties','view_client_financials','view_revenue','view_data_hawk','export_data'],
+  tech:     ['view_properties'],
+  field:    ['view_properties']
+};
+// 'owner' is deliberately absent: company scope comes from the users table,
+// never from a job title on the roster.
+function roleKeysOf(p) {
+  const out = [];
+  if (!p) return out;
+  (Array.isArray(p.roles) ? p.roles : []).forEach(r => { if (ROLE_CAPS[r]) out.push(r); });
+  if (/billing|account/i.test(p.title || '')) out.push('billing');
+  if (/csr|customer/i.test(p.title || '')) out.push('csr');
+  return out.filter((v, i, a) => a.indexOf(v) === i);
+}
+function meIdOf(doc, email) {
+  const e = String(email || '').toLowerCase();
+  if (!e || !doc || !Array.isArray(doc.people)) return '';
+  const hit = doc.people.find(p =>
+    String(p.email || '').toLowerCase() === e ||
+    String((p.google && p.google.email) || '').toLowerCase() === e ||
+    (Array.isArray(p.altEmails) && p.altEmails.some(a => String(a || '').toLowerCase() === e)));
+  return hit ? hit.id : '';
+}
+// Everything the projection needs about the person asking, worked out from the
+// stored document. Fails closed: an email nobody on the roster owns gets nothing.
+function whoCtx(doc, email) {
+  const people = Array.isArray(doc && doc.people) ? doc.people : [];
+  const me = meIdOf(doc, email);
+  const mine = me ? people.find(p => p && p.id === me) : null;
+  const caps = {};
+  roleKeysOf(mine).forEach(r => (ROLE_CAPS[r] || []).forEach(c => { caps[c] = 1; }));
+  (mine && Array.isArray(mine.caps) ? mine.caps : []).forEach(c => { caps[c] = 1; });
+  const team = me ? people.filter(p => p && p.mgr === me).map(p => p.id).concat([me]) : [];
+  const sales = caps.view_company_sales ? 'all' : caps.view_team_sales ? 'team' : caps.view_own_sales ? 'own' : 'none';
+  const money = caps.view_all_commissions ? 'all' : caps.view_team_commission ? 'team' : caps.view_own_commission ? 'own' : 'none';
+  const idsFor = sc => sc === 'team' ? team : sc === 'own' ? (me ? [me] : []) : [];
+  return {
+    me: me, caps: caps, sales: sales, money: money,
+    salesIds: idsFor(sales), moneyIds: idsFor(money),
+    financial: !!(caps.view_client_financials || caps.view_revenue)
+  };
+}
+function sharesOf(r) {
+  if (r && Array.isArray(r.split) && r.split.length) {
+    const t = r.split.reduce((a, s) => a + (+s.pct || 0), 0);
+    if (t > 0) return r.split.filter(s => (+s.pct || 0) > 0).map(s => s.rep);
+  }
+  return [r && r.rep];
+}
+function rowVisible(ctx, r) {
+  if (ctx.sales === 'all') return true;
+  if (ctx.sales === 'none' || !r) return false;
+  return sharesOf(r).some(id => ctx.salesIds.indexOf(id) > -1);
+}
+function ownedVisible(ctx, x, field) {
+  if (ctx.money === 'all') return true;
+  if (ctx.money === 'none' || !x) return false;
+  return ctx.moneyIds.indexOf(x[field]) > -1;
+}
+function keepVisible(list, ok) { return (Array.isArray(list) ? list : []).filter(ok); }
+
+function projectState(raw, email) {
+  let doc;
+  try { doc = JSON.parse(raw); } catch (e) { return raw; }   // unparseable: send as-is rather than break the app
+  if (!doc || typeof doc !== 'object') return raw;
+  const ctx = whoCtx(doc, email);
+  const seesMoneyOf = id => ctx.money === 'all' || (id && ctx.moneyIds.indexOf(id) > -1);
+  if (Array.isArray(doc.people)) {
+    doc.people = doc.people.map(p => {
+      if (!p || p.id === ctx.me || seesMoneyOf(p.id)) return p;
+      const c = Object.assign({}, p);
+      COMP_FIELDS.forEach(f => { delete c[f]; });
+      c.compHidden = true;              // the client knows the figure is withheld, not zero
+      return c;
+    });
+  }
+  // Sales, ledger, disputes and hours: only what this person's job covers.
+  if (ctx.sales !== 'all') doc.rows = keepVisible(doc.rows, r => rowVisible(ctx, r));
+  if (ctx.money !== 'all') {
+    doc.payouts  = keepVisible(doc.payouts,  x => ownedVisible(ctx, x, 'emp'));
+    doc.disputes = keepVisible(doc.disputes, x => ownedVisible(ctx, x, 'rep'));
+    doc.hours    = keepVisible(doc.hours,    x => ownedVisible(ctx, x, 'rep'));
+  }
+  // Client billing: invoices, payments and open balances are money owed to the
+  // company, not to a rep. Only billing, managers and the owner get them.
+  if (!ctx.financial) {
+    ['invoices','payments','openinv','invsyncs','paysyncs','balsyncs'].forEach(k => {
+      if (Array.isArray(doc[k])) doc[k] = [];
+    });
+  }
+  return JSON.stringify(doc);
+}
+// Keep what the caller was allowed to see (their version wins), and put back
+// verbatim every record that was withheld from them.
+//   visible   — the caller was sent this record, so their edit stands
+//   deletable — the caller may drop it entirely (defaults to visible)
+//   allowNew  — the caller may add a record of this kind at all
+function mergeById(incList, storedList, opts) {
+  const inc = Array.isArray(incList) ? incList : [];
+  const stored = Array.isArray(storedList) ? storedList : [];
+  const visible = opts.visible || (() => false);
+  const allowNew = opts.allowNew || (() => false);
+  const deletable = opts.deletable || visible;
+  const incBy = new Map();
+  inc.forEach(x => { if (x && x.id != null && !incBy.has(x.id)) incBy.set(x.id, x); });
+  const out = [], used = new Set();
+  stored.forEach(x => {
+    if (!x || x.id == null) { out.push(x); return; }
+    used.add(x.id);
+    if (!visible(x)) { out.push(x); return; }        // withheld: the stored record always wins
+    const v = incBy.get(x.id);
+    if (v !== undefined) { out.push(v); return; }    // shown to them and returned: their edit stands
+    if (!deletable(x)) out.push(x);                  // shown to them, dropped, but not theirs to remove
+  });
+  inc.forEach(x => { if (x && (x.id == null || !used.has(x.id)) && allowNew(x)) out.push(x); });
+  return out;
+}
+// A person record is an admin's document. On a non-admin save only these fields
+// of THEIR OWN record are taken from the browser; everything else — pay, caps,
+// the admin flag, roles, who they report to, their email — comes from what is
+// stored, because the org chart is the thing scope is calculated from.
+const SELF_EDITABLE = ['photo', 'log', 'phone', 'cell'];
+const NEVER_ON_A_NEW_PERSON = WRITE_PROTECTED.concat(['roles', 'mgr', 'email', 'altEmails', 'google']);
+function mergePeople(incP, storedP, ctx) {
+  const inc = Array.isArray(incP) ? incP : [];
+  const stored = Array.isArray(storedP) ? storedP : [];
+  const incBy = new Map();
+  inc.forEach(p => { if (p && p.id != null && !incBy.has(p.id)) incBy.set(p.id, p); });
+  const out = [], used = new Set();
+  stored.forEach(orig => {
+    if (!orig || orig.id == null) { out.push(orig); return; }
+    used.add(orig.id);
+    const v = incBy.get(orig.id);
+    if (v === undefined || orig.id !== ctx.me) { out.push(orig); return; }   // never deletable, never editable
+    const c = Object.assign({}, orig);
+    SELF_EDITABLE.forEach(f => { if (v[f] !== undefined) c[f] = v[f]; });
+    out.push(c);
+  });
+  inc.forEach(p => {
+    if (!p || (p.id != null && used.has(p.id))) return;
+    const c = Object.assign({}, p);
+    delete c.compHidden;
+    NEVER_ON_A_NEW_PERSON.forEach(f => { delete c[f]; });   // a record they invented starts with nothing
+    out.push(c);
+  });
+  return out;
+}
+// Put back everything a non-admin was not allowed to see, taking the stored values.
+function mergeProtected(incomingRaw, storedRaw, email) {
+  let inc, stored;
+  try { inc = JSON.parse(incomingRaw); stored = JSON.parse(storedRaw); } catch (e) { return null; }
+  if (!inc || !stored || typeof inc !== 'object' || typeof stored !== 'object') return null;
+  const ctx = whoCtx(stored, email);
+  inc.people = mergePeople(inc.people, stored.people, ctx);
+  // Sales: anything they can see, they can correct. Deleting is different — a
+  // shared sale carries somebody else's commission, so it takes everyone's scope.
+  inc.rows = mergeById(inc.rows, stored.rows, {
+    visible: r => rowVisible(ctx, r),
+    deletable: r => ctx.sales === 'all' ||
+      (ctx.sales !== 'none' && sharesOf(r).every(id => ctx.salesIds.indexOf(id) > -1)),
+    allowNew: () => ctx.sales !== 'none'
+  });
+  // The payout ledger is payroll's record of money that moved. It is written
+  // where payroll is run, never from a non-admin session — not even their own row.
+  inc.payouts = Array.isArray(stored.payouts) ? stored.payouts : [];
+  // A dispute is the one money record a person is meant to raise for themselves.
+  inc.disputes = mergeById(inc.disputes, stored.disputes, {
+    visible: x => ownedVisible(ctx, x, 'rep'),
+    allowNew: x => ownedVisible(ctx, x, 'rep')
+  });
+  inc.hours = mergeById(inc.hours, stored.hours, {
+    visible: x => ownedVisible(ctx, x, 'rep'),
+    allowNew: x => ownedVisible(ctx, x, 'rep')
+  });
+  ['invoices', 'payments', 'openinv', 'invsyncs', 'paysyncs', 'balsyncs'].forEach(k => {
+    inc[k] = mergeById(inc[k], stored[k], { visible: () => ctx.financial, allowNew: () => ctx.financial });
+  });
+  return JSON.stringify(inc);
+}
+
 const DB_URL =
   process.env.DATABASE_URL ||
   process.env.POSTGRES_URL ||
@@ -306,7 +513,9 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       const rows = await sql`SELECT data, updated FROM app_state WHERE id = 'main'`;
       if (!rows.length) return res.status(200).json({ empty: true });
-      return res.status(200).json({ data: rows[0].data, updated: rows[0].updated });
+      const isAdmin = (sess && sess.r === 'admin') || (!sess && pwOk);
+      const data = isAdmin ? rows[0].data : projectState(rows[0].data, who);
+      return res.status(200).json({ data, updated: rows[0].updated, scoped: !isAdmin });
     }
 
     if (req.method === 'POST') {
@@ -315,6 +524,16 @@ export default async function handler(req, res) {
       if (data && typeof data === 'object') data = data.data != null ? data.data : JSON.stringify(data);
       if (typeof data !== 'string') data = String(data == null ? '' : data);
       if (!data || data.length < 2) return res.status(400).json({ error: 'empty body' });
+
+      // A non-admin never sent us other people's compensation or ledger, so it may
+      // not change them: put the stored values back before anything is written.
+      const isAdminW = (sess && sess.r === 'admin') || (!sess && pwOk);
+      const pre = await sql`SELECT data FROM app_state WHERE id='main'`;
+      if (!isAdminW && pre.length) {
+        const merged = mergeProtected(data, pre[0].data, who);
+        if (!merged) return res.status(400).json({ error: 'could not merge this save safely' });
+        data = merged;
+      }
 
       // --- last-write-wins protection ---
       // Every save must state which cloud version it was built on (x-base-updated,

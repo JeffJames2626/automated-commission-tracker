@@ -66,7 +66,9 @@
       if(typeof save==='function') save=function(){};
       var P = mkPerson();
       PEOPLE=[P]; DISPUTES=[]; if(typeof HOURS!=='undefined') HOURS=[];
-      GLOBAL=Object.assign({}, snap.GLOBAL, {payLag:30,
+      // Start from a known state: anything a previous run (or the real data) left on
+      // GLOBAL must not decide a test's result.
+      GLOBAL=Object.assign({}, snap.GLOBAL, {empIgnore:[], hawkMuted:[], payLag:30,
         season:(typeof SEASON_DEFAULT!=='undefined'?SEASON_DEFAULT.slice():[]),
         policy:Object.assign({clawbackDays:180,respondDays:10,raiseDays:30}, (snap.GLOBAL&&snap.GLOBAL.policy)||{})});
 
@@ -1120,6 +1122,99 @@
         window.alert=alertO; window.toast=toastO; PAYOUTS=[]; DISPUTES=[];
       } else {
         results.push({name:'override-on-net fix present', expected:true, actual:false, pass:false});
+      }
+
+
+      /* ---------- ROLES & CAPABILITIES — people see what their job needs ---------- */
+      if(typeof can==='function' && typeof scopeOf==='function'){
+        var sessSnapR=localStorage.getItem('alp_session_v1'), adminSnapR=ADMIN, tabSnapR=TAB;
+        var RP=function(id,n,x){ return Object.assign(mkPerson({id:id,name:n}),{first:n.split(' ')[0],last:'Role',active:true,start:'2026-01-01',roles:['sales'],aliases:[],log:[],caps:[],email:'',mgr:''},x||{}); };
+        var kOWN=RP('K_OWN','Owner Role',{email:'own@automatedlawnandpest.com',roles:['sales','manager']});
+        var kMGR=RP('K_MGR','Mgr Role',{email:'mgr@automatedlawnandpest.com',roles:['manager'],commOv:5});
+        var kSLS=RP('K_SLS','Sls Role',{email:'sls@automatedlawnandpest.com',roles:['sales'],mgr:'K_MGR'});
+        var kCSR=RP('K_CSR','Csr Role',{email:'csr@automatedlawnandpest.com',roles:['office']});
+        var kBIL=RP('K_BIL','Bil Role',{email:'bil@automatedlawnandpest.com',roles:['office'],title:'Billing Coordinator'});
+        var kFLD=RP('K_FLD','Fld Role',{email:'fld@automatedlawnandpest.com',roles:['tech']});
+        PEOPLE=[kOWN,kMGR,kSLS,kCSR,kBIL,kFLD]; EMP_IDX=null;
+        ROWS=[mkRow({rep:'K_SLS',value:1000,client:'RC'}), mkRow({rep:'K_MGR',value:2000,client:'RC'}), mkRow({rep:'K_CSR',value:3000,client:'RC'})];
+        var beRole=function(p,admin){ ADMIN=!!admin; localStorage.setItem('alp_session_v1',JSON.stringify({token:'t.x',email:p.email,name:p.name,role:admin?'admin':'rep'})); capsInvalidate(); };
+
+        beRole(kOWN,true);
+        check('ROLE owner lands on 30,000 ft', 'view', homeTab());
+        check('ROLE owner sees every sale', 3, visibleRows().length);
+        check('ROLE owner sales scope', 'all', scopeOf('sales'));
+        checkTrue('ROLE owner may manage comp plans and imports', can('manage_comp_plans')&&can('manage_imports')&&can('admin_security'), 'ok');
+        checkTrue('ROLE owner sees anyone else money', canSeeMoneyOf(kSLS)&&canSeeMoneyOf(kBIL), 'ok');
+
+        beRole(kMGR,false);
+        check('ROLE manager lands on the team home', 'mgr', homeTab());
+        check('ROLE manager sales scope is the team', 'team', scopeOf('sales'));
+        check('ROLE manager sees a report sale and their own', 2, visibleRows().length);
+        checkTrue('ROLE manager sees a report money', canSeeMoneyOf(kSLS), 'ok');
+        checkTrue('ROLE manager does NOT see an unrelated person money', !canSeeMoneyOf(kCSR), canSeeMoneyOf(kCSR));
+        checkTrue('ROLE manager gets no owner tools', !can('manage_comp_plans')&&!can('manage_imports')&&!can('admin_security')&&!can('view_team_cost'), 'ok');
+        checkTrue('ROLE manager cannot open Comp plans, 30k or Admin', !tabAllowed('plans')&&!tabAllowed('view')&&!tabAllowed('admin'), 'ok');
+
+        beRole(kSLS,false);
+        check('ROLE salesperson lands on their own sales home', 'me', homeTab());
+        check('ROLE salesperson sees only their own sale', 1, visibleRows().length);
+        check('ROLE salesperson commission scope is own', 'own', scopeOf('commission'));
+        checkTrue('ROLE salesperson sees their own money', canSeeMoneyOf(kSLS), 'ok');
+        checkTrue('ROLE salesperson does NOT see a colleague money', !canSeeMoneyOf(kMGR)&&!canSeeMoneyOf(kOWN), 'ok');
+        checkTrue('ROLE salesperson cannot open Team cost, Adjustments, Import or Admin',
+          !tabAllowed('team')&&!tabAllowed('adj')&&!tabAllowed('import')&&!tabAllowed('admin'), 'ok');
+        checkTrue('ROLE salesperson CAN open clients and the map', tabAllowed('clients')&&tabAllowed('map'), 'ok');
+        var toastSnapR=window.toast; window.toast=function(){};
+        TAB='me'; setTab('plans'); check('ROLE direct navigation to Comp plans is refused', 'me', TAB);
+        setTab('admin'); check('ROLE direct navigation to Admin is refused', 'me', TAB);
+        // Marking commission PAID is payroll's, not the rep's — and the block is in
+        // the function, so it holds however the button was reached.
+        var pr=ROWS[0];
+        checkTrue('ROLE salesperson cannot mark their own commission paid', stageBlocked('paid'), 'blocked');
+        checkTrue('ROLE the paid cell is read-only for a rep', stageCell(pr,'paid').indexOf('<input')<0, stageCell(pr,'paid').slice(0,40));
+        var paidWas=pr.paid||''; setStage(pr.id,'paid','2026-08-01');
+        check('ROLE calling setStage directly does not pay a rep', paidWas, pr.paid||'');
+        checkTrue('ROLE salesperson CAN still move a sale to invoiced', !stageBlocked('invoiced'), 'allowed');
+        window.toast=toastSnapR;
+
+        beRole(kCSR,false);
+        check('ROLE CSR lands on the client desk', 'cx', homeTab());
+        check('ROLE CSR sees no sales', 0, visibleRows().length);
+        check('ROLE CSR sees no commission', 'none', scopeOf('commission'));
+        checkTrue('ROLE CSR may work clients and properties', can('view_clients')&&can('edit_clients')&&can('view_properties'), 'ok');
+        checkTrue('ROLE CSR gets no employee compensation', !canSeeMoneyOf(kSLS)&&!can('view_client_financials'), 'ok');
+
+        beRole(kBIL,false);
+        check('ROLE billing lands on the billing home', 'bill', homeTab());
+        checkTrue('ROLE billing may see CLIENT financials', can('view_client_financials')&&can('view_revenue'), 'ok');
+        checkTrue('ROLE billing may NOT see EMPLOYEE compensation', !canSeeMoneyOf(kSLS)&&!can('view_all_commissions')&&!tabAllowed('plans'), 'ok');
+        check('ROLE billing sees no sales rows', 0, visibleRows().length);
+
+        beRole(kOWN,true);
+        var toastSnapR2=window.toast; window.toast=function(){};
+        checkTrue('ROLE payroll CAN mark commission paid', !stageBlocked('paid'), 'allowed');
+        checkTrue('ROLE the paid cell is editable for payroll', stageCell(ROWS[0],'paid').indexOf('<input')>-1, 'input');
+        window.toast=toastSnapR2;
+
+        beRole(kFLD,false);
+        check('ROLE field lands on their own page', 'mine', homeTab());
+        checkTrue('ROLE field gets no financial tabs', !tabAllowed('comm')&&!tabAllowed('rev')&&!tabAllowed('sales')&&!tabAllowed('adj'), 'ok');
+        checkTrue('ROLE field can still reach their page and the service calendar', tabAllowed('mine')&&tabAllowed('svc'), 'ok');
+
+        kSLS.caps=['view_team_sales']; capsInvalidate(); beRole(kSLS,false);
+        check('ROLE a per-person capability widens just that person', 'team', scopeOf('sales'));
+        kSLS.caps=[]; capsInvalidate();
+
+        beRole(kSLS,false); var a1=scopeOf('sales');
+        beRole(kOWN,true);  var a2=scopeOf('sales');
+        check('ROLE capabilities re-evaluate when the person changes', 'own/all', a1+'/'+a2);
+        ADMIN=false; capsInvalidate();
+        checkTrue('ROLE losing admin drops company scope immediately', scopeOf('sales')!=='all', scopeOf('sales'));
+
+        if(sessSnapR!=null) localStorage.setItem('alp_session_v1',sessSnapR); else localStorage.removeItem('alp_session_v1');
+        ADMIN=adminSnapR; TAB=tabSnapR; capsInvalidate();
+      } else {
+        results.push({name:'capability model exists (can/scopeOf)', expected:true, actual:false, pass:false});
       }
 
       /* ---------- C2: tombstones stop deleted records resurrecting ---------- */

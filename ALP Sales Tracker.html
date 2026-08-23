@@ -170,6 +170,15 @@ a.emplink:hover{color:var(--grn-d);border-bottom-color:var(--grn)}
 .hawkbar{display:flex;gap:11px;flex-wrap:wrap;align-items:end;margin-bottom:12px}
 .hawkbar .frow{flex:1}
 .tile.needs{opacity:.62;border-style:dashed}
+.moreWrap{position:relative;display:inline-block}
+.moreMenu{display:none;position:absolute;top:100%;left:0;z-index:40;background:var(--paper);border:1px solid var(--line);
+  border-radius:10px;box-shadow:0 10px 30px rgba(28,33,25,.18);padding:6px;min-width:190px;flex-direction:column}
+.moreMenu.on{display:flex}
+.moreMenu button{background:none;border:none;text-align:left;padding:8px 11px;border-radius:7px;color:var(--ink);white-space:nowrap;font-size:13.5px}
+.moreMenu button:hover{background:var(--band)}
+nav button.moreBtn{opacity:.85}
+.homesw{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
+.homesw .note{margin-right:2px}
 .hverdict{background:var(--paper);border:1px solid var(--line);border-radius:11px;box-shadow:var(--shadow);padding:13px 15px;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
 .hverdict .hv1{font-size:15px}
 .hverdict .hv2{display:flex;gap:8px;align-items:center;flex:0 1 auto}
@@ -617,9 +626,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
       <div class="hspace"></div>
       <button id="hamBtn" onclick="toggleMenu()" title="Menu" aria-label="Menu">&#9776;</button>
       <div class="hbtns">
-        <button class="gh" onclick="window.print()">Print / PDF</button>
-        <button class="gh" onclick="exportCSV()">Export CSV</button>
-        <button class="gh" onclick="backup()">Backup all</button>
+        <span id="hdrTools"></span>
       </div>
     </div>
     <nav id="nav"></nav>
@@ -701,6 +708,41 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
 </div>
 
 <!-- ==================== SCOREBOARD ==================== -->
+<div class="tab" id="tab-mgr">
+  <section>
+    <div class="sechead"><h2>My team</h2><span class="hint" id="mgrHint"></span></div>
+    <div id="mgrBody"></div>
+  </section>
+</div>
+
+<div class="tab" id="tab-me">
+  <section>
+    <div class="sechead"><h2 id="meTitle">My sales</h2><span class="hint" id="meHint"></span></div>
+    <div id="meBody"></div>
+  </section>
+</div>
+
+<div class="tab" id="tab-cx">
+  <section>
+    <div class="sechead"><h2>Client desk</h2><span class="hint" id="cxHint"></span></div>
+    <div id="cxBody"></div>
+  </section>
+</div>
+
+<div class="tab" id="tab-bill">
+  <section>
+    <div class="sechead"><h2>Billing</h2><span class="hint" id="billHint"></span></div>
+    <div id="billBody"></div>
+  </section>
+</div>
+
+<div class="tab" id="tab-mine">
+  <section>
+    <div class="sechead"><h2>My page</h2><span class="hint" id="mineHint"></span></div>
+    <div id="mineBody"></div>
+  </section>
+</div>
+
 <div class="tab" id="tab-score">
   <section>
     <div class="card pad">
@@ -3549,7 +3591,7 @@ function tryUnlock(){
 function lockAdmin(){
   ADMIN=false; ADMIN_USER=null;
   // Do not strand the user on a tab they can no longer see.
-  if(TAB_INFO[TAB] && TAB_INFO[TAB].admin===true) TAB='score';
+  if(!tabAllowed(TAB)) TAB=homeTab();
   render();
 }
 function setPin(){
@@ -3594,27 +3636,42 @@ function forgotPin(){
    ============================================================ */
 // [id, label, adminOnly, what it is]
 const TABS=[
-  ['score','Scoreboard',false,'How production is tracking against the standard'],
-  ['sales','Sales',false,'Every logged sale'],
-  ['pipe','Pipeline',false,'Sold through to commission paid'],
-  ['hours','Hours',false,'Sales hours logged against the projection'],
-  ['clients','Clients',false,'The Service Autopilot roster, leads and sources'],
-  ['roster','Team',false,'Everyone on the roster — open anyone for their complete sales, commission and account history'],
-  ['svc','Services',false,'What we do and when we do it — every service and its season'],
-  ['prop','Property',false,'Property measurements against what gets sold'],
-  ['map','Map',false,'Locations, proximity and canvassing prompts'],
-  ['view','30,000 ft',true,'The whole company at a glance — sold, billed, collected, owed, commission and risk'],
-  ['hawk','🦅 Data Hawk',true,'Every finding the discrepancy hunter has right now, in one place'],
-  ['team','Team cost',true,'Every rep\u2019s production, pay and cost side by side'],
-  ['plans','Comp plans',true,'Hourly rates, commission and standards for each person'],
-  ['comm','Commissions',true,'Monthly commission reports and what is owed'],
-  ['adj','Adjustments',true,'Disputes, chargebacks and the process'],
-  ['rev','Revenue',true,'Invoices and payments — billed, collected, by rep and client'],
-  ['import','Import',true,'Bulk CSV loading and shared settings'],
-  ['admin','Admin',null,'Data checks, access and backups']
+  ['view','30,000 ft','view_company_sales','The whole company at a glance — sold, billed, collected, owed, commission and risk'],
+  ['mgr','My team','view_team_sales','How the team is doing, and who needs attention'],
+  ['me','My sales','view_own_sales','What I have sold, how I am tracking, and what needs me'],
+  ['cx','Client desk','view_clients','Client and lead work — find anyone, fix anything'],
+  ['bill','Billing','view_client_financials','Invoices, balances and what is owed'],
+  ['mine','My page','','Your profile and your activity'],
+  ['score','Scoreboard','view_team_sales','How production is tracking against the standard'],
+  ['sales','Sales','view_own_sales','Every logged sale'],
+  ['pipe','Pipeline','view_own_sales','Sold through to commission paid'],
+  ['hours','Hours','view_own_sales','Sales hours logged against the projection'],
+  ['clients','Clients','view_clients','The Service Autopilot roster, leads and sources'],
+  ['roster','Team','','Everyone on the roster'],
+  ['svc','Services','','What we do and when we do it'],
+  ['prop','Property','view_properties','Property measurements against what gets sold'],
+  ['map','Map','view_properties','Locations, proximity and canvassing prompts'],
+  ['hawk','🦅 Data Hawk','view_data_hawk','Every finding the discrepancy hunter has right now'],
+  ['team','Team cost','view_team_cost','Every rep\u2019s production, pay and cost side by side'],
+  ['plans','Comp plans','manage_comp_plans','Hourly rates, commission and standards for each person'],
+  ['comm','Commissions','view_own_commission','Monthly commission reports and what is owed'],
+  ['adj','Adjustments','view_all_commissions','Disputes, chargebacks and the process'],
+  ['rev','Revenue','view_revenue','Invoices and payments — billed, collected, by rep and client'],
+  ['import','Import','manage_imports','Bulk CSV loading and shared settings'],
+  ['admin','Admin','admin_security','Data checks, access and backups']
 ];
-const TAB_INFO={}; TABS.forEach(t=>{ TAB_INFO[t[0]]={label:t[1],admin:t[2],desc:t[3]}; });
-function setTab(t){ TAB=t; closeMenu(); render(); }
+// The homes are the first block above; they are never shown in the main nav row
+// alongside the working tabs — the current home is simply where you land.
+const HOME_TABS=['view','mgr','me','cx','bill','mine'];
+const TAB_INFO={}; TABS.forEach(t=>{ TAB_INFO[t[0]]={label:t[1],cap:t[2],desc:t[3]}; });
+function tabAllowed(id){ const i=TAB_INFO[id]; if(!i) return false; return !i.cap || can(i.cap); }
+function setTab(t){
+  if(!tabAllowed(t)){ toast('That is not part of your access'); return; }
+  TAB=t; closeMenu(); closeMore(); render();
+}
+function toggleMore(e){ e.stopPropagation(); const m=document.getElementById('moreMenu'); if(m) m.classList.toggle('on'); }
+function closeMore(){ const m=document.getElementById('moreMenu'); if(m) m.classList.remove('on'); }
+document.addEventListener('click',function(e){ if(!e.target.closest||!e.target.closest('.moreWrap')) closeMore(); });
 // Phone hamburger: nav and header actions fold behind ☰.
 function toggleMenu(){ document.querySelector('header').classList.toggle('menu-open'); }
 function closeMenu(){ const h=document.querySelector('header'); if(h) h.classList.remove('menu-open'); }
@@ -3624,7 +3681,7 @@ function selPerson(id){ SEL=id; planToForm(); renderPlanList(); renderScenarios(
 // A person-picker keeps whatever was chosen. Rebuilding options on every render used to
 // snap these back to WHO, so an import's fallback quietly followed whoever was last
 // opened on the Scoreboard.
-function fillPeople(id,fallback,blank,all){
+function fillPeople(id,fallback,blank,all,only){
   const el=document.getElementById(id);
   if(!el) return;
   const started = el.dataset.init==='1';
@@ -3635,18 +3692,19 @@ function fillPeople(id,fallback,blank,all){
   } else {
     if(!started || !PEOPLE.some(p=>p.id===cur)) cur=fallback;
   }
-  el.innerHTML=(blank?'<option value="">'+esc(blank)+'</option>':'')+peopleOptions(cur,'',all);
+  el.innerHTML=(blank?'<option value="">'+esc(blank)+'</option>':'')+peopleOptions(cur,'',all,only);
   el.value=cur;
   el.dataset.init='1';
 }
 
 // `all` = include former team members (report filters). Assignment pickers leave
 // them out so nothing new gets credited to somebody who has left.
-function peopleOptions(sel,blank,all){
+function peopleOptions(sel,blank,all,only){
   let h = blank ? '<option value="">'+blank+'</option>' : '';
   PEOPLE.forEach(p=>{
     if(p.id===EMP_UNASSIGNED && p.id!==sel) return;
     if(!all && !p.active && p.id!==sel) return;
+    if(only && !only(p) && p.id!==sel) return;
     h+='<option value="'+p.id+'"'+(p.id===sel?' selected':'')+'>'+esc(empName(p))+(p.active?'':' (former)')+'</option>';
   });
   return h;
@@ -3654,18 +3712,32 @@ function peopleOptions(sel,blank,all){
 function firstActiveId(){ const p=PEOPLE.find(x=>x.active&&x.id!==EMP_UNASSIGNED)||PEOPLE.find(x=>x.id!==EMP_UNASSIGNED)||PEOPLE[0]; return p?p.id:''; }
 
 function render(){
-  const visible=TABS.filter(t=>t[2]!==true||ADMIN);
-  if(!visible.some(t=>t[0]===TAB)) TAB='score';
+  capsInvalidate();
+  const visible=TABS.filter(t=>tabAllowed(t[0]));
+  if(!visible.some(t=>t[0]===TAB)) TAB=homeTab();
   // Weekly merge overdue: the whole tracker pauses. Only the import surfaces stay open.
   const paused=mergePaused();
   if(paused && PAUSE_ALLOWED.indexOf(TAB)<0)
     TAB = visible.some(t=>t[0]==='rev') ? 'rev' : 'clients';
-  document.getElementById('nav').innerHTML = visible.map(t=>{
-    const blocked = paused && PAUSE_ALLOWED.indexOf(t[0])<0;
-    return '<button class="'+(TAB===t[0]?'on':'')+(blocked?' lock':'')+'" onclick="'+
-      (blocked?'pauseNudge()':'setTab(&quot;'+t[0]+'&quot;)')+'">'+esc(t[1])+
-      (t[2]===true?'<span class="adminbadge">ADMIN</span>':'')+'</button>';
-  }).join('');
+  // Home first, then the tabs this person actually works in; everything else
+  // they are allowed but rarely need goes under More.
+  const home=homeTab();
+  const PRIMARY={view:['view','hawk','sales','clients','roster','comm'],
+                 mgr:['mgr','score','sales','pipe','clients','roster'],
+                 me:['me','sales','pipe','clients','map'],
+                 cx:['cx','clients','prop','svc','map'],
+                 bill:['bill','rev','clients','adj'],
+                 mine:['mine','svc','map']}[home]||['mine'];
+  const btn=(t,blocked)=>'<button class="'+(TAB===t[0]?'on':'')+(blocked?' lock':'')+'" onclick="'+
+      (blocked?'pauseNudge()':'setTab(&quot;'+t[0]+'&quot;)')+'">'+esc(t[1])+'</button>';
+  const prim=visible.filter(t=>PRIMARY.indexOf(t[0])>-1).sort((a,b)=>PRIMARY.indexOf(a[0])-PRIMARY.indexOf(b[0]));
+  const more=visible.filter(t=>PRIMARY.indexOf(t[0])<0 && HOME_TABS.indexOf(t[0])<0);
+  const moreHomes=visible.filter(t=>HOME_TABS.indexOf(t[0])>-1 && PRIMARY.indexOf(t[0])<0);
+  let nav=prim.map(t=>btn(t, paused && PAUSE_ALLOWED.indexOf(t[0])<0)).join('');
+  const rest=moreHomes.concat(more);
+  if(rest.length) nav+='<span class="moreWrap"><button class="moreBtn'+(rest.some(t=>t[0]===TAB)?' on':'')+'" onclick="toggleMore(event)">More ▾</button>'+
+    '<span class="moreMenu" id="moreMenu">'+rest.map(t=>'<button onclick="setTab(&quot;'+t[0]+'&quot;);closeMore()">'+esc(t[1])+'</button>').join('')+'</span></span>';
+  document.getElementById('nav').innerHTML=nav;
   TABS.forEach(t=>document.getElementById('tab-'+t[0]).classList.toggle('on',TAB===t[0]));
   renderAdmin();
 
@@ -3681,7 +3753,7 @@ function render(){
   fillPeople('bulkRep',firstP);
   fillPeople('hRep',firstP);
   fillPeople('hImpRep',firstP);
-  fillPeople('cWho',firstP,'Everyone',true);
+  fillPeople('cWho',firstP,'Everyone',true,canSeeMoneyOf);
   fillPeople('pRep',firstP,'All salespeople',true);
   fillPeople('dRep',firstP);
   fillPeople('cliRep',firstP,'All salespeople',true);
@@ -3692,7 +3764,11 @@ function render(){
   renderTeam(); renderScore(); renderPlanList(); planToForm(); renderScenarios(); renderHours();
   renderData(); renderSeason(); renderHoursTab(); renderPipe(); renderOSC(); renderAdj(); renderComm();
   renderClients(); renderTakeover(); renderProperty(); renderMap(); renderRevenue(); renderPayments(); renderBalances(); renderAlerts(); renderAIStatus();
-  renderRoster(); renderServices(); if(TAB==='view') renderView(); if(TAB==='hawk') renderChecks(); if(EP_ID) renderEmp();
+  renderRoster(); renderServices(); renderHdrTools();
+  if(TAB==='view') renderView(); if(TAB==='hawk') renderChecks();
+  if(TAB==='me') renderMeHome(); if(TAB==='mgr') renderMgrHome(); if(TAB==='cx') renderCxHome();
+  if(TAB==='bill') renderBillHome(); if(TAB==='mine') renderMineHome();
+  if(EP_ID) renderEmp();
   renderPauseBar(); renderHawkChip();
 }
 function setHWho(v){ HWHO=v; renderHoursTab(); }
@@ -3773,7 +3849,7 @@ function renderAdmin(){
     ut.innerHTML=u+'</tbody>';
   }
 
-  document.getElementById('adminLinks').innerHTML = TABS.filter(t=>t[2]===true).map(t=>
+  document.getElementById('adminLinks').innerHTML = TABS.filter(t=>t[2]&&t[2]!=='view_own_sales'&&t[2]!=='view_clients'&&t[2]!=='view_properties'&&t[2]!=='view_own_commission').map(t=>
     '<button class="alink" onclick="setTab(&quot;'+t[0]+'&quot;)">'+
     '<div class="t">'+esc(t[1])+'</div><div class="d">'+esc(t[3])+'</div></button>').join('');
 
@@ -4945,7 +5021,7 @@ function renderComm(){
   const detail=document.getElementById('cDetail').checked;
   const signs=document.getElementById('cSign').checked;
   const b=monthBounds(ym);
-  const ppl=(who?[person(who)]:PEOPLE.filter(p=>p.active)).filter(Boolean);
+  const ppl=(who?[person(who)]:PEOPLE.filter(p=>p.active)).filter(Boolean).filter(canSeeMoneyOf);
   if(!ppl.length){ box.innerHTML='<div class="card"><div class="empty">Nobody to report on.</div></div>'; return; }
 
   const reports=ppl.map(p=>commissionFor(p,ym,basis));
@@ -5214,7 +5290,7 @@ function commCSV(){
   if(!/^\d{4}-\d{2}$/.test(ym)){alert('Pick a month first.');return;}
   const who=document.getElementById('cWho').value;
   const basis=document.getElementById('cBasis').value;
-  const ppl=(who?[person(who)]:PEOPLE.filter(p=>p.active)).filter(Boolean);
+  const ppl=(who?[person(who)]:PEOPLE.filter(p=>p.active)).filter(Boolean).filter(canSeeMoneyOf);
   const b=monthBounds(ym);
   const lines=['Month,Salesperson,Title,New sales,New value,Upsells,Upsell value,New rate %,Upsell rate %,Commission,Override,Adjustments,Chargebacks,Net payable,Carried owing,Base pay,Total compensation'];
   ppl.forEach(p=>{
@@ -9491,7 +9567,7 @@ function pipeRows(){
   const rp=document.getElementById('pRep').value;
   const q=document.getElementById('pSearch').value.toLowerCase().trim();
   const f=document.getElementById('pFrom').value, t=document.getElementById('pTo').value;
-  let rows=ROWS.slice();
+  let rows=visibleRows().slice();
   if(rp) rows=rows.filter(r=>r.rep===rp);
   if(q)  rows=rows.filter(r=>(r.client+' '+r.service+' '+r.notes).toLowerCase().indexOf(q)>-1);
   if(f)  rows=rows.filter(r=>r.date>=f);
@@ -9547,14 +9623,16 @@ function renderPipe(){
       '<td class="num mono">'+(preplan?'<span class="pill n">pre-plan</span>'
         : (r.voidType?'<s style="color:var(--muted)">'+money2(grossComm(r))+'</s> '+money2(rowComm(r))
                      : money2(rowComm(r))))+'</td>'+
-      '<td><input type="date" value="'+esc(r.completed||'')+'" onchange="setStage(\''+r.id+'\',\'completed\',this.value)"></td>'+
-      '<td><input type="date" value="'+esc(r.invoiced||'')+'" onchange="setStage(\''+r.id+'\',\'invoiced\',this.value)"></td>'+
+      stageCell(r,'completed')+
+      stageCell(r,'invoiced')+
       '<td class="mono" style="'+(overdue?'color:var(--red);font-weight:700':'color:var(--muted)')+'">'+(due?fmt(due):'—')+'</td>'+
-      '<td><input type="date" value="'+esc(r.paid||'')+'" onchange="setStage(\''+r.id+'\',\'paid\',this.value)"></td>'+
+      stageCell(r,'paid')+
       '<td><span class="pill st-'+st+'">'+STAGE_LABEL[st].toUpperCase()+'</span>'+
         (r.voidType?'<div class="note">'+esc(VOID_LABEL[r.voidType])+(voidAmount(r)<bookedValue(r)?' · '+money(voidAmount(r)):'')+'</div>':'')+'</td>'+
-      '<td class="num"><button class="sm'+(r.voidType?'':' danger')+'" onclick="reverseSale(\''+r.id+'\')">'+
-        (r.voidType?'Undo':'Reverse')+'</button></td></tr>';
+      '<td class="num">'+(can('edit_sales')
+        ? '<button class="sm'+(r.voidType?'':' danger')+'" onclick="reverseSale(\''+r.id+'\')">'+
+          (r.voidType?'Undo':'Reverse')+'</button>'
+        : '<span class="note">—</span>')+'</td></tr>';
   });
   if(rows.length>400) h+='<tr><td colspan="11" class="empty">Showing the oldest 400 of '+rows.length+'.</td></tr>';
   t.innerHTML=h+'</tbody>';
@@ -9562,6 +9640,7 @@ function renderPipe(){
 
 // Cancel, refund or write off a sale — and say what it does to commission already paid.
 function reverseSale(id){
+  if(!can('edit_sales')){ toast('That is not part of your access'); return; }
   const r=ROWS.find(x=>x.id===id); if(!r)return;
   if(r.voidType){
     if(!confirm('Undo the reversal on '+r.client+'?\n\nThe sale goes back to full value. Any chargeback events recorded against it are voided (kept on the ledger, marked void).'))return;
@@ -9607,7 +9686,25 @@ function clearPipeFilters(){
   document.getElementById('pRep').value='';
   PSTAGE=''; renderPipe();
 }
+// Who may move a sale along. Marking commission PAID is payroll — a rep saying
+// they have been paid is not a thing the tracker should accept, whatever the
+// screen shows. The check lives in the function, not just in the markup.
+function stageCap(field){ return field==='paid' ? 'view_all_commissions' : 'edit_sales'; }
+function stageCell(r,field){
+  const v=r[field]||'';
+  if(!can(stageCap(field)))
+    return '<td class="mono" style="color:var(--muted)">'+(v?fmt(v):'\u2014')+'</td>';
+  return '<td><input type="date" value="'+esc(v)+'" onchange="setStage(\''+r.id+'\',\''+field+'\',this.value)"></td>';
+}
+function stageBlocked(field){
+  if(can(stageCap(field))) return false;
+  toast(field==='paid' ? 'Marking commission paid is payroll\u2019s to do'
+                       : 'That is not part of your access');
+  renderPipe&&renderPipe();
+  return true;
+}
 function setStage(id,field,val){
+  if(stageBlocked(field)) return;
   const r=ROWS.find(x=>x.id===id); if(!r)return;
   // THE LAW: no invoice number + uploaded invoice PDF, no invoiced/paid stage.
   if((field==='invoiced'||field==='paid') && val && !hasInvoiceEvidence(r)){
@@ -9636,6 +9733,7 @@ function setStage(id,field,val){
   renderPipe(); renderData(); renderComm(); renderAlerts();
 }
 function bulkStamp(field){
+  if(stageBlocked(field)) return;
   let rows=pipeRows().filter(r=>!r[field]);
   if(!rows.length){alert('Everything showing already has that date filled in.');return;}
   // THE LAW applies in bulk too: invoiced/paid only with invoice # + uploaded PDF.
@@ -10054,7 +10152,7 @@ function renderData(){
   const q=document.getElementById('fSearch').value.toLowerCase().trim();
   const fr=document.getElementById('fRep').value, fs=document.getElementById('fSource').value;
   const ft=document.getElementById('fType').value, ff=document.getElementById('fFrom').value, fto=document.getElementById('fTo').value;
-  let rows=ROWS.slice().sort((a,b)=>a.date>b.date?-1:a.date<b.date?1:0);
+  let rows=visibleRows().slice().sort((a,b)=>a.date>b.date?-1:a.date<b.date?1:0);
   if(q)  rows=rows.filter(r=>(r.client+' '+r.service+' '+r.notes).toLowerCase().indexOf(q)>-1);
   if(fr) rows=rows.filter(r=>r.rep===fr);
   if(fs) rows=rows.filter(r=>r.src===fs);
@@ -11249,10 +11347,19 @@ function dl(blob,name){
   setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);
 }
 function csvCell(v){const s=String(v==null?'':v);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}
+// Exports carry whatever the person can see — and nothing they cannot.
+function renderHdrTools(){
+  const el=document.getElementById('hdrTools'); if(!el) return;
+  let h='<button class="gh" onclick="window.print()">Print / PDF</button>';
+  if(can('export_data')||scopeOf('sales')!=='none') h+='<button class="gh" onclick="exportCSV()">Export CSV</button>';
+  if(can('admin_security')) h+='<button class="gh" onclick="backup()">Backup all</button>';
+  el.innerHTML=h;
+}
 function exportCSV(){
-  if(!ROWS.length){alert('Nothing to export yet.');return;}
+  const EXP=visibleRows();
+  if(!EXP.length){alert(ROWS.length?'There is nothing here for you to export.':'Nothing to export yet.');return;}
   const lines=['Sold,Salesperson,Client,Service,Rate,Basis,Qty,Booked value (pre-tax),Type,Source,Service completed,Invoice sent,Commission due,Commission paid,Stage,Commission,Notes'];
-  ROWS.slice().sort((a,b)=>a.date<b.date?-1:1).forEach(r=>{
+  EXP.slice().sort((a,b)=>a.date<b.date?-1:1).forEach(r=>{
     const p=person(r.rep);
     lines.push([r.date,p?p.name:'',r.client,r.service,Number(r.value).toFixed(2),
       BASIS_LABEL[basisOf(r)],qtyOf(r),bookedValue(r).toFixed(2),
@@ -11363,6 +11470,110 @@ function restore(e){
   fr.readAsText(f);
 }
 
+
+/* ============================================================
+   CAPABILITIES — what a person may do, not what they are called
+   A job title is a bundle of capabilities, never a check in itself.
+   Every gate in the app asks can('...') so a bundle can be changed in
+   one place, and one person can be given an extra capability without
+   inventing a new role. Scope answers "whose data": all / team / own.
+   NOTE: this is the USABILITY layer. It decides what is shown and what
+   the UI will do. It is NOT a security boundary on its own — the server
+   projection (api/state.js) is what actually withholds data.
+   ============================================================ */
+const CAP_LIST=[
+  'view_own_sales','view_team_sales','view_company_sales',
+  'view_own_commission','view_team_commission','view_all_commissions',
+  'view_clients','edit_clients','view_properties','view_client_financials',
+  'edit_sales','manage_employees','manage_comp_plans','manage_imports',
+  'view_data_hawk','resolve_data_hawk','view_team_cost','view_revenue',
+  'export_data','admin_security'
+];
+const ROLE_CAPS={
+  owner:    CAP_LIST.slice(),
+  manager:  ['view_own_sales','view_team_sales','view_own_commission','view_team_commission',
+             'view_clients','edit_clients','view_properties','edit_sales','view_data_hawk','view_revenue'],
+  sales:    ['view_own_sales','view_own_commission','view_clients','view_properties','edit_sales','edit_clients'],
+  estimator:['view_own_sales','view_own_commission','view_clients','view_properties','edit_sales','edit_clients'],
+  csr:      ['view_clients','edit_clients','view_properties','view_data_hawk'],
+  office:   ['view_clients','edit_clients','view_properties','view_data_hawk'],
+  billing:  ['view_clients','view_properties','view_client_financials','view_revenue','view_data_hawk','export_data'],
+  tech:     ['view_properties'],
+  field:    ['view_properties']
+};
+// Which home each bundle lands on, best first — a person with several roles
+// gets the widest home they are entitled to, and can switch to the others.
+const ROLE_HOME=[['owner','view'],['manager','mgr'],['billing','bill'],['sales','me'],['estimator','me'],['csr','cx'],['office','cx'],['tech','mine'],['field','mine']];
+function empRoleKeys(p){
+  const out=[];
+  if(!p) return out;
+  (p.roles||[]).forEach(r=>{ if(ROLE_CAPS[r]) out.push(r); });
+  if(/billing|account/i.test(p.title||'')) out.push('billing');
+  if(/csr|customer/i.test(p.title||'')) out.push('csr');
+  return out.filter((v,i,a)=>a.indexOf(v)===i);
+}
+// The cache is keyed on everything it depends on. A permission system must never
+// answer from a stale cache — ADMIN flips on PIN unlock and on sign-in/out.
+let CAP_CACHE=null, CAP_SIG='';
+function capsInvalidate(){ CAP_CACHE=null; CAP_SIG=''; }
+function capSig(){
+  const sx=(typeof session==='function')?session():null, me=empMe();
+  return (ADMIN?'1':'0')+'|'+((sx&&sx.email)||'')+'|'+((sx&&sx.role)||'')+'|'+(me?me.id:'')+'|'+
+    (me?(me.roles||[]).join(','):'')+'|'+(me?(me.caps||[]).join(','):'')+'|'+(me?(me.title||''):'');
+}
+function myRoles(){
+  const me=empMe();
+  const roles=me?empRoleKeys(me):[];
+  // The server's admin role is the only route to owner. p.admin (the local PIN
+  // gate) also unlocks it on a device with no login, as it always has.
+  if(ADMIN) roles.unshift('owner');
+  return roles.length?roles:(me?['field']:[]);
+}
+function myCaps(){
+  const sig=capSig();
+  if(CAP_CACHE && CAP_SIG===sig) return CAP_CACHE;
+  const set={};
+  myRoles().forEach(r=>(ROLE_CAPS[r]||[]).forEach(c=>set[c]=1));
+  // a per-person grant, for the exception that does not deserve a new role
+  const me=empMe(); (me&&me.caps||[]).forEach(c=>{ if(CAP_LIST.indexOf(c)>-1) set[c]=1; });
+  CAP_CACHE=set; CAP_SIG=sig; return set;
+}
+function can(cap){ return !!myCaps()[cap]; }
+// Whose records a capability family covers.
+function scopeOf(kind){
+  if(kind==='sales') return can('view_company_sales')?'all':can('view_team_sales')?'team':can('view_own_sales')?'own':'none';
+  if(kind==='commission') return can('view_all_commissions')?'all':can('view_team_commission')?'team':can('view_own_commission')?'own':'none';
+  return 'none';
+}
+function myTeamIds(){
+  const me=empMe(); if(!me) return [];
+  return PEOPLE.filter(p=>p.mgr===me.id).map(p=>p.id).concat([me.id]);
+}
+// Can the person at the keyboard see THIS employee's money?
+function canSeeMoneyOf(p){
+  if(!p) return false;
+  const sc=scopeOf('commission');
+  if(sc==='all') return true;
+  const me=empMe();
+  if(!me) return false;
+  if(p.id===me.id) return true;
+  return sc==='team' && myTeamIds().indexOf(p.id)>-1;
+}
+// Sales rows this person may see, by scope.
+function visibleRows(){
+  const sc=scopeOf('sales');
+  if(sc==='all') return ROWS;
+  if(sc==='none') return [];
+  const me=empMe(); if(!me) return [];
+  const ids=sc==='team'?myTeamIds():[me.id];
+  return ROWS.filter(r=>ids.some(id=>shareFor(r,id)>0));
+}
+function homeTab(){
+  const roles=myRoles();
+  for(const [role,tab] of ROLE_HOME) if(roles.indexOf(role)>-1) return tab;
+  return 'mine';
+}
+
 /* ============================================================
    TEAM ROSTER + EMPLOYEE HOME PAGE
    Everything about one person, reached from anywhere their name
@@ -11429,7 +11640,7 @@ function empLink(id,label){
   return '<a class="emplink" href="#emp/'+esc(p.id)+'" onclick="openEmp(\''+esc(p.id)+'\');return false" title="Open '+esc(empName(p))+'’s page">'+esc(label!=null?label:empName(p))+'</a>';
 }
 function empMe(){ const sx=session(); if(!sx) return null; const r=resolveEmployee('','*',{email:sx.email}); return r?person(r.id):null; }
-function empCanSeeMoney(p){ if(ADMIN) return true; const me=empMe(); return !!(me && p && me.id===p.id); }
+function empCanSeeMoney(p){ return canSeeMoneyOf(p); }
 function empAccountStatus(p){
   const L=window.__TEAMLOGINS||null, em=String(p.email||'').toLowerCase().trim();
   if(!em) return {cls:'n',label:'NO LOGIN',detail:'No company email on this record — add one to connect a Google login.'};
@@ -11742,6 +11953,205 @@ function renderView(){
     tile('Unmatched names',unmatched,unmatched?'Employee match needed':'everyone resolves',unmatched?'bad':'ok');
   const feeds=(typeof mergeStatus==='function')?mergeStatus():[];
   document.getElementById('viewFeeds').innerHTML=feeds.length?('Feeds: '+feeds.map(x=>esc(x.f.label)+' '+(x.state==='never'?'<b style="color:var(--red)">never</b>':x.days+'d ago'+(x.state==='stale'?' <b style="color:var(--red)">overdue</b>':''))).join(' · ')):'';
+}
+
+/* ============================================================
+   ROLE HOMES
+   One set of numbers, scoped. Every figure below comes from the same
+   functions the rest of the app uses (empKpis, analyzeFor, commFor,
+   compPosition) — only WHOSE records they run over changes.
+   ============================================================ */
+function homeSwitcher(){
+  const roles=myRoles(), tabs=[];
+  ROLE_HOME.forEach(([role,tab])=>{ if(roles.indexOf(role)>-1 && tabs.indexOf(tab)<0 && tabAllowed(tab)) tabs.push(tab); });
+  if(tabs.indexOf('mine')<0) tabs.push('mine');
+  if(tabs.length<2) return '';
+  return '<div class="homesw"><span class="note">You can also open:</span>'+
+    tabs.filter(t=>t!==TAB).map(t=>'<button class="sm" onclick="setTab(\''+t+'\')">'+esc(TAB_INFO[t].label)+'</button>').join('')+'</div>';
+}
+function meKpiStrip(K,p){
+  const u=unitOf(p);
+  return '<div class="tiles small">'+
+    tile('Today',K.today.n,money(K.today.v))+
+    tile('This week',K.week.n,money(K.week.v)+(K.std?' · standard '+K.std+' '+u+'/wk':''))+
+    tile('This month',K.month.n,money(K.month.v))+
+    tile('Year to date',K.ytd.n,money(K.ytd.v))+
+    (K.goal&&K.A&&K.A.scored?tile('% to annual goal',Math.round(K.ytd.n/K.goal*100)+'%',K.ytd.n+' of '+K.goal+' '+u):'')+
+    tile('Average sale',K.all.n?money(K.avg):'—',K.newN+' new · '+K.upN+' upsell')+
+    '</div>';
+}
+// SALES / ESTIMATOR home — my performance, my pipeline, my money, my clients
+function renderMeHome(){
+  const box=document.getElementById('meBody'); if(!box) return;
+  const me=empMe();
+  if(!me){ box.innerHTML='<div class="empty">Sign in with your work Google account to see your own numbers.</div>'; return; }
+  const p=me, D=empData(p.id), K=empKpis(D);
+  document.getElementById('meTitle').textContent=empFirst(p)?empFirst(p)+'’s sales':'My sales';
+  document.getElementById('meHint').textContent='as of '+fmtY(todayISO());
+  let h=homeSwitcher();
+  h+=meKpiStrip(K,p);
+  const money$=canSeeMoneyOf(p);
+  if(money$) h+='<div class="tiles small" style="margin-top:12px">'+
+    tile('Commission earned',money(K.commEarned),'since plan start')+
+    tile('Pending',money(K.commPending),'sold, not yet invoiced')+
+    tile('Payable',money(K.commPayable),'invoiced, not yet paid')+
+    tile('Paid',money(K.commPaid),'from the payout ledger')+
+    (K.clawback?tile('Chargebacks',money(K.clawback),'deducted','bad'):'')+'</div>';
+  // what needs me: not invoiced, no evidence, held splits
+  const mine=D.rows.filter(r=>!r.voidType);
+  const noInv=mine.filter(r=>!r.invoiced), noEv=mine.filter(r=>r.invoiced&&!hasInvoiceEvidence(r)), held=mine.filter(splitPending);
+  h+='<div class="pulsegrid" style="margin-top:14px">';
+  h+='<div class="card pad"><div class="sechead"><h3>What needs me</h3></div>';
+  const todo=[];
+  if(noInv.length) todo.push(['Not invoiced yet',noInv.length,money(noInv.reduce((a,r)=>a+netValue(r),0)),'pipe']);
+  if(noEv.length) todo.push(['Missing the invoice PDF / number',noEv.length,'THE LAW','sales']);
+  if(held.length) todo.push(['Split waiting on approval',held.length,money(held.reduce((a,r)=>a+rowComm(r),0)),'sales']);
+  h+=todo.length?('<div class="mk">'+todo.map(t=>'<div class="r"><span>'+esc(t[0])+'</span><div class="t"><i style="width:'+Math.min(100,t[1]*12)+'%"></i></div><b>'+t[1]+'</b></div>').join('')+
+      '</div><div class="note" style="margin-top:8px">'+todo.map(t=>esc(t[0])+': '+esc(String(t[2]))).join(' · ')+'</div>'):
+    '<div class="note">Nothing waiting on you. Every sale is invoiced with its evidence.</div>';
+  h+='<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="p sm" onclick="openQuick()">+ Add a sale</button>'+
+     '<button class="sm" onclick="setTab(\'pipe\')">My pipeline</button><button class="sm" onclick="openEmp(\''+p.id+'\')">My full page</button></div></div>';
+  // recent sales
+  h+='<div class="card pad"><div class="sechead"><h3>Recent sales</h3><span class="hint">newest first</span></div>';
+  const recent=D.rows.slice(0,8);
+  h+=recent.length?('<div class="scroll"><table><tbody>'+recent.map(r=>'<tr><td class="mono" style="white-space:nowrap">'+fmt(r.date)+'</td>'+
+      '<td><a href="#" onclick="openClient('+JSON.stringify(r.client).replace(/"/g,'&quot;')+');return false"><b>'+esc(r.client)+'</b></a>'+
+      '<div class="note">'+esc(r.service||'')+' · '+esc(TYPE_LABEL[r.type]||r.type)+'</div></td>'+
+      '<td class="num mono">'+money(netValue(r)*shareFor(r,p.id))+'</td>'+
+      '<td><span class="pill '+(stageOf(r)==='paid'?'ok':stageOf(r)==='reversed'?'no':'n')+'">'+esc(stageOf(r))+'</span></td></tr>').join('')+
+      '</tbody></table></div>'):'<div class="note">No sales logged yet.</div>';
+  h+='</div></div>';
+  box.innerHTML=h;
+}
+// MANAGER home — the team, scoped to direct reports
+function renderMgrHome(){
+  const box=document.getElementById('mgrBody'); if(!box) return;
+  const me=empMe();
+  const ids=me?myTeamIds().filter(id=>id!==me.id):[];
+  document.getElementById('mgrHint').textContent=ids.length?ids.length+' reporting to you':'nobody reports to you yet';
+  let h=homeSwitcher();
+  if(!ids.length){ box.innerHTML=h+'<div class="empty">No one lists you as their manager. Set “Reports to” on their comp plan and this fills in.</div>'; return; }
+  const t=todayISO(), ym=t.slice(0,7), wk=weekStart(t);
+  const team=ids.map(id=>({p:person(id),A:analyzeFor(id),K:empKpis(empData(id))})).filter(x=>x.p);
+  const sum=f=>team.reduce((a,x)=>a+f(x),0);
+  h+='<div class="tiles small">'+
+    tile('Team this month',sum(x=>x.K.month.n),money(sum(x=>x.K.month.v)))+
+    tile('Team this week',sum(x=>x.K.week.n),money(sum(x=>x.K.week.v)))+
+    tile('Team YTD',sum(x=>x.K.ytd.n),money(sum(x=>x.K.ytd.v)))+
+    tile('Pipeline',money(sum(x=>x.K.all.v-x.K.invoicedV)),'sold, not yet invoiced')+
+    (can('view_team_commission')?tile('Commission earned',money(sum(x=>x.K.commEarned)),'team, since plan start'):'')+
+    '</div>';
+  h+='<div class="pulsegrid" style="margin-top:14px"><div class="card pad"><div class="sechead"><h3>The team this month</h3></div><div class="lb">';
+  const top=Math.max(1,...team.map(x=>x.K.month.v));
+  team.slice().sort((a,b)=>b.K.month.v-a.K.month.v).forEach((x,i)=>{
+    h+='<div class="row" onclick="openEmp(\''+x.p.id+'\')"><div class="rank'+(i===0&&x.K.month.v?' m1':'')+'">'+(i+1)+'</div>'+empAvatar(x.p,40)+
+      '<div class="who"><div class="n">'+esc(empName(x.p))+'</div><div class="bar" style="width:'+Math.max(1,Math.round(x.K.month.v/top*100))+'%;background:'+pColor(x.p.id)+'"></div>'+
+      '<div class="sub">'+x.K.month.n+' sale'+(x.K.month.n===1?'':'s')+' · '+x.K.newN+' new'+(x.A&&x.A.rate!=null?' · '+Math.round(x.A.rate)+'% hit rate':'')+'</div></div>'+
+      '<div class="val"><b>'+money(x.K.month.v)+'</b></div></div>';
+  });
+  h+='</div></div>';
+  // who needs attention
+  h+='<div class="card pad"><div class="sechead"><h3>Needs attention</h3></div>';
+  const flags=[];
+  team.forEach(x=>{
+    const D=empData(x.p.id), live=D.rows.filter(r=>!r.voidType);
+    const stale=live.filter(r=>!r.invoiced && r.date<addDays(t,-30)).length;
+    const noEv=live.filter(r=>r.invoiced&&!hasInvoiceEvidence(r)).length;
+    const held=live.filter(splitPending).length;
+    if(!x.K.week.n) flags.push([x.p,'nothing logged this week','']);
+    if(stale) flags.push([x.p,stale+' sale'+(stale===1?'':'s')+' over 30 days without an invoice','']);
+    if(noEv) flags.push([x.p,noEv+' missing the invoice number or PDF','']);
+    if(held) flags.push([x.p,held+' split waiting on approval','']);
+  });
+  h+=flags.length?('<div class="feed">'+flags.slice(0,10).map(f=>'<div class="ev">'+empAvatar(f[0],26)+'<div><div>'+esc(f[1])+'</div><div class="w">'+empLink(f[0].id,empShort(f[0]))+'</div></div></div>').join('')+'</div>')
+    :'<div class="note">Nothing flagged on your team.</div>';
+  h+='</div></div>';
+  box.innerHTML=h;
+}
+// CSR / OFFICE home — client work first
+function renderCxHome(){
+  const box=document.getElementById('cxBody'); if(!box) return;
+  const t=todayISO(), d30=addDays(t,-30), d90=addDays(t,-90);
+  const clients=CLIENTS.filter(c=>isClient(c)&&!c.gone), leads=CLIENTS.filter(c=>isLead(c)&&!c.gone);
+  document.getElementById('cxHint').textContent=clients.length.toLocaleString()+' clients · '+leads.length.toLocaleString()+' leads';
+  let h=homeSwitcher();
+  h+='<div class="rtools" style="margin-bottom:12px"><input id="cxQ" placeholder="Find a client, lead, address or phone…" oninput="renderCxHome()" value="'+esc(window.__cxq||'')+'"></div>';
+  const q=norm(window.__cxq||'');
+  if(q){
+    const hits=CLIENTS.filter(c=>norm((c.n||'')+' '+(c.addr||'')+' '+(c.city||'')+' '+(c.ph||'')+' '+(c.em||'')).indexOf(q)>-1).slice(0,40);
+    h+='<div class="card pad"><div class="sechead"><h3>'+hits.length+' match'+(hits.length===1?'':'es')+'</h3></div><div class="scroll tallscroll"><table><tbody>'+
+      hits.map(c=>'<tr><td><a href="#" onclick="openClient('+JSON.stringify(c.n).replace(/"/g,'&quot;')+');return false"><b>'+esc(c.n)+'</b></a>'+
+        (isLead(c)?' <span class="pill mid">LEAD</span>':'')+'<div class="note">'+esc(c.addr||'')+(c.city?', '+esc(c.city):'')+'</div></td>'+
+        '<td class="note">'+esc(c.ph||'')+'</td><td class="num">'+(mapHref(c)?'<a class="maplink ico" href="'+mapHref(c)+'" target="_blank" rel="noopener">📍</a>':'')+'</td></tr>').join('')+
+      '</tbody></table></div></div>';
+  }
+  h+='<div class="tiles small" style="margin-top:12px">'+
+    tile('Clients',clients.length.toLocaleString(),leads.length.toLocaleString()+' open leads')+
+    tile('New this month',clients.filter(c=>c.since&&c.since>=t.slice(0,7)+'-01').length,'joined the roster')+
+    tile('Leads over 90 days',leads.filter(c=>c.lead&&c.lead<d90).length,'going cold')+
+    tile('Missing an address',CLIENTS.filter(c=>!c.gone&&!c.addr).length,'cannot be mapped or routed',CLIENTS.filter(c=>!c.gone&&!c.addr).length?'bad':'ok')+
+    tile('Missing a phone',CLIENTS.filter(c=>!c.gone&&!c.ph).length,'cannot be called')+
+    '</div>';
+  h+='<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="sm" onclick="setTab(\'clients\')">Full client roster</button>'+
+     '<button class="sm" onclick="setTab(\'prop\')">Property</button><button class="sm" onclick="setTab(\'map\')">Map</button>'+
+     (can('view_data_hawk')?'<button class="sm" onclick="setTab(\'hawk\')">🦅 Data quality</button>':'')+'</div>';
+  box.innerHTML=h;
+  const inp=document.getElementById('cxQ');
+  if(inp){ inp.oninput=function(){ window.__cxq=this.value; const p=this.selectionStart; renderCxHome(); const n=document.getElementById('cxQ'); if(n){ n.focus(); try{ n.setSelectionRange(p,p); }catch(e){} } }; }
+}
+// BILLING home — client money only. Never employee compensation.
+function renderBillHome(){
+  const box=document.getElementById('billBody'); if(!box) return;
+  const t=todayISO(), y=t.slice(0,4);
+  const billedYTD=INVOICES.filter(x=>String(x.d).slice(0,4)===y).reduce((a,x)=>a+(+x.v||0),0);
+  const collectedYTD=PAYMENTS.filter(x=>String(x.d).slice(0,4)===y).reduce((a,x)=>a+(+x.a||0),0);
+  const arB={c:0,'30':0,'60':0,'90':0};
+  OPENINV.forEach(v=>{ const age=Math.round((dObj(t)-dObj(v.d))/86400000), b=+v.t||0;
+    if(age<=30)arB.c+=b; else if(age<=60)arB['30']+=b; else if(age<=90)arB['60']+=b; else arB['90']+=b; });
+  const arTot=arB.c+arB['30']+arB['60']+arB['90'];
+  document.getElementById('billHint').textContent=OPENINV.length?OPENINV.length.toLocaleString()+' open invoices':'no balances imported';
+  let h=homeSwitcher();
+  h+='<div class="tiles small">'+
+    tile('Owed now',money(arTot),OPENINV.length.toLocaleString()+' open invoices',arTot?'':'ok')+
+    tile('Over 60 days',money(arB['60']+arB['90']),arTot?Math.round((arB['60']+arB['90'])/arTot*100)+'% of what is owed':'',(arB['60']+arB['90'])>arTot*0.25?'bad':'ok')+
+    tile('Billed '+y,money(billedYTD),'pre-tax, invoice audit')+
+    tile('Collected '+y,money(collectedYTD),PAYMENTS.length?'payments feed':'payments not imported')+
+    '</div>';
+  h+='<div class="pulsegrid" style="margin-top:14px"><div class="card pad"><div class="sechead"><h3>Aging</h3></div><div class="mk">'+
+    [['Current (≤30d)',arB.c],['31–60 days',arB['30']],['61–90 days',arB['60']],['Over 90 days',arB['90']]].map(r=>
+      '<div class="r"><span>'+r[0]+'</span><div class="t"><i style="width:'+Math.round(r[1]/Math.max(1,arTot)*100)+'%"></i></div><b class="mono">'+money(r[1])+'</b></div>').join('')+
+    '</div></div>';
+  const byC={}; OPENINV.forEach(v=>{ const k=norm(v.c); (byC[k]=byC[k]||{name:v.c,n:0,t:0,past:0}); byC[k].n++; byC[k].t+=(+v.t||0); if(/past/i.test(v.s)) byC[k].past++; });
+  const worst=Object.values(byC).sort((a,b)=>b.t-a.t).slice(0,10);
+  h+='<div class="card pad"><div class="sechead"><h3>Who owes the most</h3></div>'+(worst.length?('<div class="scroll"><table><tbody>'+
+    worst.map(g=>'<tr><td><a href="#" onclick="openClient('+JSON.stringify(g.name).replace(/"/g,'&quot;')+');return false"><b>'+esc(g.name)+'</b></a><div class="note">'+g.n+' invoice'+(g.n===1?'':'s')+(g.past?' · '+g.past+' past due':'')+'</div></td>'+
+      '<td class="num mono"><b>'+money(g.t)+'</b></td></tr>').join('')+'</tbody></table></div>'):'<div class="note">Import <b>Invoices with Balances</b> to see this.</div>')+'</div></div>';
+  h+='<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">'+(can('view_revenue')?'<button class="sm" onclick="setTab(\'rev\')">Revenue detail</button>':'')+
+     '<button class="sm" onclick="setTab(\'clients\')">Clients</button>'+(can('view_data_hawk')?'<button class="sm" onclick="setTab(\'hawk\')">🦅 Billing findings</button>':'')+'</div>';
+  box.innerHTML=h;
+}
+// FIELD / everyone else — their own page, nothing they do not use
+function renderMineHome(){
+  const box=document.getElementById('mineBody'); if(!box) return;
+  const me=empMe();
+  document.getElementById('mineHint').textContent=me?(me.title||''):'not signed in';
+  if(!me){ box.innerHTML='<div class="empty">Sign in with your work Google account.</div>'; return; }
+  let h=homeSwitcher();
+  h+='<div class="card pad"><div class="ephead">'+empAvatar(me,64,true)+'<div><div class="nm">'+esc(empName(me))+'</div>'+
+    '<div class="meta">'+esc(me.title||'')+(me.dept?' · '+esc(me.dept):'')+'</div>'+
+    '<div class="chips2" style="margin-top:6px">'+empWhereChip(me)+(me.phone?'<span class="pill phone">☎ '+esc(me.phone)+'</span>':'')+'</div></div></div>';
+  const D=empData(me.id);
+  if(D.rows.length||D.accts.length){
+    const K=empKpis(D);
+    h+='<div class="tiles small" style="margin-top:12px">'+
+      (D.rows.length?tile('My sales',K.all.n,money(K.all.v)):'')+
+      (D.accts.length?tile('My accounts',D.accts.length.toLocaleString(),''):'')+
+      '</div>';
+  }
+  h+='<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="p sm" onclick="openEmp(\''+me.id+'\')">My full page</button>'+
+     (tabAllowed('svc')?'<button class="sm" onclick="setTab(\'svc\')">What we do &amp; when</button>':'')+
+     (tabAllowed('map')?'<button class="sm" onclick="setTab(\'map\')">Map</button>':'')+'</div></div>';
+  box.innerHTML=h;
 }
 
 /* ---- ROSTER HEALTH: the numbers an admin needs after a sync ---- */
@@ -12512,6 +12922,7 @@ async function googleCredential(resp){
     auditRecord('login',{email:j.email,role:j.role,method:'google'});
     empLinkLogin(j);
     applySessionIdentity(true);
+    capsInvalidate(); TAB=homeTab();
     renderGoogleBtn(); renderLoginWall();
     if(!CLOUD.on) cloudStart(true); else cloudPull(false);
     render();
@@ -12528,7 +12939,7 @@ function sessionDrop(why){
   localStorage.removeItem(K_SESS);
   try{ sessionStorage.removeItem(K_PWUNLOCK); }catch(e){}
   ADMIN=false; ADMIN_USER=null;
-  if(TAB_INFO[TAB] && TAB_INFO[TAB].admin===true) TAB='score';
+  if(!tabAllowed(TAB)) TAB=homeTab();
   CLOUD.on=false; clearTimeout(CLOUD.pushTimer); cloudSetStatus('off');
   renderGoogleBtn(); renderLoginWall(); render();
   if(why) toast(why);
@@ -12822,6 +13233,7 @@ function cloudInit(){
    BOOT
    ============================================================ */
 // Logins tie to employee records by verified email (empLinkLogin) — never by name.
+capsInvalidate(); TAB=homeTab();
 document.getElementById('hDate').value=todayISO();
 document.getElementById('cMonth').value=defaultReportMonth();
 // Ledger backfills for data that predates the payout ledger. They record audit
