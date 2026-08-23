@@ -2259,11 +2259,7 @@ if(!load(K_REV,false)){
 if(!ROWS) ROWS=[];
 // A row whose person id no longer exists is parked on the "Unassigned" holding record
 // and flagged — it is never quietly credited to somebody else.
-if(PEOPLE.length){
-  let orphaned=0;
-  ROWS.forEach(r=>{ if(!r.rep || !PEOPLE.some(p=>p.id===r.rep)){ if(!r.repOrphan) r.repOrphan=r.rep||'(blank)'; r.repHow='orphan'; r.rep=empUnassigned().id; orphaned++; } });
-  if(orphaned) save(K_ROWS,ROWS);
-}
+empParkOrphans();
 // Sold -> completed -> invoiced -> commission paid. Blank means not there yet.
 ROWS.forEach(r=>{
   if(r.type==='renewal'){} else if(r.type!=='upsell') r.type='new';
@@ -2313,7 +2309,7 @@ const pColor = id => COLORS[Math.max(0,PEOPLE.findIndex(p=>p.id===id))%COLORS.le
 const EMP_SYS={SA:'Service Autopilot',EL:'Elevation Advisor',GV:'Grovely',INV:'Invoice export',MN:'Manual entry',GOOGLE:'Google login','*':'Any system'};
 const EMP_ROLES=[['sales','Sales'],['estimator','Estimator'],['tech','Technician'],['office','Office'],['manager','Manager']];
 const EMP_UNASSIGNED='emp_unassigned';
-function empKey(s){ return nameTokens(s).sort().join(' '); }            // order-free: "James, Jeff" = "Jeff James"
+function empKey(s){ s=String(s||'').trim(); if(s.indexOf('@')>-1) return s.toLowerCase(); return nameTokens(s).sort().join(' '); }   // order-free: "James, Jeff" = "Jeff James"; emails kept whole
 function empFirst(p){ if(p.first!=null&&p.first!=='') return p.first; return String(p.name||'').trim().split(/\s+/)[0]||''; }
 function empLast(p){ if(p.last!=null) return p.last; const t=String(p.name||'').trim().split(/\s+/); return t.length>1?t.slice(1).join(' '):''; }
 function empName(p){ if(!p) return '?'; return p.display||p.name||((empFirst(p)+' '+empLast(p)).trim())||'Unnamed'; }
@@ -2414,6 +2410,16 @@ function empCreate(o){
   if(typeof auditRecord==='function') auditRecord('emp-create',{emp:p.id,name:name,active:p.active});
   return {id:p.id};
 }
+// Any sale (or hours entry) whose person id is unknown is parked, flagged, and saved.
+function empParkOrphans(){
+  if(!PEOPLE.length) return 0;
+  let n=0;
+  const park=r=>{ if(!r.rep || !PEOPLE.some(p=>p.id===r.rep)){ if(!r.repOrphan) r.repOrphan=r.rep||'(blank)'; r.repHow='orphan'; r.rep=empUnassigned().id; n++; } };
+  ROWS.forEach(park);
+  if(typeof HOURS!=='undefined' && Array.isArray(HOURS)) HOURS.forEach(park);
+  if(n){ save(K_ROWS,ROWS); if(typeof HOURS!=='undefined') save(K_HOURS,HOURS); }
+  return n;
+}
 // Holding record for sales whose rep id no longer exists. Money is never
 // silently re-credited to a real person — it parks here where the Hawk sees it.
 function empUnassigned(){
@@ -2436,6 +2442,7 @@ function empMatchQueue(){
   INVOICES.forEach(x=>add('INV',x.r,'invoice lines'));
   ROWS.forEach(r=>{ if(r.repRaw && (r.repHow==='unmatched-default'||r.rep===EMP_UNASSIGNED)) add(r.src||'MN',r.repRaw,'sales'); });
   HOURS.forEach(h=>{ if(h.repRaw && h.repHow==='unmatched-default') add('MN',h.repRaw,'hours'); });
+  (window.__TEAMLOGINS||[]).forEach(u=>{ if(u.email && !resolveEmployee('','*',{email:u.email})) add('GOOGLE',u.email,'login'); });
   return Object.keys(q).map(k=>q[k]).map(e=>Object.assign(e,{suggest:empSuggest(e.raw)})).sort((a,b)=>b.n-a.n);
 }
 function empOrphanRows(){ return ROWS.filter(r=>r.rep===EMP_UNASSIGNED || r.repHow==='unmatched-default' || r.repHow==='orphan'); }
@@ -3220,7 +3227,7 @@ function fillPeople(id,fallback,blank){
 
 function peopleOptions(sel,blank){
   let h = blank ? '<option value="">'+blank+'</option>' : '';
-  PEOPLE.forEach(p=>{ h+='<option value="'+p.id+'"'+(p.id===sel?' selected':'')+'>'+esc(p.name)+(p.active?'':' (inactive)')+'</option>'; });
+  PEOPLE.forEach(p=>{ if(p.id===EMP_UNASSIGNED && p.id!==sel) return; h+='<option value="'+p.id+'"'+(p.id===sel?' selected':'')+'>'+esc(empName(p))+(p.active?'':' (former)')+'</option>'; });
   return h;
 }
 
@@ -3398,10 +3405,18 @@ function renderEmpMatch(){
 function empQConfirm(i){
   const e=(window.__EMPQ||[])[i]; if(!e) return;
   const pid=document.getElementById('emq'+i).value; if(!pid){ toast('Pick the employee first'); return; }
+  if(e.sys.GOOGLE){   // a login: tie the verified email to the record, not an alias
+    const p=person(pid), em=String(e.raw).toLowerCase().trim();
+    const hit=resolveEmployee('','*',{email:em}); if(hit && hit.id!==pid){ alert('That email already belongs to '+empName(person(hit.id))+'.'); return; }
+    if(!p.email){ p.email=em; empLog(p,'email',{from:'',to:em}); } else { p.google=p.google||{}; p.google.email=em; p.google.linkedAt=new Date().toISOString(); empLog(p,'account-linked',{email:em}); }
+    save(K_PEOPLE,PEOPLE); EMP_IDX=null; auditRecord('emp-edit',{emp:pid,email:em});
+    toast(em+' now signs in as '+empName(p)); render(); return;
+  }
   if(empAddAlias(pid,e.raw,Object.keys(e.sys)[0]||'*')){ toast('"'+e.raw+'" = '+empName(person(pid))+' from now on'); render(); }
 }
 function empQFormer(i){
   const e=(window.__EMPQ||[])[i]; if(!e) return;
+  if(e.sys.GOOGLE){ alert('A login email cannot become a former team member. Add the person on the Team tab with this email, then confirm the match here.'); return; }
   const x=empSplitName(e.raw), sys=Object.keys(e.sys)[0]||'*';
   if(!confirm('Add "'+x.first+' '+x.last+'" to the roster as a FORMER team member (inactive)?'+BR2+
     'Their accounts, invoice lines and sales stay tied to them forever. They get no comp plan and no login.')) return;
@@ -4260,12 +4275,26 @@ function clonePerson(){
   PEOPLE.push(p); save(K_PEOPLE,PEOPLE); SEL=p.id; render();
   setTimeout(()=>{const e=document.getElementById('pName'); e.focus(); e.select();},60);
 }
+// A person with ANY history is never deleted — they become a former team member
+// and everything they touched stays tied to their id forever.
+function empHistoryCount(id){
+  return ROWS.filter(r=>shareFor(r,id)>0).length + HOURS.filter(h=>h.rep===id).length + DISPUTES.filter(d=>d.rep===id).length +
+    OSCS.filter(o=>o.rep===id).length + INVOICES.filter(x=>invoiceRepId(x)===id).length + CLIENTS.filter(c=>clientRepId(c)===id).length +
+    TAKEOVERS.filter(t=>t.toId===id||t.fromId===id).length + PEOPLE.filter(x=>x.mgr===id).length;
+}
 function delPerson(){
   const p=person(SEL); if(!p)return;
-  const mine=ROWS.filter(r=>r.rep===p.id).length;
-  if(PEOPLE.length===1){alert('This is the only salesperson — add another before removing this one.');return;}
-  if(!confirm('Remove '+p.name+'?'+(mine?'\n\n'+mine+' logged sale'+(mine===1?'':'s')+' will be deleted with them. Export or back up first if you want to keep them.':'')))return;
-  ROWS=ROWS.filter(r=>r.rep!==p.id);
+  const hist=empHistoryCount(p.id);
+  if(PEOPLE.filter(x=>x.id!==EMP_UNASSIGNED).length===1){alert('This is the only team member — add another before removing this one.');return;}
+  if(hist){
+    if(confirm(empName(p)+' has '+hist.toLocaleString()+' linked record'+(hist===1?'':'s')+' (sales, hours, invoice lines, accounts, approvals…).'+BR2+
+      'Team members with history are never deleted — mark '+empShort(p)+' as a FORMER team member instead? Everything stays tied to their record.')){
+      if(p.active){ p.active=false; p.ended=p.ended||todayISO(); empLog(p,'active',{to:false,ended:p.ended}); save(K_PEOPLE,PEOPLE); auditRecord('emp-edit',{emp:p.id,active:false}); render(); toast(empShort(p)+' is now a former team member'); }
+    }
+    return;
+  }
+  if(!confirm('Remove '+empName(p)+'? Nothing in the data points at this record, so it can go.'))return;
+  auditRecord('emp-delete',{emp:p.id,name:p.name});
   PEOPLE=PEOPLE.filter(x=>x.id!==p.id);
   PEOPLE.forEach(x=>{ if(x.mgr===p.id) x.mgr=''; });
   save(K_PEOPLE,PEOPLE); save(K_ROWS,ROWS);
@@ -7244,7 +7273,8 @@ function hawkCounts(){
     hawkTax:'sale values that look tax-inclusive',
     hawkNoInv:'sales missing their real invoice',
     hawkChain:'AUDIT TRAIL TAMPERED', hawkAfterPaid:'money changed after payout',
-    hawkBump:'value raised right before payout', hawkPaidDel:'paid sales deleted', hawkNight:'dead-of-night changes'};
+    hawkBump:'value raised right before payout', hawkPaidDel:'paid sales deleted', hawkNight:'dead-of-night changes',
+    hawkEmp:'sales not tied to a real employee'};
   const out={total:0,parts:[],items:{}};
   runChecks().forEach(c=>{
     if(HAWK_IDS[c.id] && c.items.length){
@@ -10826,7 +10856,7 @@ function empSaveProfile(){
   if(!first){ alert('First name is required.'); return; }
   if(email){ const hit=resolveEmployee('','*',{email:email}); if(hit && hit.id!==p.id){ alert('That email already belongs to '+empName(person(hit.id))+'.'); return; } }
   const newName=(first+' '+last).trim(), changed={};
-  if(newName!==(p.name||'')){ const dup=resolveEmployee(newName,'*'); if(dup && dup.id!==p.id){ alert('"'+newName+'" already resolves to '+empName(person(dup.id))+'.'); return; } empLog(p,'renamed',{from:p.name,to:newName}); p.name=newName; }
+  if(newName!==(p.name||'')){ const dup=resolveEmployee(newName,'*'); if(dup && dup.id!==p.id){ alert('"'+newName+'" already resolves to '+empName(person(dup.id))+'.'); return; } empLog(p,'renamed',{from:p.name,to:newName}); const oldName=p.name; p.name=newName; if(oldName && !resolveEmployee(oldName,'*')) { p.aliases=p.aliases||[]; p.aliases.push({sys:'*',name:oldName,key:empKey(oldName),by:empWho(),on:todayISO(),note:'former name'}); } }
   if(first!==(p.first||'')||last!==(p.last||'')){ p.first=first; p.last=last; }
   if(display!==(p.display||'')){ p.display=display; changed.display=1; }
   if(title!==(p.title||'')){ p.title=title; changed.title=1; }

@@ -51,11 +51,18 @@
 
     // ---- snapshot every global the tests touch ----
     var snap={ PEOPLE:PEOPLE, ROWS:ROWS, GLOBAL:GLOBAL, DISPUTES:DISPUTES,
+               CLIENTS:(typeof CLIENTS!=='undefined'?CLIENTS:undefined),
+               INVOICES:(typeof INVOICES!=='undefined'?INVOICES:undefined),
+               TAKEOVERS:(typeof TAKEOVERS!=='undefined'?TAKEOVERS:undefined),
+               OSCS:(typeof OSCS!=='undefined'?OSCS:undefined),
+               save:(typeof save==='function'?save:undefined),
                HOURS:(typeof HOURS!=='undefined'?HOURS:undefined),
                TOMBSTONES:(typeof TOMBSTONES!=='undefined'?TOMBSTONES:undefined),
                AUDIT:(typeof AUDIT!=='undefined'?AUDIT:undefined),
                AUDITQ:(typeof AUDITQ!=='undefined'?AUDITQ:undefined) };
     try{
+      // Nothing a test does may reach localStorage: the app's save() is a no-op while tests run.
+      if(typeof save==='function') save=function(){};
       var P = mkPerson();
       PEOPLE=[P]; DISPUTES=[]; if(typeof HOURS!=='undefined') HOURS=[];
       GLOBAL=Object.assign({}, snap.GLOBAL, {payLag:30,
@@ -359,6 +366,102 @@
         if(typeof svcDirty==='function') svcDirty();
       }
 
+
+      /* ---------- EMPLOYEE IDENTITY: one record, id-based everywhere ---------- */
+      if(typeof resolveEmployee==='function'){
+        var alertSnap=window.alert; window.alert=function(){};
+        var EZ=mkPerson({id:'EZ', name:'Zach Sullivan'}); EZ.first='Zach'; EZ.last='Sullivan'; EZ.roles=['sales']; EZ.aliases=[]; EZ.log=[];
+        var EJ=mkPerson({id:'EJ', name:'Josh Everard'}); EJ.first='Josh'; EJ.last='Everard'; EJ.roles=['sales']; EJ.aliases=[]; EJ.log=[];
+        PEOPLE=[EZ,EJ]; CLIENTS=[]; INVOICES=[]; TAKEOVERS=[]; ROWS=[]; EMP_IDX=null;
+        var R=function(n,sys){ var r=resolveEmployee(n,sys||'*'); return r?r.id:null; };
+        // 1. same employee, different names
+        check('EMP exact full name resolves', 'EZ', R('Zach Sullivan'));
+        check('EMP "Last, First" resolves to the same record', 'EZ', R('Sullivan, Zach'));
+        check('EMP case / punctuation ignored', 'EZ', R('  zach  SULLIVAN. '));
+        check('EMP unknown spelling does NOT guess (Zachariah)', null, R('Zachariah Sullivan','SA'));
+        check('EMP first name alone does NOT guess (import path)', null, R('Zach','SA'));
+        check('EMP last name alone does NOT guess', null, R('Sullivan','INV'));
+        checkTrue('EMP suggestion offered for Zachariah (not a match)', empSuggest('Zachariah Sullivan')==='EZ', empSuggest('Zachariah Sullivan'));
+        checkTrue('EMP alias confirmed once', empAddAlias('EZ','Zachariah Sullivan','SA'), 'ok');
+        check('EMP SA alias resolves', 'EZ', R('Zachariah Sullivan','SA'));
+        check('EMP invoice spelling of the same alias resolves too', 'EZ', R('Sullivan, Zachariah','INV'));
+        check('EMP alias logged on the employee', 'alias-added', (EZ.log[EZ.log.length-1]||{}).what);
+        check('EMP typed first name picks the one active person (admin prompt only)', 'EZ', empPickTyped('Zach'));
+        var EZ2=mkPerson({id:'EZ2', name:'Zach Other'}); EZ2.first='Zach'; EZ2.last='Other'; PEOPLE=[EZ,EJ,EZ2]; EMP_IDX=null;
+        check('EMP typed first name shared by two people -> nobody', null, empPickTyped('Zach'));
+        PEOPLE=[EZ,EJ]; EMP_IDX=null;
+        // 2. name change keeps history (rows key on id)
+        ROWS=[mkRow({rep:'EZ', type:'new', value:1000, date:'2026-06-01'}), mkRow({rep:'EZ', type:'upsell', value:500, date:'2026-06-02'})];
+        var before=analyzeFor('EZ').newV;
+        EZ.name='Zachary Sullivan'; EZ.first='Zachary'; EMP_IDX=null;
+        check('EMP rename: production unchanged', before, analyzeFor('EZ').newV);
+        check('EMP rename: commission unchanged (10% of 1000 + 5% of 500)', 125, commissionFor(EZ,'2026-06','sold').commission);
+        check('EMP rename: new name resolves', 'EZ', R('Zachary Sullivan'));
+        check('EMP rename: rows still find the person by id', 2, empData('EZ').rows.length);
+        // 3. Google account added later links, never duplicates
+        check('EMP no email yet -> login does not resolve', null, (resolveEmployee('','*',{email:'zach@automatedlawnandpest.com'})||{}).id||null);
+        EZ.email='zach@automatedlawnandpest.com'; EMP_IDX=null;
+        var nBefore=PEOPLE.length;
+        empLinkLogin({email:'Zach@AutomatedLawnAndPest.com', sub:'g-123', name:'Zach S'});
+        check('EMP login linked to the existing record', 'zach@automatedlawnandpest.com', (EZ.google||{}).email);
+        check('EMP login kept the Google subject id', 'g-123', (EZ.google||{}).sub);
+        check('EMP login created no new person', nBefore, PEOPLE.length);
+        check('EMP email resolves the employee', 'EZ', R('zach@automatedlawnandpest.com'));
+        // 4. inactive keeps everything
+        EZ.active=false; EZ.ended='2026-08-01'; EMP_IDX=null;
+        check('EMP inactive: sales still tied', 2, empData('EZ').rows.length);
+        check('EMP inactive: still resolves from exports', 'EZ', R('Sullivan, Zachariah','INV'));
+        check('EMP inactive: commission history still computes', 125, commissionFor(EZ,'2026-06','sold').commission);
+        checkTrue('EMP inactive: not a takeover rule yet -> accounts still theirs', clientRepId({sp:'Zachariah Sullivan'})==='EZ', clientRepId({sp:'Zachariah Sullivan'}));
+        // 5. takeover by id: accounts move, billing history does not, raw value untouched
+        TAKEOVERS=[{from:'Zachary Sullivan',fromId:'EZ',to:'Josh Everard',toId:'EJ',on:'2026-08-02',moved:1}];
+        var acct={sp:'Zachariah Sullivan', n:'Acme'};
+        check('EMP takeover: account now resolves to the inheritor', 'EJ', clientRepId(acct));
+        check('EMP takeover: raw SA value untouched', 'Zachariah Sullivan', acct.sp);
+        check('EMP takeover: invoice lines stay with who did the work', 'EZ', invoiceRepId({r:'Sullivan, Zachariah'}));
+        TAKEOVERS=[]; EZ.active=true;
+        // 6. source CRM naming a different rep never rewrites the sale; the Hawk flags it
+        if(typeof runChecks==='function'){
+          ROWS=[mkRow({rep:'EZ', client:'Acme', date:'2026-06-01', value:1000})];
+          INVOICES=[{c:'Acme', i:'9', d:'2026-06-03', s:'Mow', v:1000, k:'x', t:0, r:'Everard, Josh'}];
+          var hr=runChecks().find(function(c){return c.id==='hawkRep';});
+          checkTrue('EMP invoice naming another rep is flagged, not applied', hr && hr.items.length===1, hr?hr.items.length:'no check');
+          check('EMP sale attribution unchanged by the invoice', 'EZ', ROWS[0].rep);
+          INVOICES=[];
+        }
+        // 7. duplicate employee attempts are refused
+        checkTrue('EMP duplicate by exact name refused', !!empCreate({first:'Zachary',last:'Sullivan'}).error, 'ok');
+        checkTrue('EMP duplicate by alias refused', !!empCreate({first:'Zachariah',last:'Sullivan'}).error, 'ok');
+        checkTrue('EMP duplicate by company email refused', !!empCreate({first:'New',last:'Guy',email:'ZACH@automatedlawnandpest.com'}).error, 'ok');
+        check('EMP no duplicates were created', 2, PEOPLE.length);
+        var made=empCreate({first:'Dana',last:'Cortez',email:'dana@automatedlawnandpest.com',roles:['sales']});
+        checkTrue('EMP genuinely new person is created with an emp_ id', !made.error && /^emp_dana_cortez_/.test(made.id), made.id||made.error);
+        check('EMP new person resolves by email', made.id, R('dana@automatedlawnandpest.com'));
+        // 8. orphaned rows are parked and flagged, never re-credited
+        ROWS=[mkRow({rep:'GHOST', client:'Lost Co', value:700})];
+        empParkOrphans();
+        check('EMP orphan parked on the Unassigned record', EMP_UNASSIGNED, ROWS[0].rep);
+        check('EMP orphan remembers the missing id', 'GHOST', ROWS[0].repOrphan);
+        checkTrue('EMP orphan is in the review list', empOrphanRows().length===1, empOrphanRows().length);
+        if(typeof runChecks==='function'){
+          var he=runChecks().find(function(c){return c.id==='hawkEmp';});
+          checkTrue('EMP Hawk flags the orphan', he && he.items.length===1, he?he.items.length:'no check');
+        }
+        check('EMP orphan earns nobody commission', 0, commissionFor(person(EMP_UNASSIGNED),'2026-06','sold').commission);
+        // 9. match queue collapses spellings and honours "not an employee"
+        PEOPLE=[EZ,EJ]; ROWS=[]; EMP_IDX=null;
+        CLIENTS=[{n:'A',sp:'Donise Woodrich'},{n:'B',sp:'Donise Woodrich'}]; INVOICES=[{c:'A',r:'Woodrich, Donise',d:'2026-06-01',v:1,t:0}];
+        var q=empMatchQueue();
+        check('EMP queue: two spellings = one entry', 1, q.length);
+        check('EMP queue: counts every record', 3, q[0].n);
+        empIgnoreName('Donise Woodrich','SA');
+        check('EMP queue: ignored name drops out', 0, empMatchQueue().length);
+        check('EMP queue: a suggestion never auto-matches', null, R('Jeffrey James'));
+        window.alert=alertSnap;
+      } else {
+        results.push({name:'employee identity layer exists (resolveEmployee)', expected:true, actual:false, pass:false});
+      }
+
       /* ---------- C2: tombstones stop deleted records resurrecting ---------- */
       if(typeof addTombstone==='function' && typeof isTombstoned==='function'){
         TOMBSTONES=[];
@@ -381,6 +484,12 @@
     } finally {
       // restore every global, no matter what
       PEOPLE=snap.PEOPLE; ROWS=snap.ROWS; GLOBAL=snap.GLOBAL; DISPUTES=snap.DISPUTES;
+      if(snap.save) save=snap.save;
+      if(typeof CLIENTS!=='undefined' && snap.CLIENTS!==undefined) CLIENTS=snap.CLIENTS;
+      if(typeof INVOICES!=='undefined' && snap.INVOICES!==undefined) INVOICES=snap.INVOICES;
+      if(typeof TAKEOVERS!=='undefined' && snap.TAKEOVERS!==undefined) TAKEOVERS=snap.TAKEOVERS;
+      if(typeof OSCS!=='undefined' && snap.OSCS!==undefined) OSCS=snap.OSCS;
+      if(typeof EMP_IDX!=='undefined') EMP_IDX=null;
       if(typeof HOURS!=='undefined' && snap.HOURS!==undefined) HOURS=snap.HOURS;
       if(typeof TOMBSTONES!=='undefined' && snap.TOMBSTONES!==undefined) TOMBSTONES=snap.TOMBSTONES;
       if(typeof AUDIT!=='undefined' && snap.AUDIT!==undefined) AUDIT=snap.AUDIT;
