@@ -12638,6 +12638,16 @@ function cloudApply(d){
   const A=(v,f)=>Array.isArray(v)?v:f;
   PEOPLE=A(d.people,PEOPLE); put(K_PEOPLE,PEOPLE);
   ROWS=A(d.rows,ROWS); put(K_ROWS,ROWS);
+  // Ledger first, and by MERGE — see the note at PAYOUTS below.
+  if(Array.isArray(d.payouts)){
+    const have=new Set(PAYOUTS.map(x=>x.id));
+    let added=0;
+    d.payouts.forEach(x=>{ if(x&&x.id&&!have.has(x.id)){ PAYOUTS.push(x); have.add(x.id); added++; } });
+    // a voided entry stays voided everywhere: the cloud copy wins on status only
+    const byId={}; d.payouts.forEach(x=>{ if(x&&x.id) byId[x.id]=x; });
+    PAYOUTS.forEach(x=>{ const c=byId[x.id]; if(c&&c.status==='void'&&x.status!=='void'){ x.status='void'; x.voidAt=c.voidAt; x.voidBy=c.voidBy; x.voidReason=c.voidReason; } });
+    if(added) put(K_PAYOUTS,PAYOUTS);
+  }
   empMigrate(); EMP_IDX=null; payoutMigrate(); reversalMigrate();
   HOURS=A(d.hours,HOURS); put(K_HOURS,HOURS);
   DISPUTES=A(d.disputes,DISPUTES); put(K_DISP,DISPUTES);
@@ -12650,7 +12660,9 @@ function cloudApply(d){
   IMPLOG=A(d.implog,IMPLOG); put(K_IMPLOG,IMPLOG);
   if(d.gear&&typeof d.gear==='object'){ GEAR=d.gear; if(!GEAR.snooze)GEAR.snooze={}; put(K_GEAR,GEAR); }
   PAYMENTS=A(d.payments,PAYMENTS); put(K_PAY,PAYMENTS);
-  PAYOUTS=A(d.payouts,PAYOUTS); put(K_PAYOUTS,PAYOUTS);
+  // NOT replaced: the payout ledger is merged above. Wholesale replacement would let a
+  // stale device (or a state written before the ledger existed) delete paid history.
+  put(K_PAYOUTS,PAYOUTS);
   PAYSYNC=A(d.paysyncs,PAYSYNC); put(K_PAYSYNC,PAYSYNC);
   TAKEOVERS=A(d.takeovers,TAKEOVERS); put(K_TKO,TAKEOVERS);
   OPENINV=A(d.openinv,OPENINV); put(K_BAL,OPENINV);

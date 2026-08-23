@@ -1104,6 +1104,19 @@
         o9.value=6000;
         checkTrue('OV9 a real drift after the reversal is still flagged', payoutVariance(o9).length>0, payoutVariance(o9).length);
 
+        // O10 — CRITICAL #2: a cloud copy may ADD ledger entries, never erase them
+        PAYOUTS=[]; var oc=mkO({}); ROWS=[oc]; oc.paid='2026-07-15'; journalPaid(oc,'2026-07-15');
+        var fingerprint=JSON.stringify(PAYOUTS.map(function(x){return [x.id,x.emp,x.kind,x.amount];}).sort());
+        var wasApplying=CLOUD.applying;
+        cloudApply(Object.assign(JSON.parse(JSON.stringify(stateSnapshot())),{payouts:[]}));   // stale device pushes an empty ledger
+        CLOUD.applying=wasApplying;
+        check('OV10 empty cloud ledger does NOT erase paid history', fingerprint, JSON.stringify(PAYOUTS.map(function(x){return [x.id,x.emp,x.kind,x.amount];}).sort()));
+        check('OV10 no duplicate entries after the merge', 2, PAYOUTS.length);
+        var extra={id:'po-from-cloud',kind:'rep',emp:'OA',rowId:oc.id,period:'2026-07',basisValue:1,rate:1,share:1,amount:7,paidOn:'2026-07-15',status:'paid',at:'',by:'other device'};
+        cloudApply(Object.assign(JSON.parse(JSON.stringify(stateSnapshot())),{payouts:[extra]}));
+        CLOUD.applying=wasApplying;
+        checkTrue('OV10 an entry only the cloud has IS adopted', PAYOUTS.some(function(x){return x.id==='po-from-cloud';}), PAYOUTS.length);
+
         window.alert=alertO; window.toast=toastO; PAYOUTS=[]; DISPUTES=[];
       } else {
         results.push({name:'override-on-net fix present', expected:true, actual:false, pass:false});
