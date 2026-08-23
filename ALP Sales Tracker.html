@@ -163,6 +163,9 @@ a.emplink:hover{color:var(--grn-d);border-bottom-color:var(--grn)}
 .vleg i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:baseline}
 .hawkbar{display:flex;gap:11px;flex-wrap:wrap;align-items:end;margin-bottom:12px}
 .hawkbar .frow{flex:1}
+.tile.needs{opacity:.62;border-style:dashed}
+.tile.needs .val{font-size:15px;font-weight:600;color:var(--muted)}
+.arrow-note{font-size:11px;color:var(--muted)}
 
 .rcard .chips2{margin-top:5px;display:flex;gap:5px;flex-wrap:wrap}
 .pill.sales{background:var(--grn);color:#fff;font-size:11.5px;padding:3px 10px;letter-spacing:.08em;box-shadow:0 1px 2px rgba(0,0,0,.15)}
@@ -612,6 +615,13 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
   <section>
     <div class="sechead"><h2>30,000 ft</h2><span class="hint" id="viewHint"></span></div>
     <div id="viewHero" style="margin-bottom:14px"></div>
+    <h3 style="margin:0 0 8px">The eight that matter</h3>
+    <div class="note" style="margin-bottom:8px">Jeff’s KPI list, each tied to its Service Autopilot report. Computed live where the data is already here; the grey ones say exactly which report to bring in — nothing is made up.</div>
+    <div class="tiles" id="viewEight" style="margin-bottom:10px"></div>
+    <div class="pulsegrid" style="margin-bottom:14px">
+      <div class="card pad"><div class="sechead"><h3>A/R aging</h3><span class="hint">from Invoices with Balances · balance incl. tax</span></div><div id="viewAR"></div></div>
+      <div class="card pad"><div class="sechead"><h3>Revenue by service</h3><span class="hint" id="viewSvcHint"></span></div><div id="viewSvc"></div></div>
+    </div>
     <h3 style="margin:0 0 8px">Where the money is</h3>
     <div class="flow" id="viewFlow"></div>
     <div class="flow" id="viewComm"></div>
@@ -11458,6 +11468,66 @@ function renderView(){
     '<div class="delta">'+(netPrevSame?((netYTD>=netPrevSame?'<span class="delta up">▲':'<span class="delta down">▼')+' '+Math.abs(Math.round((netYTD-netPrevSame)/netPrevSame*100))+'% vs '+lastY+' to this date ('+money(netPrevSame)+')</span>'):'<span class="note">no '+lastY+' data to compare</span>')+'</div></div>'+
     '<div class="lab" style="font-weight:500;text-transform:none;letter-spacing:0">sales net of reversals · future-dated sales excluded</div></div></div>';
   const F=(lab,val,sub)=>'<div class="fstep"><div class="lab">'+lab+'</div><div class="val mono">'+val+'</div>'+(sub?'<div class="sub">'+sub+'</div>':'')+'</div>';
+
+  /* ---- THE EIGHT — Jeff's KPI list, each mapped to its SA report ---- */
+  const needs=(lab,report)=>'<div class="tile needs"><div class="lab">'+lab+'</div><div class="val">needs a feed</div><div class="sub">import the SA <b>'+report+'</b> report to light this up</div></div>';
+  const wk=weekStart(t), pwkS=addDays(wk,-7), pwkE=addDays(wk,-1), mo=t.slice(0,7);
+  let eight='';
+  // 1. Jobs completed on time — needs Daily Production; show what we do know
+  const doneWk=ROWS.filter(r=>r.completed&&r.completed>=wk&&r.completed<=t&&!r.voidType).length;
+  eight+=needs('Jobs completed on time','Daily Production')+'';
+  // 2. Labor efficiency (rev/hr) — sales hours are here, field hours are not
+  const hrsMo=HOURS.filter(h=>String(h.date).slice(0,7)===mo).reduce((a,h)=>a+(+h.hours||0),0);
+  const billedMo=INVOICES.filter(x=>String(x.d).slice(0,7)===mo).reduce((a,x)=>a+(+x.v||0),0);
+  if(hrsMo>0) eight+=tile('Labor efficiency',money(billedMo/hrsMo)+'/hr','SALES hours only ('+num(hrsMo,0)+'h vs '+money(billedMo)+' billed this month) — field rev/hr needs the <b>Job Hours Summary</b>');
+  else eight+=needs('Labor efficiency (rev/hr)','Job Hours Summary');
+  // 3. New clients this week — from the roster sync
+  const ncWk=CLIENTS.filter(c=>isClient(c)&&c.since&&c.since>=wk&&c.since<=t).length;
+  const ncPrev=CLIENTS.filter(c=>isClient(c)&&c.since&&c.since>=pwkS&&c.since<=pwkE).length;
+  const salesNewWk=ROWS.filter(r=>!r.voidType&&r.type==='new'&&r.date>=wk&&r.date<=t).length;
+  eight+=tile('New clients this week',ncWk,(ncPrev?((ncWk>=ncPrev?'▲ ':'▼ ')+'vs '+ncPrev+' last week · '):'')+salesNewWk+' new-client sale'+(salesNewWk===1?'':'s')+' logged',ncWk>=ncPrev?'ok':'');
+  // 4. Cancellations — reversals + roster terminations this month
+  const cxRows=ROWS.filter(r=>r.voidType&&String(r.voidDate||r.date).slice(0,7)===mo);
+  const cxVal=cxRows.reduce((a,r)=>a+voidAmount(r),0);
+  const goneMo=CLIENTS.filter(c=>c.gone&&c.goneOn&&String(c.goneOn).slice(0,7)===mo).length;
+  eight+=tile('Cancellations · '+MON[+mo.slice(5,7)-1],cxRows.length+(goneMo?' + '+goneMo:''),(cxVal?'−'+money(cxVal)+' reversed value':'no reversed value')+(goneMo?' · '+goneMo+' account'+(goneMo===1?'':'s')+' gone from the roster':''),cxRows.length||goneMo?'bad':'ok');
+  // 5. AR 30/60/90 summary tile (detail card below)
+  const arB={c:0,'30':0,'60':0,'90':0};
+  OPENINV.forEach(v=>{ const age=Math.round((dObj(t)-dObj(v.d))/86400000); const b=+v.t||0; if(age<=30)arB.c+=b; else if(age<=60)arB['30']+=b; else if(age<=90)arB['60']+=b; else arB['90']+=b; });
+  const arTot=arB.c+arB['30']+arB['60']+arB['90'];
+  eight+=OPENINV.length?tile('A/R over 60 days',money(arB['60']+arB['90']),money(arTot)+' total owed · '+(arTot?Math.round((arB['60']+arB['90'])/arTot*100):0)+'% is 60+',(arB['60']+arB['90'])>arTot*0.25?'bad':'ok'):needs('A/R 30/60/90','A/R Aging / Invoices with Balances');
+  // 6. Revenue by service summary tile (detail card below)
+  const byK={}; INVOICES.forEach(x=>{ if(String(x.d).slice(0,4)!==y) return; const k=x.k&&x.k!=='None'?x.k:'Uncategorised'; byK[k]=(byK[k]||0)+(+x.v||0); });
+  const kTop=Object.keys(byK).sort((a,b)=>byK[b]-byK[a]);
+  eight+=INVOICES.length?tile('Top service line '+y,kTop.length?kTop[0].replace(/ income/i,''):'—',kTop.length?money(byK[kTop[0]])+' of '+money(billedYTD)+' billed':''):needs('Revenue by service','Revenue by Service Summary');
+  // 7. Callbacks / warranties — heuristic on invoice + sale text until the Visits report is imported
+  const wRe=/warrant|call ?back|re-?do|go ?back|revisit/i;
+  const cbLines=INVOICES.filter(x=>String(x.d).slice(0,4)===y&&wRe.test(x.s||''));
+  const cbSales=ROWS.filter(r=>!r.voidType&&String(r.date).slice(0,4)===y&&wRe.test(r.service||''));
+  eight+=(INVOICES.length||ROWS.length)?tile('Callbacks / warranties '+y,cbLines.length+cbSales.length,(cbLines.length?cbLines.length+' invoice line'+(cbLines.length===1?'':'s'):'')+(cbLines.length&&cbSales.length?' · ':'')+(cbSales.length?cbSales.length+' logged jobs':'')+' · text match — exact count needs the <b>Visits report</b>',(cbLines.length+cbSales.length)?'':'ok'):needs('Callbacks / warranties','Visits Report (warranty filter)');
+  // 8. Chemical tracking compliance — no data source in the tracker yet
+  eight+=needs('Chemical tracking compliance','Chemical Tracking');
+  document.getElementById('viewEight').innerHTML=eight;
+  // AR aging detail — four buckets, one hue light→dark (ordered magnitude of age)
+  const arCols=['#9fc9a8','#5aa46b','#2e8b4a','#a8332a'];
+  const arBox=document.getElementById('viewAR');
+  if(!OPENINV.length) arBox.innerHTML='<div class="empty">Import <b>Invoices with Balances</b> to see aging.</div>';
+  else{
+    const rows=[['Current (≤30d)',arB.c,arCols[0]],['31–60 days',arB['30'],arCols[1]],['61–90 days',arB['60'],arCols[2]],['Over 90 days',arB['90'],arCols[3]]];
+    const mxb=Math.max(1,...rows.map(r=>r[1]));
+    arBox.innerHTML='<div class="mk">'+rows.map(r=>'<div class="r"><span>'+r[0]+'</span><div class="t"><i style="width:'+Math.round(r[1]/mxb*100)+'%;background:'+r[2]+'"></i></div><b class="mono">'+money(r[1])+'</b></div>').join('')+'</div>'+
+      '<div class="note" style="margin-top:8px">'+money(arTot)+' owed across '+OPENINV.length.toLocaleString()+' open invoices · over-90 is '+(arTot?Math.round(arB['90']/arTot*100):0)+'%</div>';
+  }
+  // Revenue by service detail — top 6, single hue (magnitude)
+  const svcBox=document.getElementById('viewSvc');
+  document.getElementById('viewSvcHint').textContent='billed pre-tax · '+y;
+  if(!kTop.length) svcBox.innerHTML='<div class="empty">Import the <b>invoice audit</b> to see revenue by service.</div>';
+  else{
+    const top6=kTop.slice(0,6), mxs=Math.max(1,byK[top6[0]]);
+    svcBox.innerHTML='<div class="mk">'+top6.map(k=>'<div class="r"><span title="'+esc(k)+'">'+esc(k.replace(/ income/i,'').slice(0,24))+'</span><div class="t"><i style="width:'+Math.round(byK[k]/mxs*100)+'%"></i></div><b class="mono">'+money(byK[k])+'</b></div>').join('')+'</div>'+
+      (kTop.length>6?'<div class="note" style="margin-top:8px">+ '+(kTop.length-6)+' more · '+money(kTop.slice(6).reduce((a,k)=>a+byK[k],0))+'</div>':'');
+  }
+
   document.getElementById('viewFlow').innerHTML=
     F('Sold (net)',money(netYTD),y+' · from logged sales')+
     F('Billed',money(billedYTD),'invoice audit · pre-tax')+
