@@ -297,6 +297,18 @@ footer{padding:24px 0 40px;font-size:12px;color:var(--muted);text-align:center}
   body{padding-bottom:calc(64px + env(safe-area-inset-bottom))}
   .toast{bottom:calc(74px + env(safe-area-inset-bottom))}
 }
+/* client picker — searchable roster dropdown */
+.cpickwrap{position:relative}
+.cpick{position:absolute;left:0;right:0;top:100%;z-index:75;background:var(--paper);
+  border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 28px rgba(28,33,25,.18);
+  max-height:40vh;overflow-y:auto;margin-top:4px}
+.cpick .ci{padding:9px 12px;cursor:pointer;font-size:13.5px;border-bottom:1px solid #f2f4ef;
+  display:flex;align-items:center;gap:8px}
+.cpick .ci b{flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cpick .ci:last-child{border-bottom:none}
+.cpick .ci.on,.cpick .ci:hover{background:var(--grn-l)}
+.cpick .free{color:var(--muted);font-style:italic}
+
 /* assistant chat */
 .aichat{max-height:44vh;overflow-y:auto;display:flex;flex-direction:column;gap:9px;padding:2px}
 .aimsg{max-width:88%;border-radius:11px;padding:9px 13px;font-size:13.5px;white-space:pre-wrap;word-break:break-word}
@@ -1733,7 +1745,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
       </div>
       <div style="margin-top:12px">
         <label>Client</label>
-        <input id="eClient" autocomplete="off" list="qClientList">
+        <input id="eClient" autocomplete="off" placeholder="Type to search leads and clients…">
       </div>
       <div style="margin-top:12px">
         <label>Service / job</label>
@@ -4855,11 +4867,7 @@ function openQuick(){
   pick.value=''; document.getElementById('qQty').value=1;
   segSet('qBasis','contract'); basisChanged();
   TYPE_MANUAL=false;
-  const cdl=document.getElementById('qClientList');
-  if(cdl && !cdl.dataset.built && CLIENTS.length){
-    cdl.innerHTML=CLIENTS.filter(c=>!c.gone).slice(0,2000).map(c=>'<option value="'+esc(c.n)+'">').join('');
-    cdl.dataset.built='1';
-  }
+  attachClientPicker(document.getElementById('qClient'));
   document.getElementById('qTypeNote').innerHTML='';
   renderQRecent();
   m.classList.add('on');
@@ -8484,6 +8492,64 @@ function delRow(id){
   if(imported) addTombstone(r);   // remember the deletion so the next import respects it
   ROWS=ROWS.filter(x=>x.id!==id); save(K_ROWS,ROWS); render();
 }
+/* ---- searchable client picker ----
+   A real search-and-select over the roster: type to filter by name or city,
+   arrow keys or click to pick, LEAD/CLIENT badge on every row. Free text still
+   works for names not on the roster — the list is a helper, not a cage. */
+function attachClientPicker(input){
+  if(!input || input.dataset.cpick) return;
+  input.dataset.cpick='1';
+  input.removeAttribute('list');                        // replaces the native datalist
+  const wrap=document.createElement('div'); wrap.className='cpickwrap';
+  input.parentNode.insertBefore(wrap,input); wrap.appendChild(input);
+  const dd=document.createElement('div'); dd.className='cpick'; dd.style.display='none';
+  wrap.appendChild(dd);
+  let items=[], sel=-1;
+  function close(){ dd.style.display='none'; sel=-1; }
+  function pick(i){
+    if(!items[i]) return;
+    input.value=items[i].n; close();
+    input.dispatchEvent(new Event('input',{bubbles:true}));   // quick-add's type suggester keeps working
+  }
+  function renderList(){
+    const q=norm(input.value);
+    let list=CLIENTS.filter(c=>!c.gone && c.n);
+    if(q) list=list.filter(c=>norm(c.n).indexOf(q)>-1 || norm(c.city||'').indexOf(q)>-1);
+    // names that START with what was typed come first
+    list.sort(function(a,b){
+      const as=q&&norm(a.n).indexOf(q)===0?0:1, bs=q&&norm(b.n).indexOf(q)===0?0:1;
+      return as-bs || (a.n<b.n?-1:1);
+    });
+    items=list.slice(0,50);
+    if(!items.length){
+      dd.innerHTML='<div class="ci free">No roster match — keeps whatever you type</div>';
+      dd.style.display='block'; return;
+    }
+    dd.innerHTML=items.map(function(c,i){
+      return '<div class="ci'+(i===sel?' on':'')+'" data-i="'+i+'">'+
+        '<b>'+esc(c.n)+'</b>'+
+        '<span class="pill '+(isLead(c)?'mid':'ok')+'">'+(isLead(c)?'LEAD':'CLIENT')+'</span>'+
+        (c.city?'<span class="note">'+esc(c.city)+'</span>':'')+'</div>';
+    }).join('');
+    dd.style.display='block';
+    const on=dd.querySelector('.ci.on'); if(on) on.scrollIntoView({block:'nearest'});
+  }
+  input.addEventListener('input',function(){ sel=-1; renderList(); });
+  input.addEventListener('focus',renderList);
+  input.addEventListener('keydown',function(e){
+    if(dd.style.display==='none') return;
+    if(e.key==='ArrowDown'){ e.preventDefault(); sel=Math.min(items.length-1,sel+1); renderList(); }
+    else if(e.key==='ArrowUp'){ e.preventDefault(); sel=Math.max(0,sel-1); renderList(); }
+    else if(e.key==='Enter' && sel>=0){ e.preventDefault(); e.stopPropagation(); pick(sel); }
+    else if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); close(); }
+    else if(e.key==='Tab'){ close(); }
+  });
+  dd.addEventListener('mousedown',function(e){
+    const el=e.target.closest('.ci'); if(el && el.dataset.i!=null){ e.preventDefault(); pick(+el.dataset.i); }
+  });
+  input.addEventListener('blur',function(){ setTimeout(close,150); });
+}
+
 /* ---- edit a sale after creation ----
    Fixes wrong client, date, value, rep, type — the things imports and quick
    fingers get wrong. Every change goes through logEdit (by 'user'), so the
@@ -8504,12 +8570,7 @@ function openEdit(id){
   document.getElementById('eSrc').value=r.src||'MN';
   document.getElementById('eNotes').value=r.notes||'';
   document.getElementById('eProv').textContent=provLine(r);
-  // reuse the quick-add client suggestions
-  const cdl=document.getElementById('qClientList');
-  if(cdl && !cdl.dataset.built && CLIENTS.length){
-    cdl.innerHTML=CLIENTS.filter(c=>!c.gone).slice(0,2000).map(c=>'<option value="'+esc(c.n)+'">').join('');
-    cdl.dataset.built='1';
-  }
+  attachClientPicker(document.getElementById('eClient'));
   const w=[];
   const p=person(r.rep);
   if(p && r.date<p.start) w.push('<b>PRE-PLAN:</b> sold before '+esc(p.name.split(' ')[0])+'’s plan starts ('+fmtY(p.start)+'), so it earns $0 commission. Fix the date, pick another rep, or move the plan start on Comp plans.');
