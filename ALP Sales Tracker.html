@@ -609,6 +609,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
         <div class="frow">
           <div><label>Name</label><input id="pName" oninput="savePlan()"></div>
           <div><label>Title</label><input id="pTitle" oninput="savePlan()"></div>
+          <div><label>Google login email</label><input id="pEmail" type="email" placeholder="name@automatedlawnandpest.com" oninput="savePlan()"></div>
           <div><label>Commission plan effective</label><input type="date" id="pStart" onchange="savePlan()"></div>
           <div><label>On payroll since</label><input type="date" id="pPayFrom" onchange="savePlan()"></div>
           <div><label>Reports to</label><select id="pMgr" onchange="savePlan()"></select></div>
@@ -1224,6 +1225,17 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
       <div class="hdr"><h3>Admin-only tabs</h3>
         <span class="hint">Visible in the top row while you are unlocked.</span></div>
       <div class="alinks" id="adminLinks"></div>
+    </section>
+
+    <section class="adminsec">
+      <div class="hdr"><h3>👤 Team logins</h3>
+        <span class="hint">Who can sign in with Google, and as what. A rep sees their numbers; an admin gets everything. Add each person's work email here AND on their comp plan so their login ties to their record.</span></div>
+      <div class="frow" style="margin-bottom:10px">
+        <div><label>Email</label><input id="tlEmail" type="email" placeholder="name@automatedlawnandpest.com"></div>
+        <div><label>Role</label><select id="tlRole"><option value="rep">Rep</option><option value="admin">Admin</option></select></div>
+        <div style="align-self:end"><button class="p sm" onclick="teamLoginAdd()">Add / update</button></div>
+      </div>
+      <div class="scroll" id="teamLoginBody"><div class="note">Connects when ☁ is on.</div></div>
     </section>
 
     <section class="adminsec">
@@ -2526,12 +2538,12 @@ let AUDIT_SHIPPING=false, AUDIT_SHIPTIMER=null;
 function auditShipSoon(){ clearTimeout(AUDIT_SHIPTIMER); AUDIT_SHIPTIMER=setTimeout(auditShip,4000); }
 async function auditShip(){
   if(AUDIT_SHIPPING || !AUDITQ.length) return;
-  if(typeof CLOUD==='undefined' || !CLOUD.on || !cloudPw()) return;   // vault lives with the cloud backend
+  if(typeof CLOUD==='undefined' || !CLOUD.on || !cloudAuthed()) return;   // vault lives with the cloud backend
   AUDIT_SHIPPING=true;
   try{
     const batch=AUDITQ.slice(0,100);
     const r=await fetch(CLOUD.url+'?audit=1',{method:'POST',
-      headers:{'content-type':'application/json','x-app-password':cloudPw()},
+      headers:Object.assign({'content-type':'application/json'},authHeaders()),
       body:JSON.stringify({entries:batch})});
     if(r.ok){
       const j=await r.json();
@@ -3106,6 +3118,47 @@ function renderAdmin(){
   renderChecks();
   renderTombstones();
   renderAudit();
+  renderTeamLogins();
+}
+
+async function renderTeamLogins(){
+  const box=document.getElementById('teamLoginBody'); if(!box) return;
+  if(!cloudHasBackend() || !cloudAuthed()){ box.innerHTML='<div class="note">Connects when ☁ is on (or you are signed in with Google).</div>'; return; }
+  try{
+    const r=await fetch(CLOUD.url+'?users=1',{headers:authHeaders()});
+    if(!r.ok){ box.innerHTML='<div class="note">Could not load the team list ('+r.status+').</div>'; return; }
+    const j=await r.json();
+    let x='<table><thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Added</th><th></th></tr></thead><tbody>';
+    (j.users||[]).forEach(function(u){
+      x+='<tr><td><b>'+esc(u.email)+'</b>'+(j.you===u.email?' <span class="pill ok">YOU</span>':'')+'</td>'+
+        '<td>'+esc(u.name||'—')+'</td>'+
+        '<td>'+(u.role==='admin'?'<span class="pill mid">ADMIN</span>':'rep')+'</td>'+
+        '<td class="note">'+esc(String(u.added_at).slice(0,10))+' by '+esc(u.added_by||'')+'</td>'+
+        '<td class="num">'+(u.added_by==='bootstrap'?'':'<button class="sm danger" onclick="teamLoginDrop(\''+esc(u.email)+'\')">Remove</button>')+'</td></tr>';
+    });
+    box.innerHTML=x+'</tbody></table>';
+  }catch(e){ box.innerHTML='<div class="note">Offline — the team list lives on the server.</div>'; }
+}
+async function teamLoginAdd(){
+  const email=document.getElementById('tlEmail').value.trim().toLowerCase();
+  const role=document.getElementById('tlRole').value;
+  if(!email){ toast('Type the email first'); return; }
+  const r=await fetch(CLOUD.url+'?users=1',{method:'POST',
+    headers:Object.assign({'content-type':'application/json'},authHeaders()),
+    body:JSON.stringify({email:email,role:role})});
+  const j=await r.json().catch(function(){return {};});
+  if(!r.ok){ alert(j.error||'Could not add'); return; }
+  auditRecord('team-login-add',{email:email,role:role});
+  document.getElementById('tlEmail').value='';
+  toast(email+' can now sign in as '+role);
+  renderTeamLogins();
+}
+async function teamLoginDrop(email){
+  if(!confirm('Remove '+email+' from the sign-in list?\n\nTheir Google login stops working; nothing else about their record changes.'))return;
+  const r=await fetch(CLOUD.url+'?users=1&email='+encodeURIComponent(email),{method:'DELETE',headers:authHeaders()});
+  if(!r.ok){ const j=await r.json().catch(function(){return {};}); alert(j.error||'Could not remove'); return; }
+  auditRecord('team-login-remove',{email:email});
+  toast(email+' removed'); renderTeamLogins();
 }
 
 function renderAudit(){
@@ -3803,7 +3856,7 @@ function planToForm(){
   card.style.display='';
   document.getElementById('planName').innerHTML='<span class="dot" style="background:'+pColor(p.id)+'"></span>'+esc(p.name);
   const set=(id,v)=>{const e=document.getElementById(id); if(e.type==='checkbox')e.checked=!!v; else e.value=v;};
-  set('pName',p.name); set('pTitle',p.title); set('pStart',p.start); set('pActive',p.active);
+  set('pName',p.name); set('pTitle',p.title); set('pEmail',p.email||''); set('pStart',p.start); set('pActive',p.active);
   set('pNote',p.note||''); set('pPayFrom',p.payFrom||'');
   set('pRate',p.rate); set('pHrsIn',p.hrsIn); set('pHrsOff',p.hrsOff);
   set('pSalesPct',p.salesPct==null?100:p.salesPct);
@@ -3853,6 +3906,7 @@ function savePlan(){
   const g=id=>document.getElementById(id);
   p.name=g('pName').value.trim()||'Unnamed';
   p.title=g('pTitle').value.trim();
+  p.email=g('pEmail').value.trim().toLowerCase();
   p.start=g('pStart').value||PLAN_DEFAULT.start;
   p.active=g('pActive').checked;
   p.note=g('pNote').value.trim();
@@ -4545,10 +4599,10 @@ let PENDING_PDF=null;   // a PDF dropped on quick-add, stored with the sale when
 async function attachPendingPdf(row, pdf){
   try{
     let stored=false;
-    if(CLOUD.on && cloudPw()){
+    if(CLOUD.on && cloudAuthed()){
       const sha=await sha256hex(pdf.b64.slice(0,100000)+':'+pdf.b64.length);
       const up=await fetch(CLOUD.url+'?file=1',{method:'POST',
-        headers:{'content-type':'application/json','x-app-password':cloudPw()},
+        headers:Object.assign({'content-type':'application/json'},authHeaders()),
         body:JSON.stringify({name:pdf.name,sha:sha,data:pdf.b64})});
       if(up.ok){
         const j=await up.json();
@@ -9105,11 +9159,11 @@ async function editPdfPicked(ev){
   // ---- STEP 1: STORE THE EVIDENCE. Always. Never depends on the AI key. ----
   box.innerHTML='<div class="note">📎 Storing '+esc(f.name)+' in the evidence vault…</div>';
   let fileRef=null;
-  if(CLOUD.on && cloudPw()){
+  if(CLOUD.on && cloudAuthed()){
     try{
       const sha=await sha256hex(b64.slice(0,100000)+':'+b64.length);
       const up=await fetch(CLOUD.url+'?file=1',{method:'POST',
-        headers:{'content-type':'application/json','x-app-password':cloudPw()},
+        headers:Object.assign({'content-type':'application/json'},authHeaders()),
         body:JSON.stringify({name:f.name,sha:sha,data:b64})});
       if(up.ok){
         const j=await up.json();
@@ -9182,7 +9236,7 @@ function renderEditFiles(r){
 }
 async function viewVaultFile(id){
   try{
-    const rsp=await fetch(CLOUD.url+'?file=1&id='+id,{headers:{'x-app-password':cloudPw()}});
+    const rsp=await fetch(CLOUD.url+'?file=1&id='+id,{headers:authHeaders()});
     if(!rsp.ok){ toast('Could not fetch the file (is ☁ on?)'); return; }
     const j=await rsp.json();
     const bin=atob(j.data); const arr=new Uint8Array(bin.length);
@@ -10133,6 +10187,88 @@ var CLOUD = {
 function cloudPw(){ return localStorage.getItem(CLOUD.pwKey)||''; }
 function cloudHasBackend(){ return location.protocol==='http:'||location.protocol==='https:'; }
 
+/* ---- LOG IN WITH GOOGLE ----
+   Real identity instead of a shared password. Google verifies who you are, the
+   server checks the email against the team list, and hands back a 30-day
+   session. Every cloud call and every audit entry then carries the VERIFIED
+   email — the strongest "who did this" the app can have. The shared password
+   keeps working alongside, so nothing breaks during the change-over. */
+const K_SESS='alp_session_v1';
+function session(){ try{ const s=JSON.parse(localStorage.getItem(K_SESS)||'null');
+  return (s&&s.token)?s:null; }catch(e){ return null; } }
+function cloudAuthed(){ return !!(session()||cloudPw()); }
+function authHeaders(){
+  const h={}; const s=session(); if(s) h['x-session']=s.token;
+  const p=cloudPw(); if(p) h['x-app-password']=p;
+  return h;
+}
+function findPersonByEmail(em){
+  em=String(em||'').toLowerCase().trim(); if(!em) return null;
+  return PEOPLE.find(function(p){ return String(p.email||'').toLowerCase().trim()===em; })||null;
+}
+// A signed-in admin unlocks Admin automatically, tied to their own person
+// record when their email is set on a comp plan.
+function applySessionIdentity(quiet){
+  const s=session(); if(!s) return false;
+  const p=findPersonByEmail(s.email);
+  if(s.role==='admin'){ ADMIN=true; ADMIN_USER=p?p.id:ADMIN_USER; }
+  if(!quiet) render();
+  return true;
+}
+async function googleInit(){
+  if(!cloudHasBackend()) return;
+  try{
+    const r=await fetch(CLOUD.url+'?config=1'); const j=await r.json();
+    if(!j.googleClientId) return;
+    window.__GCID=j.googleClientId;
+    const sc=document.createElement('script'); sc.src='https://accounts.google.com/gsi/client'; sc.async=true;
+    sc.onload=function(){ renderGoogleBtn(); };
+    document.head.appendChild(sc);
+  }catch(e){}
+}
+function renderGoogleBtn(){
+  const bar=document.querySelector('header .hbtns'); if(!bar) return;
+  let host=document.getElementById('gsiHost');
+  if(!host){ host=document.createElement('div'); host.id='gsiHost';
+    host.style.cssText='display:inline-flex;align-items:center'; bar.insertBefore(host,bar.firstChild); }
+  const s=session();
+  if(s){
+    host.innerHTML='<button class="gh sm" onclick="googleSignOut()" title="Signed in with Google — every change is recorded under this verified name">👤 '+
+      esc(s.name||s.email)+(s.role==='admin'?' · admin':'')+' ✕</button>';
+    return;
+  }
+  if(!window.__GCID || typeof google==='undefined' || !google.accounts){ host.innerHTML=''; return; }
+  host.innerHTML='';
+  google.accounts.id.initialize({client_id:window.__GCID, callback:googleCredential});
+  google.accounts.id.renderButton(host,{theme:'outline',size:'medium',text:'signin_with'});
+}
+async function googleCredential(resp){
+  try{
+    const r=await fetch(CLOUD.url+'?auth=google',{method:'POST',
+      headers:{'content-type':'application/json'}, body:JSON.stringify({credential:resp.credential})});
+    const j=await r.json().catch(function(){return {};});
+    if(!r.ok){
+      alert(j.denied
+        ? j.email+' is not on the team list yet.\n\nAn admin adds it: Admin tab → Team logins.'
+        : (j.error||'Sign-in failed.'));
+      return;
+    }
+    localStorage.setItem(K_SESS,JSON.stringify({token:j.token,email:j.email,name:j.name,role:j.role}));
+    localStorage.setItem(K_DEVUSER, (j.name||j.email)+' <'+j.email+'>');   // the audit trail now names a verified person
+    auditRecord('login',{email:j.email,role:j.role,method:'google'});
+    applySessionIdentity(true);
+    renderGoogleBtn();
+    if(!CLOUD.on) cloudStart(true); else cloudPull(false);
+    render();
+    toast('Signed in as '+j.email+(j.role==='admin'?' — admin unlocked':''));
+  }catch(e){ alert('Sign-in failed: '+(e.message||e)); }
+}
+function googleSignOut(){
+  auditRecord('logout',{email:(session()||{}).email});
+  localStorage.removeItem(K_SESS);
+  renderGoogleBtn(); toast('Signed out');
+}
+
 // Load a full state object into localStorage AND the in-memory globals, without a reload.
 function cloudApply(d){
   if(!d) return;
@@ -10191,7 +10327,7 @@ function cloudSetStatus(s,msg){
     error:CLOUD.lastErr||'Cloud error'}[s]||'');
 }
 async function cloudFetch(method,body,extra){
-  const opt={method,headers:Object.assign({'x-app-password':cloudPw()},extra||{})};
+  const opt={method,headers:Object.assign(authHeaders(),extra||{})};
   // The state is itself valid JSON; send it as application/json so the server
   // parses it into an object (no double-encoding, no size blow-up).
   if(body!=null){ opt.headers['content-type']='application/json'; opt.body=body; }
@@ -10285,13 +10421,15 @@ function cloudMenu(){
   cloudAskPassword(false);
 }
 async function cloudStart(seed){
-  if(!cloudHasBackend() || !cloudPw()){ cloudSetStatus('off'); return; }
+  if(!cloudHasBackend() || !cloudAuthed()){ cloudSetStatus('off'); return; }
   CLOUD.on=true; cloudSetStatus('saving');
   await cloudPull(seed);
 }
 function cloudInit(){
   cloudBadge(); cloudSetStatus('off');
-  if(cloudHasBackend() && cloudPw()) cloudStart(true);
+  googleInit();
+  applySessionIdentity(true);
+  if(cloudHasBackend() && cloudAuthed()) cloudStart(true);
   // re-pull when the tab regains focus, so another device's changes show up
   document.addEventListener('visibilitychange',()=>{ if(!document.hidden && CLOUD.on) cloudPull(false); });
   // audit trail: verify the local chain on boot, ship anything queued
@@ -10303,6 +10441,11 @@ function cloudInit(){
 /* ============================================================
    BOOT
    ============================================================ */
+// One-time: tie the owner's Google login to his person record.
+(function(){
+  const j=PEOPLE.find(function(p){return /jeff\s*james/i.test(p.name||'');});
+  if(j && !j.email){ j.email='jeff@automatedlawnandpest.com'; save(K_PEOPLE,PEOPLE); }
+})();
 document.getElementById('hDate').value=todayISO();
 document.getElementById('cMonth').value=defaultReportMonth();
 render();

@@ -256,6 +256,27 @@
         results.push({name:'AUDIT machinery exists', expected:true, actual:false, pass:false});
       }
 
+      /* ---------- GOOGLE LOGIN plumbing (pure parts) ---------- */
+      if(typeof findPersonByEmail==='function' && typeof authHeaders==='function'){
+        PEOPLE=[mkPerson({id:'GP', name:'Google Person'})];
+        PEOPLE[0].email='Jeff@AutomatedLawnAndPest.com';
+        checkTrue('LOGIN email match is case-insensitive',
+          findPersonByEmail('jeff@automatedlawnandpest.com')===PEOPLE[0], !!findPersonByEmail('jeff@automatedlawnandpest.com'));
+        checkTrue('LOGIN unknown email maps to nobody', findPersonByEmail('nobody@nowhere.com')===null, 'ok');
+        // session -> headers
+        var sessSnap=localStorage.getItem('alp_session_v1');
+        localStorage.setItem('alp_session_v1', JSON.stringify({token:'tok.abc',email:'x@y.com',name:'X',role:'rep'}));
+        var h=authHeaders();
+        checkTrue('LOGIN session token rides on requests', h['x-session']==='tok.abc', h['x-session']);
+        localStorage.removeItem('alp_session_v1');
+        var h2=authHeaders();
+        checkTrue('LOGIN no session -> no session header', !h2['x-session'], 'ok');
+        if(sessSnap!=null) localStorage.setItem('alp_session_v1',sessSnap);
+        PEOPLE=[P];
+      } else {
+        results.push({name:'google login plumbing exists', expected:true, actual:false, pass:false});
+      }
+
       /* ---------- THE LAW: no invoice number + PDF, no invoiced/paid ---------- */
       if(typeof hasInvoiceEvidence==='function'){
         var law=mkRow({value:1000});
