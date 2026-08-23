@@ -3793,13 +3793,14 @@ function commissionFor(p, ym, basis){
   // chargeback line in the reversal month — see perRowComm below.)
   const newV = news.reduce((a,r)=>a+netValue(r)*shareFor(r,p.id),0);
   const upV  = ups.reduce((a,r)=>a+netValue(r)*shareFor(r,p.id),0);
-  // Commission per row: a PAID sale keeps its gross figure here — the paid amount was
-  // already handed over and any later reversal is recovered by the chargeback line, so
-  // switching it to net here would double-count. An UNPAID sale earns on net value, so a
-  // cancellation before payment earns nothing (grossComm/rowComm are the existing helpers).
-  // Split sales pay each person their share — and a split awaiting approval pays NOBODY:
-  // the money is held until every rep on it and an admin have signed off.
-  const perRowComm = r => splitPending(r) ? 0 : (r.paid ? grossComm(r) : rowComm(r)) * shareFor(r,p.id);
+  // Commission per row:
+  //   PAID rows report what was ACTUALLY handed over (paidOut → the frozen paidAmt),
+  //   so a later type flip, rate change, or plan edit can never rewrite a closed
+  //   month on screen. Any later reversal is recovered by the chargeback line.
+  //   UNPAID rows earn on net value, so a cancellation before payment earns nothing.
+  //   Split sales pay each person their share — and a split awaiting approval pays
+  //   NOBODY until every rep on it and an admin have signed off.
+  const perRowComm = r => splitPending(r) ? 0 : (r.paid ? paidOut(r) : rowComm(r)) * shareFor(r,p.id);
   const newC = news.reduce((a,r)=>a+perRowComm(r),0);
   const upC  = ups.reduce((a,r)=>a+perRowComm(r),0);
   // What is being held back by unapproved splits, so the report can say so.
@@ -5984,6 +5985,18 @@ function invApply(){
   const from=dates[0], to=dates[dates.length-1];
   // Swap out everything inside the file's own date range, so overlapping exports are safe.
   const kept=INVOICES.filter(x=>x.d<from||x.d>to);
+  // Range-replace is right for a full weekly export and catastrophic for a partial
+  // one: a 2-line file spanning May–June would silently DELETE every other invoice
+  // in that window. If this file holds fewer lines than it is about to remove, stop
+  // and make the person say so out loud.
+  const removing=INVOICES.length-kept.length;
+  if(removing>rows.length){
+    if(!confirm('⚠️ This file covers '+fmtY(from)+' to '+fmtY(to)+' but holds only '+rows.length+
+      ' line'+(rows.length===1?'':'s')+' — importing it would DELETE the '+removing+
+      ' lines already stored for those dates and replace them with these '+rows.length+'.\n\n'+
+      'That is usually a partial export. Only continue if this file really is the complete '+
+      'billing record for that period.\n\nReplace '+removing+' lines with '+rows.length+'?')) return;
+  }
   const before=INVOICES.length;
   INVOICES=kept.concat(rows).sort((a,b)=>a.d<b.d?-1:1);
   try{ save(K_INV,INVOICES); }
@@ -6123,6 +6136,14 @@ function payApply(){
   const dates=rows.map(x=>x.d).sort();
   const from=dates[0], to=dates[dates.length-1];
   const kept=PAYMENTS.filter(x=>x.d<from||x.d>to);
+  // Same partial-file guard as invoices: never let a thin file silently delete
+  // a fat stretch of payment history.
+  const removing=PAYMENTS.length-kept.length;
+  if(removing>rows.length){
+    if(!confirm('⚠️ This file covers '+fmtY(from)+' to '+fmtY(to)+' but holds only '+rows.length+
+      ' payment'+(rows.length===1?'':'s')+' — importing it would DELETE the '+removing+
+      ' already stored for those dates.\n\nOnly continue if this really is the complete payment record for that period.'))return;
+  }
   const before=PAYMENTS.length;
   PAYMENTS=kept.concat(rows).sort((a,b)=>a.d<b.d?-1:1);
   try{ save(K_PAY,PAYMENTS); }
@@ -7069,31 +7090,45 @@ function runChecks(){
     })));
 
   /* --- THE DATA HAWK: the same job counted in both systems --- */
-  // Two CRMs describing one real job never match exactly: the name is spelled
-  // differently, the amount is off by a discount or rounding, the dates differ by
-  // weeks. So this hunts on SIMILARITY, not equality: different source, names that
-  // share words, money within 5% (or $100), dates within 90 days.
+  // Similarity with judgement. A shared word only counts if it is RARE across the
+  // whole book — "smith" identifies somebody, "client" or "group" identifies nobody.
+  // Strong matches (same name, or rare words in common) tolerate 5% money drift and
+  // 90 days; a single-rare-word match must be near-identical money within 45 days.
+  // Results are ranked by strength so the sure things surface first, never drowned.
   const liveRows=ROWS.filter(r=>!r.voidType && bookedValue(r)>0);
-  const cross=[];
-  const toks=r=>nameTokens(r.client).filter(t=>t.length>2);
+  const tokOf={}, freq={}, seenName={};
+  liveRows.forEach(r=>{ tokOf[r.id]=nameTokens(r.client).filter(x=>x.length>2); });
+  liveRows.forEach(r=>{                     // word frequency across DISTINCT client names
+    const k=norm(r.client); if(seenName[k]) return; seenName[k]=1;
+    tokOf[r.id].forEach(t=>freq[t]=(freq[t]||0)+1);
+  });
+  const RARE=4;                             // a word naming ≤4 distinct clients still points at someone
+  let cross=[], crossTotal=0;
   for(let i=0;i<liveRows.length;i++)for(let j=i+1;j<liveRows.length;j++){
     const A=liveRows[i], B=liveRows[j];
     if(A.src===B.src) continue;
     const gap=Math.abs((dObj(A.date)-dObj(B.date))/86400000);
     if(gap>90) continue;
-    const va=bookedValue(A), vb=bookedValue(B);
-    if(Math.abs(va-vb) > Math.max(Math.max(va,vb)*0.05, 100)) continue;
-    const ta=toks(A), tb=toks(B);
-    const shared=ta.filter(t=>tb.indexOf(t)>-1).length;
-    const same = norm(A.client)===norm(B.client) || shared>=2 ||
-                 (shared>=1 && Math.min(ta.length,tb.length)<=2);
-    if(!same) continue;
+    const va=bookedValue(A), vb=bookedValue(B), hi=Math.max(va,vb), diff=Math.abs(va-vb);
+    if(diff > Math.max(hi*0.05,100)) continue;
+    const ta=tokOf[A.id], tb=tokOf[B.id];
+    const shared=ta.filter(t=>tb.indexOf(t)>-1);
+    const rare=shared.filter(t=>(freq[t]||99)<=RARE).length;
+    let strength=0;
+    if(norm(A.client)===norm(B.client)) strength=3;
+    else if(rare>=2 || (rare>=1 && shared.length>=2)) strength=2;
+    else if(rare>=1) strength=1;
+    if(!strength) continue;
+    if(strength===1 && (diff>Math.max(hi*0.01,25) || gap>45)) continue;
+    crossTotal++;
     const a=A.date<=B.date?A:B, b=A.date<=B.date?B:A;
-    cross.push({a,b,gap:Math.round(gap),diff:Math.abs(va-vb)});
-    if(cross.length>=40){i=liveRows.length;break;}
+    cross.push({a,b,gap:Math.round(gap),diff,strength});
   }
-  add('cross','bad','🦅 Possibly the SAME job counted twice (two systems)',
-    'Different source systems, similar client, money within 5%, dates within 90 days — usually one real job proposed in one CRM and billed through the other. If it is, delete one or the sale and the commission are both doubled.',
+  cross.sort((x,y)=>(y.strength-x.strength)||(x.diff-y.diff)||(x.gap-y.gap));
+  cross=cross.slice(0,80);
+  add('cross','bad','🦅 Possibly the SAME job counted twice (two systems)'+
+      (crossTotal>80?' — top 80 of '+crossTotal:''),
+    'Different source systems, matching or closely-related client names, money within 5%, dates within 90 days — usually one real job proposed in one CRM and billed through the other. If it is, delete one or the sale and the commission are both doubled. Strongest matches are listed first.',
     cross.map(d=>({
       text:'<b>'+esc(d.a.client)+'</b> · '+money(bookedValue(d.a))+
         (d.diff>0.01?' vs '+money(bookedValue(d.b)):'')+(d.b.client!==d.a.client?' · also as "'+esc(d.b.client)+'"':''),
@@ -8946,6 +8981,19 @@ function loadMapping(){
   updatePreview();
 }
 
+// What a source system's sale-type text means.
+// RENEWAL is tested FIRST and deliberately: /new/ matches the middle of
+// "reNEWal", which used to turn every imported renewal into a new sale —
+// paying it at the new-client rate and inflating new-client counts.
+function parseSaleType(raw, def){
+  const t=String(raw==null?'':raw).toLowerCase().trim();
+  if(!t) return def;
+  if(/renew|re-new|rebook|re-sign|resign/.test(t)) return 'renewal';
+  if(/upsell|up-sell|add|existing|additional|cross/.test(t)) return 'upsell';
+  if(/\bnew\b/.test(t)) return 'new';
+  return def;
+}
+
 // Match a salesperson by name. Exports spell people every which way — "Dana Cortez",
 // "Cortez, Dana", "D. Cortez", "dcortez" — so try progressively looser rules and only
 // accept a loose match when exactly one person fits it.
@@ -9004,12 +9052,7 @@ function buildRows(){
       const hit=matchRep(raw);
       if(hit)rep=hit; else if(raw)unmatched[raw]=(unmatched[raw]||0)+1;
     }
-    let type=defType;
-    if(m.mapType>=0){
-      const t=String(r[m.mapType]||'').toLowerCase();
-      if(/upsell|up-sell|add|existing|additional|cross/.test(t))type='upsell';
-      else if(/new/.test(t))type='new';
-    }
+    const type = m.mapType>=0 ? parseSaleType(r[m.mapType], defType) : defType;
     // Keep the row exactly as the export sent it, so what SA or Elevation
     // originally said is always recoverable. Long cells are trimmed.
     const raw={};
@@ -9084,7 +9127,7 @@ function doImport(){
   const byId={}; ROWS.forEach(r=>{ if(r.src&&r.srcId) byId[r.src+'|'+r.srcId]=r; });
   const key=r=>r.rep+'|'+r.src+'|'+r.date+'|'+r.client.toLowerCase()+'|'+bookedValue(r).toFixed(2);
   const seen=new Set(ROWS.map(key));
-  let added=0,dupes=0,updated=0,tombed=0; const frozen=[];
+  let added=0,dupes=0,updated=0,tombed=0; const frozen=[], stale=[];
   out.forEach(r=>{
     r.srcAt=stamp; r.batch=batch;
     // A record an admin deliberately deleted must not silently come back.
@@ -9102,6 +9145,10 @@ function doImport(){
           return String(ex[f]==null?'':ex[f])!==String(r[f]==null?'':r[f]);
         });
         if(!fields.length){ dupes++; return; }
+        // An OLD export must never overwrite NEWER data. When both sides carry a
+        // last-updated date, the older file loses; without dates we can't tell,
+        // so the change still applies but the Data Hawk's drift check flags it.
+        if(r.srcUp && ex.srcUp && r.srcUp < ex.srcUp){ stale.push(ex.client+' ('+r.srcUp+' vs '+ex.srcUp+')'); return; }
         if(ex.paid||ex.voidType){ frozen.push(ex.client+' — '+fields.join(', ')); return; }
         let touched=false;
         fields.forEach(f=>{
@@ -9132,6 +9179,8 @@ function doImport(){
   if(updated) msg+='\n\nUpdated '+updated+' already here — the source changed them. The originals are kept on each sale.';
   if(dupes) msg+='\n\nSkipped '+dupes+' already logged and unchanged.';
   if(tombed) msg+='\n\nHeld out '+tombed+' record'+(tombed===1?'':'s')+' you had deleted — they will not come back until restored on the Admin tab.';
+  if(stale.length) msg+='\n\nIgnored '+stale.length+' STALE record'+(stale.length===1?'':'s')+' — this file is older than what is already here:\n'+
+    stale.slice(0,5).join('\n')+(stale.length>5?'\n…and '+(stale.length-5)+' more':'');
   if(frozen.length) msg+='\n\nLeft alone '+frozen.length+' the source wanted to change but which are already paid or reversed:\n'+
     frozen.slice(0,6).join('\n')+(frozen.length>6?'\n…and '+(frozen.length-6)+' more':'')+
     '\n\nSettle those through a dispute or reversal, not a re-import.';
@@ -9327,8 +9376,8 @@ function cloudSetStatus(s,msg){
     offline:'Can’t reach the cloud right now — working locally, will retry.',
     error:CLOUD.lastErr||'Cloud error'}[s]||'');
 }
-async function cloudFetch(method,body){
-  const opt={method,headers:{'x-app-password':cloudPw()}};
+async function cloudFetch(method,body,extra){
+  const opt={method,headers:Object.assign({'x-app-password':cloudPw()},extra||{})};
   // The state is itself valid JSON; send it as application/json so the server
   // parses it into an object (no double-encoding, no size blow-up).
   if(body!=null){ opt.headers['content-type']='application/json'; opt.body=body; }
@@ -9357,13 +9406,41 @@ async function cloudPull(seed){
     cloudSetStatus('live');
   }catch(e){ CLOUD.lastErr=String(e.message||e); cloudSetStatus('offline'); }
 }
-async function cloudPushNow(){
+async function cloudPushNow(allowShrink){
   if(!CLOUD.on || CLOUD.pushing) { CLOUD.dirty=true; return; }
   CLOUD.pushing=true; CLOUD.dirty=false; cloudSetStatus('saving');
   try{
     const body=JSON.stringify(stateSnapshot());
-    const {ok,status,j}=await cloudFetch('POST',body);
+    // Tell the server which cloud version this save was built on. If another
+    // device saved in between, the server refuses (409) instead of letting this
+    // device silently wipe out the other one's data.
+    const hdrs={'x-base-updated': localStorage.getItem(CLOUD.appliedKey)||''};
+    if(allowShrink) hdrs['x-allow-shrink']='1';
+    const {ok,status,j}=await cloudFetch('POST',body,hdrs);
     if(status===401){ CLOUD.on=false; cloudSetStatus('off'); cloudAskPassword(true); }
+    else if(status===409 && j.shrink){
+      // This device holds far less than the cloud — almost always a fresh browser
+      // about to destroy the real dataset. Default to pulling the cloud down.
+      CLOUD.pushing=false;
+      if(confirm('⚠️ The cloud holds MUCH more data ('+j.cloudKB+' KB) than this device ('+j.localKB+' KB).\n\n'+
+        'Almost always you want to LOAD the cloud data onto this device (OK).\n\n'+
+        'Click Cancel ONLY if you truly mean to overwrite the cloud with this device’s smaller data set.')){
+        localStorage.setItem(CLOUD.appliedKey,String(j.updated));
+        await cloudPull(false);
+      } else if(confirm('Really overwrite '+j.cloudKB+' KB in the cloud with '+j.localKB+' KB from this device? This cannot be undone.')){
+        localStorage.setItem(CLOUD.appliedKey,String(j.updated));
+        await cloudPushNow(true);
+      } else { cloudSetStatus('live'); }
+      return;
+    }
+    else if(status===409 && j.conflict){
+      // Another device saved since we last synced: adopt the newer cloud state.
+      CLOUD.pushing=false;
+      localStorage.removeItem(CLOUD.appliedKey);
+      await cloudPull(false);
+      toast('Another device saved first — loaded its data. Redo your last change if it is missing.');
+      return;
+    }
     else if(!ok){ CLOUD.lastErr=j.error||('HTTP '+status); cloudSetStatus('error'); }
     else{ if(j.updated) localStorage.setItem(CLOUD.appliedKey,String(j.updated)); cloudSetStatus('live'); }
   }catch(e){ CLOUD.lastErr=String(e.message||e); cloudSetStatus('offline'); }

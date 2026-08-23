@@ -81,6 +81,30 @@ export default async function handler(req, res) {
       if (data && typeof data === 'object') data = data.data != null ? data.data : JSON.stringify(data);
       if (typeof data !== 'string') data = String(data == null ? '' : data);
       if (!data || data.length < 2) return res.status(400).json({ error: 'empty body' });
+
+      // --- last-write-wins protection ---
+      // Every save must state which cloud version it was built on (x-base-updated,
+      // the `updated` stamp it last pulled or pushed). If another device saved in
+      // between, the stamps differ and this save is REJECTED (409) instead of
+      // silently overwriting the other device's data. A device holding far less
+      // data than the cloud (a fresh browser) must also confirm before shrinking
+      // the stored state by more than half (x-allow-shrink).
+      const cur = await sql`SELECT length(data) AS len, updated FROM app_state WHERE id='main'`;
+      if (cur.length) {
+        const base = String(req.headers['x-base-updated'] || '');
+        const curStamp = new Date(cur[0].updated).toISOString();
+        if (base !== curStamp) {
+          return res.status(409).json({ conflict: true, updated: cur[0].updated,
+            error: 'another device saved since this one last synced' });
+        }
+        const curLen = cur[0].len || 0;
+        if (curLen > 0 && data.length < curLen * 0.5 && req.headers['x-allow-shrink'] !== '1') {
+          return res.status(409).json({ shrink: true, updated: cur[0].updated,
+            cloudKB: Math.round(curLen / 1024), localKB: Math.round(data.length / 1024),
+            error: 'this save holds far less data than the cloud' });
+        }
+      }
+
       const r = await sql`
         INSERT INTO app_state (id, data, updated) VALUES ('main', ${data}, now())
         ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated = now()

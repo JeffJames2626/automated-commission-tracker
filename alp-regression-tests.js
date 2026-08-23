@@ -153,6 +153,50 @@
         results.push({name:'SPLIT engine exists (splitState/shareFor)', expected:true, actual:false, pass:false});
       }
 
+      /* ---------- C-1: imported "Renewal" must never become a NEW sale ---------- */
+      if(typeof parseSaleType==='function'){
+        check('C-1 "Renewal" parses as renewal', 'renewal', parseSaleType('Renewal','new'));
+        check('C-1 "renewal" lowercase', 'renewal', parseSaleType('renewal','new'));
+        check('C-1 "New" still parses as new', 'new', parseSaleType('New','upsell'));
+        check('C-1 "New Client" parses as new', 'new', parseSaleType('New Client','upsell'));
+        check('C-1 "Upsell" unchanged', 'upsell', parseSaleType('Upsell','new'));
+        check('C-1 blank falls to default', 'upsell', parseSaleType('','upsell'));
+        check('C-1 unknown falls to default', 'new', parseSaleType('Mystery','new'));
+      } else {
+        results.push({name:'C-1 parseSaleType() exists', expected:true, actual:false, pass:false});
+      }
+
+      /* ---------- H-B: paid months are frozen against later edits ---------- */
+      // paid new sale at 10% -> $100 frozen. Flip type to renewal (2%): report must STILL say $100.
+      var hb=mkRow({type:'new', value:1000, invoiced:'2026-06-10', paid:'2026-06-20', paidAmt:100});
+      ROWS=[hb];
+      check('H-B paid month before edit', 100, commissionFor(P,'2026-06','sold').commission);
+      hb.type='renewal';
+      check('H-B paid month UNCHANGED after type flip', 100, commissionFor(P,'2026-06','sold').commission);
+      var oldRate=P.commNew; P.commNew=20;
+      check('H-B paid month UNCHANGED after rate change', 100, commissionFor(P,'2026-06','sold').commission);
+      P.commNew=oldRate;
+
+      /* ---------- H-A: hawk finds real dups, ignores generic-word noise ---------- */
+      if(typeof runChecks==='function'){
+        ROWS=[];
+        // noise: 30 cross-source pairs sharing only the generic word "Customer"
+        for(var ni=0; ni<30; ni++){
+          ROWS.push(mkRow({client:'Customer Alpha'+ni, src:'SA', value:500, date:'2026-06-01'}));
+          ROWS.push(mkRow({client:'Customer Beta'+ni,  src:'EL', value:500, date:'2026-06-05'}));
+        }
+        // one real duplicate: rare surname, near-identical money, different systems
+        ROWS.push(mkRow({client:'Smith Residence', src:'EL', value:10000, date:'2026-06-03'}));
+        ROWS.push(mkRow({client:'John Smith',      src:'SA', value:10000, date:'2026-06-13'}));
+        var hcross=runChecks().find(function(c){return c.id==='cross';});
+        var items=(hcross?hcross.items:[]).map(function(it){return it.text.replace(/<[^>]*>/g,'');});
+        checkTrue('H-A real dup (Smith) is flagged', items.some(function(t){return /Smith/.test(t);}),
+          items.length+' flags');
+        checkTrue('H-A generic-word noise suppressed (<5 false flags)',
+          items.filter(function(t){return /Customer/.test(t);}).length<5,
+          items.filter(function(t){return /Customer/.test(t);}).length+' noise flags');
+      }
+
       /* ---------- DATA HAWK: cross-CRM double-count caught despite differences ---------- */
       // different spelling, $50 apart, 10 days apart — the naive exact-match missed all of this
       ROWS=[ mkRow({type:'upsell', value:12500, client:'Test Customer A', src:'EL', date:'2026-06-05'}),
