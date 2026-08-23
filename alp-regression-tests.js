@@ -121,6 +121,46 @@
       check('H2 no-regression: two active sales still $2000', 2000, a2.newV);
       check('H2 no-regression: two active sales still count 2', 2, a2.newCount);
 
+      /* ---------- H2b: commission report values match the scoreboard (net) ---------- */
+      ROWS=[ mkRow({type:'new', value:10000}),
+             mkRow({type:'new', value:6000, voidType:'cancelled', voidDate:'2026-06-15', voidAmt:0}) ];
+      var cr=commissionFor(P,'2026-06','sold');
+      check('H2b commission-report newV is NET of cancellations', 10000, cr.newV);
+      check('H2b matches scoreboard newV', analyzeFor('TP').newV, cr.newV);
+
+      /* ---------- SPLITS: held until both reps + admin approve ---------- */
+      if(typeof splitState==='function'){
+        var P2=mkPerson({id:'TP2', name:'Second Rep'});
+        PEOPLE=[P, P2];
+        var sr=mkRow({type:'new', value:1000, split:[{rep:'TP',pct:60},{rep:'TP2',pct:40}]});
+        // no approvals yet -> pending -> commission HELD for everyone
+        ROWS=[sr];
+        check('SPLIT pending: primary rep gets $0 (held)', 0, commissionFor(P,'2026-06','sold').commission);
+        check('SPLIT pending: second rep gets $0 (held)', 0, commissionFor(P2,'2026-06','sold').commission);
+        check('SPLIT pending: heldC shows what primary WOULD get', 60, commissionFor(P,'2026-06','sold').heldC);
+        // both reps + admin approve -> processes at shares
+        sr.splitOk={reps:{TP:'2026-06-10',TP2:'2026-06-10'}, admin:{by:'',on:'2026-06-10'}};
+        check('SPLIT approved: 60% share pays $60', 60, commissionFor(P,'2026-06','sold').commission);
+        check('SPLIT approved: 40% share pays $40', 40, commissionFor(P2,'2026-06','sold').commission);
+        // production value splits; client count stays with the primary rep
+        var aP=analyzeFor('TP'), aP2=analyzeFor('TP2');
+        check('SPLIT production: primary value share', 600, aP.newV);
+        check('SPLIT production: second value share', 400, aP2.newV);
+        check('SPLIT counts: primary keeps the client count', 1, aP.newCount);
+        check('SPLIT counts: second gets no client count', 0, aP2.newCount);
+        PEOPLE=[P];
+      } else {
+        results.push({name:'SPLIT engine exists (splitState/shareFor)', expected:true, actual:false, pass:false});
+      }
+
+      /* ---------- DATA HAWK: cross-CRM double-count caught despite differences ---------- */
+      // different spelling, $50 apart, 10 days apart — the naive exact-match missed all of this
+      ROWS=[ mkRow({type:'upsell', value:12500, client:'Test Customer A', src:'EL', date:'2026-06-05'}),
+             mkRow({type:'upsell', value:12450, client:'Test Cust A',    src:'SA', date:'2026-06-15'}) ];
+      var crossChk=(typeof runChecks==='function')?runChecks().find(function(c){return c.id==='cross';}):null;
+      checkTrue('HAWK catches fuzzy cross-CRM double (spelling+$50+10d)',
+        crossChk && crossChk.items.length>=1, crossChk?crossChk.items.length:'no check');
+
       /* ---------- C2: tombstones stop deleted records resurrecting ---------- */
       if(typeof addTombstone==='function' && typeof isTombstoned==='function'){
         TOMBSTONES=[];

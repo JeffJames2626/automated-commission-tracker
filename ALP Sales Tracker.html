@@ -660,7 +660,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
           <div><label>Salesperson</label><select id="fRep" onchange="render()"></select></div>
           <div><label>Source</label><select id="fSource" onchange="render()">
             <option value="">All sources</option><option value="SA">Service Autopilot</option>
-            <option value="EL">Elevation Advisor</option><option value="MN">Manual</option></select></div>
+            <option value="EL">Elevation Advisor</option><option value="GV">Grovely</option><option value="MN">Manual</option></select></div>
           <div><label>Type</label><select id="fType" onchange="render()">
             <option value="">All types</option><option value="new">New client</option><option value="upsell">Upsell</option></select></div>
           <div><label>From</label><input type="date" id="fFrom" onchange="render()"></div>
@@ -1443,8 +1443,9 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
             <div><label>Commission payable this many days after invoice</label>
               <input type="number" id="pLag" step="1" min="0" onchange="setLag()"></div>
           </div>
-          <div class="note" style="margin-top:9px">Applies to every sale, past and future. Changing it moves payable
-            dates and can shift which month a commission lands in.</div>
+          <div class="note" style="margin-top:9px">Applies to sales invoiced <b>from now on</b>. Already-invoiced sales
+            keep the waiting period they were invoiced under, so changing this never moves a sale between
+            closed commission months.</div>
         </div>
       </details>
     </div>
@@ -1564,6 +1565,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
             <select id="impSource" onchange="loadMapping()">
               <option value="SA">Service Autopilot</option>
               <option value="EL">Elevation Advisor</option>
+              <option value="GV">Grovely</option>
               <option value="MN">Other / manual export</option>
             </select></div>
           <div><label>Credit these sales to</label><select id="impRep"></select></div>
@@ -1810,6 +1812,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
         <div><label>Source</label><div class="seg" id="qSrc">
           <button type="button" data-v="SA" class="on" onclick="segPick('qSrc',this)">Service Autopilot</button>
           <button type="button" data-v="EL" onclick="segPick('qSrc',this)">Elevation</button>
+          <button type="button" data-v="GV" onclick="segPick('qSrc',this)">Grovely</button>
           <button type="button" data-v="MN" onclick="segPick('qSrc',this)">Other</button>
         </div></div>
       </div>
@@ -1832,8 +1835,8 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
    CONSTANTS
    ============================================================ */
 const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-const SRC_LABEL={SA:'Service Autopilot',EL:'Elevation Advisor',MN:'Manual'};
-const SRC_CLASS={SA:'sa',EL:'el',MN:'mn'};
+const SRC_LABEL={SA:'Service Autopilot',EL:'Elevation Advisor',GV:'Grovely',MN:'Manual'};
+const SRC_CLASS={SA:'sa',EL:'el',GV:'mn',MN:'mn'};
 const SEASON_DEFAULT=[0.015,0.080,0.173,0.183,0.165,0.045,0.045,0.045,0.065,0.145,0.020,0.020];
 const ACV_DEFAULT=905.25;   // blended contract value, 2027 Simulator service mix
 const COLORS=['#3d6b3a','#2f5d7c','#c9a227','#7a4b8c','#a8332a','#3f7f77','#8a6f11','#5b4079'];
@@ -2349,6 +2352,33 @@ const SALE_TYPES=[
 ];
 const TYPE_LABEL={}; SALE_TYPES.forEach(t=>TYPE_LABEL[t[0]]=t[1]);
 
+/* ---- commission splits ----
+   A big job can be split between reps. row.split = [{rep, pct}, ...] with pcts
+   summing to 100 (normalised defensively). No split = 100% to row.rep. Splits
+   divide VALUE and COMMISSION; the client COUNT toward the standard stays with
+   the primary rep (row.rep), so a split sale is never two clients. */
+function rowShares(r){
+  if(Array.isArray(r.split) && r.split.length){
+    const t=r.split.reduce((a,s)=>a+(+s.pct||0),0);
+    if(t>0) return r.split.map(s=>({rep:s.rep, frac:(+s.pct||0)/t}));
+  }
+  return [{rep:r.rep, frac:1}];
+}
+function shareFor(r,pid){
+  const s=rowShares(r).find(x=>x.rep===pid);
+  return s?s.frac:0;
+}
+function isSplit(r){ return Array.isArray(r.split) && r.split.length>0; }
+// A split only PROCESSES commission once every rep on it has approved AND an
+// admin has signed off. Until then the money is held — nobody gets paid on it.
+function splitState(r){
+  if(!isSplit(r)) return 'none';
+  const ok=r.splitOk||{};
+  const repsOk=rowShares(r).every(s=>ok.reps && ok.reps[s.rep]);
+  return (repsOk && ok.admin) ? 'ok' : 'pending';
+}
+function splitPending(r){ return splitState(r)==='pending'; }
+
 // Commission rate that applies to this sale. A rate frozen on the row itself wins;
 // otherwise it follows the person's current plan. (paidAmt separately freezes the
 // dollar figure the moment a sale is marked paid.)
@@ -2468,8 +2498,12 @@ function analyzeFor(pid){
   const p=person(pid);
   if(!p) return null;
   const start=p.start, today=todayISO();
-  const mine=ROWS.filter(r=>r.rep===pid);
+  // Primary rep or named on a split. Value and commission are taken × their share;
+  // client counts stay with the primary rep so a split sale is never two clients.
+  const mine=ROWS.filter(r=>shareFor(r,pid)>0);
   const live=mine.filter(r=>r.date>=start).slice().sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
+  const fr=r=>shareFor(r,pid);
+  const isPrimary=r=>r.rep===pid;
 
   const firstWeek=weekStart(start), thisWeek=weekStart(today);
   const weeks=[];
@@ -2483,8 +2517,8 @@ function analyzeFor(pid){
   live.forEach(r=>{
     if(isReversed(r)) return;
     const i=idx[weekStart(r.date)]; if(i==null)return;
-    const bv=netValue(r);
-    if(r.type==='new'){weeks[i].newC++;weeks[i].newV+=bv;} else {weeks[i].upC++;weeks[i].upV+=bv;}
+    const bv=netValue(r)*fr(r), cnt=isPrimary(r)?1:0;
+    if(r.type==='new'){weeks[i].newC+=cnt;weeks[i].newV+=bv;} else {weeks[i].upC+=cnt;weeks[i].upV+=bv;}
   });
   weeks.forEach(w=>{ w.qualV=w.newV+(p.upsellVal?w.upV:0); w.allV=w.newV+w.upV; });
 
@@ -2503,13 +2537,13 @@ function analyzeFor(pid){
     if(isReversed(r)) return;
     const k=r.date.slice(0,7);
     if(!months[k])months[k]={k,newC:0,newV:0,upC:0,upV:0};
-    const bv=netValue(r);
-    if(r.type==='new'){months[k].newC++;months[k].newV+=bv;} else {months[k].upC++;months[k].upV+=bv;}
+    const bv=netValue(r)*fr(r), cnt=isPrimary(r)?1:0;
+    if(r.type==='new'){months[k].newC+=cnt;months[k].newV+=bv;} else {months[k].upC+=cnt;months[k].upV+=bv;}
   });
   const mList=Object.values(months).sort((a,b)=>a.k<b.k?-1:1);
   mList.forEach(m=>{
     m.total=m.newV+m.upV;
-    m.comm=live.filter(r=>r.date.slice(0,7)===m.k).reduce((a,r)=>a+rowComm(r),0);
+    m.comm=live.filter(r=>r.date.slice(0,7)===m.k).reduce((a,r)=>a+rowComm(r)*fr(r),0);
     const y=+m.k.slice(0,4), mo=+m.k.slice(5,7)-1;
     const mFrom=iso(y,mo+1,1)<start?start:iso(y,mo+1,1);
     const mTo=iso(y,mo+1,daysInMonth(y,mo))>today?today:iso(y,mo+1,daysInMonth(y,mo));
@@ -2517,9 +2551,9 @@ function analyzeFor(pid){
     m.pay=m.base+m.comm;
   });
 
-  const newV=live.filter(r=>r.type==='new').reduce((a,b)=>a+netValue(b),0);
-  const upV =live.filter(r=>r.type!=='new').reduce((a,b)=>a+netValue(b),0);
-  const commission = live.reduce((a,r)=>a+rowComm(r),0);
+  const newV=live.filter(r=>r.type==='new').reduce((a,b)=>a+netValue(b)*fr(b),0);
+  const upV =live.filter(r=>r.type!=='new').reduce((a,b)=>a+netValue(b)*fr(b),0);
+  const commission = live.reduce((a,r)=>a+rowComm(r)*fr(r),0);
 
   // team override on direct reports
   let overrideV=0;
@@ -2545,9 +2579,9 @@ function analyzeFor(pid){
     mList, needC, newV, upV, totalV:newV+upV, commission, override, overrideV,
     base, baseFull, salesPct, hrsActual, hrsProj, hasHours,
     pay: base+commission+override,
-    newCount:live.filter(r=>r.type==='new'&&!isReversed(r)).length,
-    upCount:live.filter(r=>r.type!=='new'&&!isReversed(r)).length,
-    renewCount:live.filter(r=>r.type==='renewal'&&!isReversed(r)).length,
+    newCount:live.filter(r=>r.type==='new'&&!isReversed(r)&&isPrimary(r)).length,
+    upCount:live.filter(r=>r.type!=='new'&&!isReversed(r)&&isPrimary(r)).length,
+    renewCount:live.filter(r=>r.type==='renewal'&&!isReversed(r)&&isPrimary(r)).length,
     start, today};
 }
 
@@ -2780,13 +2814,18 @@ function renderAdmin(){
   const age=d=>d?Math.round((dObj(todayISO())-dObj(d))/86400000):null;
   const ra=age(ls&&ls.on), ia=age(ils&&ils.on);
   let h='';
-  h+=tile('Needs fixing',bad,bad?'across the checks below':'nothing broken',bad?'bad':'ok');
-  h+=tile('Worth a look',warn,'lower priority');
-  h+=tile('Roster',ra==null?'never':ra+'d old',ls?'synced '+fmtY(ls.on):'no client sync yet',
-      ra==null||ra>7?'bad':'ok');
-  h+=tile('Invoices',ia==null?'never':ia+'d old',ils?'through '+fmtY(ils.to):'no invoice import yet',
-      ia==null||ia>=7?'bad':'ok');
-  h+=tile('Sales logged',ROWS.length.toLocaleString(),PEOPLE.filter(p=>p.active).length+' active reps');
+  h+=tlink(tile('Needs fixing',bad,bad?'across the checks below':'nothing broken',bad?'bad':'ok'),
+      "jumpToChecks()",'See the failing checks below');
+  h+=tlink(tile('Worth a look',warn,'lower priority'),
+      "jumpToChecks()",'See the flagged checks below');
+  h+=tlink(tile('Roster',ra==null?'never':ra+'d old',ls?'synced '+fmtY(ls.on):'no client sync yet',
+      ra==null||ra>7?'bad':'ok'),
+      "setTab('clients')",'Open the Clients tab — roster and sync');
+  h+=tlink(tile('Invoices',ia==null?'never':ia+'d old',ils?'through '+fmtY(ils.to):'no invoice import yet',
+      ia==null||ia>=7?'bad':'ok'),
+      "setTab('rev')",'Open the Revenue tab — invoices, payments and balances');
+  h+=tlink(tile('Sales logged',ROWS.length.toLocaleString(),PEOPLE.filter(p=>p.active).length+' active reps'),
+      "setTab('sales')",'Open the Sales tab — every logged sale');
   document.getElementById('adminTiles').innerHTML=h;
 
   const ut=document.getElementById('adminUsers');
@@ -2860,7 +2899,13 @@ function tile(lab,val,sub,cls,barPct,bad){
 }
 // Make a tile clickable — injects the handler into the tile's opening tag.
 function tlink(h,js,tip){
-  return h.replace('<div class="tile','<div onclick="'+js+'" title="'+esc(tip)+'" class="tile click');
+  return h.replace('<div class="tile','<div onclick="'+js.replace(/"/g,'&quot;')+'" title="'+esc(tip)+'" class="tile click');
+}
+// Scroll to the data-checks detail on the Admin tab.
+function jumpToChecks(){
+  if(TAB!=='admin') setTab('admin');
+  const el=document.getElementById('chkBody');
+  if(el) el.scrollIntoView({behavior:'smooth',block:'start'});
 }
 
 function renderTeam(){
@@ -3697,22 +3742,31 @@ function commissionFor(p, ym, basis){
   const payLive = payFrom<=b.to;
   // 'sold' counts by the date it closed. 'due' counts by the date commission became
   // payable — invoice plus the waiting period — which is how it actually gets paid.
+  const mine = r => shareFor(r,p.id)>0;   // primary rep, or named on a split
   const rows = !live ? [] : (basis==='due'
-    ? ROWS.filter(r=>r.rep===p.id && r.date>=p.start && dueDate(r) && dueDate(r)>=b.from && dueDate(r)<=b.to)
+    ? ROWS.filter(r=>mine(r) && r.date>=p.start && dueDate(r) && dueDate(r)>=b.from && dueDate(r)<=b.to)
           .sort((x,y)=>dueDate(x)<dueDate(y)?-1:dueDate(x)>dueDate(y)?1:0)
-    : ROWS.filter(r=>r.rep===p.id && r.date>=from && r.date<=b.to)
+    : ROWS.filter(r=>mine(r) && r.date>=from && r.date<=b.to)
           .sort((x,y)=>x.date<y.date?-1:x.date>y.date?1:0));
   const news = rows.filter(r=>r.type==='new');
   const ups  = rows.filter(r=>r.type!=='new');
-  const newV = news.reduce((a,r)=>a+bookedValue(r),0);
-  const upV  = ups.reduce((a,r)=>a+bookedValue(r),0);
+  // Values are NET of reversals so this report and the scoreboard tell the same story.
+  // (A paid-then-reversed sale's already-handed-over commission is recovered by the
+  // chargeback line in the reversal month — see perRowComm below.)
+  const newV = news.reduce((a,r)=>a+netValue(r)*shareFor(r,p.id),0);
+  const upV  = ups.reduce((a,r)=>a+netValue(r)*shareFor(r,p.id),0);
   // Commission per row: a PAID sale keeps its gross figure here — the paid amount was
   // already handed over and any later reversal is recovered by the chargeback line, so
   // switching it to net here would double-count. An UNPAID sale earns on net value, so a
   // cancellation before payment earns nothing (grossComm/rowComm are the existing helpers).
-  const perRowComm = r => r.paid ? grossComm(r) : rowComm(r);
+  // Split sales pay each person their share — and a split awaiting approval pays NOBODY:
+  // the money is held until every rep on it and an admin have signed off.
+  const perRowComm = r => splitPending(r) ? 0 : (r.paid ? grossComm(r) : rowComm(r)) * shareFor(r,p.id);
   const newC = news.reduce((a,r)=>a+perRowComm(r),0);
   const upC  = ups.reduce((a,r)=>a+perRowComm(r),0);
+  // What is being held back by unapproved splits, so the report can say so.
+  const held = rows.filter(splitPending);
+  const heldC = held.reduce((a,r)=>a+(r.paid?grossComm(r):rowComm(r))*shareFor(r,p.id),0);
 
   // Override on anyone reporting to this person.
   const team=[];
@@ -3733,14 +3787,16 @@ function commissionFor(p, ym, basis){
   const hrs  = payLive ? loggedHours(p.id,payFrom,b.to) : 0;
   const unpaid=rows.filter(r=>!r.paid);
   // Chargebacks land in the month the reversal happened, not the month of the sale.
-  const chargebacks = ROWS.filter(r=>r.rep===p.id && r.voidType && r.voidDate &&
+  // On a split sale each person is clawed back only for their share.
+  const chargebacks = ROWS.filter(r=>shareFor(r,p.id)>0 && r.voidType && r.voidDate &&
       r.voidDate>=b.from && r.voidDate<=b.to && clawback(r)>0 && clawbackWindowOpen(r));
-  const cbTotal = chargebacks.reduce((a,r)=>a+clawback(r),0);
+  const cbTotal = chargebacks.reduce((a,r)=>a+clawback(r)*shareFor(r,p.id),0);
   // Dispute adjustments land in the month they were resolved.
   const adjustments = DISPUTES.filter(d=>d.rep===p.id && d.status!=='open' && d.resolved &&
       d.resolved>=b.from && d.resolved<=b.to && (+d.adjust||0)!==0);
   const adjTotal = adjustments.reduce((a,d)=>a+(+d.adjust||0),0);
   return {p, bounds:b, from, live, payFrom, payLive, basis, unpaid, rows, news, ups, newV, upV, newC, upC, team, ovC,
+          held, heldC,
           chargebacks, cbTotal, adjustments, adjTotal,
           commission:newC+upC+ovC,
           netCommission:newC+upC+ovC+adjTotal-cbTotal,
@@ -3943,6 +3999,12 @@ function renderComm(){
            money(r.carry)+'.</b> Nothing is deducted from base pay here — the balance is shown as owed and carried, '+
            'not netted against wages. Recovering it from a paycheque may run into Washington wage-deduction rules, '+
            'so settle how it comes back before the next run. It is <b>not</b> applied to the next month automatically.</div>';
+      }
+      if(r.held&&r.held.length){
+        h+='<div class="warnbox" style="margin:12px 0"><b>'+money(r.heldC)+' held on '+r.held.length+
+           ' split sale'+(r.held.length===1?'':'s')+' awaiting approval.</b> A split pays nobody until every rep on it '+
+           'and an admin have signed off — approve it on the Sales tab and this money joins the next run: '+
+           r.held.slice(0,4).map(x=>esc(x.client)).join(', ')+(r.held.length>4?'…':'')+'</div>';
       }
       const guarHrs=r.payLive?projectedHours(p,r.payFrom,b.to):0;
       const wholeMonth = r.payFrom===b.from;
@@ -6409,7 +6471,25 @@ function uploadStatusText(){
   });
   const formers=CLIENTS.filter(c=>!c.gone&&isFormerSp(c.sp)).length;
   if(formers) bits.push(formers+' active accounts still carry a former team member’s name — Clients tab, account takeover.');
+  const pendSplits=ROWS.filter(splitPending).length;
+  if(pendSplits) bits.push(pendSplits+' split sale'+(pendSplits===1?'':'s')+' awaiting approval — commission is HELD until both reps and an admin sign off (Sales tab → Approve).');
+  const hawk=hawkCounts();
+  if(hawk.total) bits.push('🦅 Data hawk: '+hawk.total+' discrepanc'+(hawk.total===1?'y':'ies')+' flagged ('+hawk.parts.join(', ')+') — Admin tab → Data checks, or ask me "show discrepancies".');
   return bits;
+}
+// What the hawk currently has its eye on, as counts per kind.
+function hawkCounts(){
+  const HAWK_IDS={cross:'same job in both systems',dupes:'possible duplicates',hawkRep:'rep mismatches',
+    hawkOwes:'commission moving while customer owes',hawkDrift:'source changed values',hawkDupInv:'doubled invoice lines'};
+  const out={total:0,parts:[],items:{}};
+  runChecks().forEach(c=>{
+    if(HAWK_IDS[c.id] && c.items.length){
+      out.total+=c.items.length;
+      out.parts.push(c.items.length+' '+HAWK_IDS[c.id]);
+      out.items[c.id]=c;
+    }
+  });
+  return out;
 }
 function openAsk(){
   // Deliberately NOT blocked by the pause — telling you what to upload is this thing's job.
@@ -6428,7 +6508,8 @@ function renderAskLog(){
       '• Where is the [client] job — sold, done, invoiced, paid?\n'+
       '• Has invoice [number] been paid?\n'+
       '• What has [client] been billed this year, and what came in?\n'+
-      '• What do I need to upload?</div>';
+      '• What do I need to upload?\n'+
+      '• Show discrepancies 🦅</div>';
     return;
   }
   box.innerHTML=AICHAT.map(m=>'<div class="aimsg '+(m.who==='you'?'you':'bot')+'">'+esc(m.text)+
@@ -6520,6 +6601,25 @@ async function aiAsk(){
   const q=inp.value.trim(); if(!q) return;
   inp.value='';
   AICHAT.push({who:'you',text:q}); renderAskLog();
+  // "show discrepancies" — the hawk answers directly, no API needed
+  if(/discrepan|hawk|double.?count|mismatch|drift|what.*(wrong|off|errors)/i.test(q) && !jobMatches(q).length){
+    const hawk=hawkCounts();
+    if(!hawk.total){
+      AICHAT.push({who:'bot',text:'🦅 Nothing on the board — no cross-system doubles, rep mismatches, value drift, or doubled invoice lines flagged right now.'});
+    } else {
+      const lines=[];
+      Object.keys(hawk.items).forEach(id=>{
+        const c=hawk.items[id];
+        lines.push(c.title.replace('🦅 ','')+' ('+c.items.length+'):');
+        c.items.slice(0,4).forEach(it=>lines.push('  • '+it.text.replace(/<[^>]*>/g,'')+' — '+it.sub.replace(/<[^>]*>/g,'')));
+        if(c.items.length>4) lines.push('  …and '+(c.items.length-4)+' more');
+      });
+      lines.push('');
+      lines.push('Everything is actionable on the Admin tab → Data checks.');
+      AICHAT.push({who:'bot',text:'🦅 '+hawk.total+' discrepancies flagged:\n\n'+lines.join('\n')});
+    }
+    renderAskLog(); return;
+  }
   // "what do I need to upload" — answered straight from the merge gate, no API needed
   if(/upload|import|sync|merge|what.*(due|need)|housekeep/i.test(q) && !jobMatches(q).length){
     const up=uploadStatusText();
@@ -6905,33 +7005,97 @@ function runChecks(){
       act:'<button class="sm danger" onclick="delRow(\''+d.b.id+'\')">Delete the later one</button>'
     })));
 
-  /* --- the same job counted in both systems --- */
-  // A project proposed in Elevation and then billed through Service Autopilot
-  // shows up in both exports under different service names, so the duplicate
-  // check above misses it. Same client, same money, different system, close
-  // together — that is worth a look.
-  const byCV={}, cross=[];
-  ROWS.filter(r=>!r.voidType && bookedValue(r)>0).forEach(r=>{
-    const k=norm(r.client)+'|'+bookedValue(r).toFixed(2);
-    (byCV[k]=byCV[k]||[]).push(r);
-  });
-  Object.keys(byCV).forEach(k=>{
-    const g=byCV[k]; if(g.length<2) return;
-    for(let i=0;i<g.length;i++)for(let j=i+1;j<g.length;j++){
-      const a=g[i].date<=g[j].date?g[i]:g[j], b=g[i].date<=g[j].date?g[j]:g[i];
-      if(a.src!==b.src && Math.abs((dObj(b.date)-dObj(a.date))/86400000)<=45)
-        cross.push({a,b});
-    }
-  });
-  add('cross','bad','Possibly counted in both systems',
-    'Same client and same value from two different systems within 45 days — usually one job that was proposed in Elevation and billed through Service Autopilot. If it is, delete one or the commission is paid twice.',
+  /* --- THE DATA HAWK: the same job counted in both systems --- */
+  // Two CRMs describing one real job never match exactly: the name is spelled
+  // differently, the amount is off by a discount or rounding, the dates differ by
+  // weeks. So this hunts on SIMILARITY, not equality: different source, names that
+  // share words, money within 5% (or $100), dates within 90 days.
+  const liveRows=ROWS.filter(r=>!r.voidType && bookedValue(r)>0);
+  const cross=[];
+  const toks=r=>nameTokens(r.client).filter(t=>t.length>2);
+  for(let i=0;i<liveRows.length;i++)for(let j=i+1;j<liveRows.length;j++){
+    const A=liveRows[i], B=liveRows[j];
+    if(A.src===B.src) continue;
+    const gap=Math.abs((dObj(A.date)-dObj(B.date))/86400000);
+    if(gap>90) continue;
+    const va=bookedValue(A), vb=bookedValue(B);
+    if(Math.abs(va-vb) > Math.max(Math.max(va,vb)*0.05, 100)) continue;
+    const ta=toks(A), tb=toks(B);
+    const shared=ta.filter(t=>tb.indexOf(t)>-1).length;
+    const same = norm(A.client)===norm(B.client) || shared>=2 ||
+                 (shared>=1 && Math.min(ta.length,tb.length)<=2);
+    if(!same) continue;
+    const a=A.date<=B.date?A:B, b=A.date<=B.date?B:A;
+    cross.push({a,b,gap:Math.round(gap),diff:Math.abs(va-vb)});
+    if(cross.length>=40){i=liveRows.length;break;}
+  }
+  add('cross','bad','🦅 Possibly the SAME job counted twice (two systems)',
+    'Different source systems, similar client, money within 5%, dates within 90 days — usually one real job proposed in one CRM and billed through the other. If it is, delete one or the sale and the commission are both doubled.',
     cross.map(d=>({
-      text:'<b>'+esc(d.a.client)+'</b> · '+money(bookedValue(d.a)),
-      sub:(SRC_LABEL[d.a.src]||d.a.src)+' '+fmt(d.a.date)+(d.a.service?' ('+esc(d.a.service)+')':'')+
-        ' and '+(SRC_LABEL[d.b.src]||d.b.src)+' '+fmt(d.b.date)+(d.b.service?' ('+esc(d.b.service)+')':''),
+      text:'<b>'+esc(d.a.client)+'</b> · '+money(bookedValue(d.a))+
+        (d.diff>0.01?' vs '+money(bookedValue(d.b)):'')+(d.b.client!==d.a.client?' · also as "'+esc(d.b.client)+'"':''),
+      sub:(SRC_LABEL[d.a.src]||d.a.src)+' '+fmt(d.a.date)+' and '+(SRC_LABEL[d.b.src]||d.b.src)+' '+fmt(d.b.date)+
+        ' — '+d.gap+'d apart'+(d.a.service||d.b.service?' · '+esc(d.a.service||'')+(d.b.service&&d.b.service!==d.a.service?' / '+esc(d.b.service):''):''),
       act:'<button class="sm" onclick="rowInfo(\''+d.a.id+'\')">First</button> '+
           '<button class="sm" onclick="rowInfo(\''+d.b.id+'\')">Second</button> '+
           '<button class="sm danger" onclick="delRow(\''+d.b.id+'\')">Delete the later one</button>'
+    })));
+
+  /* --- THE DATA HAWK: sale credited to one rep, invoice naming another --- */
+  // Commission follows the sale's rep; the Revenue tab follows the invoice line.
+  // When those disagree, two reports name two different people for the same job.
+  const repMismatch=[];
+  ROWS.filter(r=>!r.voidType).forEach(r=>{
+    const shareIds=rowShares(r).map(s=>s.rep);
+    const lines=INVOICES.filter(x=>norm(x.c)===norm(r.client) && x.r &&
+      Math.abs((dObj(x.d)-dObj(r.date))/86400000)<=60);
+    const others={};
+    lines.forEach(x=>{ const id=matchRep(x.r); if(id && shareIds.indexOf(id)<0) others[x.r]=1; });
+    if(Object.keys(others).length) repMismatch.push({r, others:Object.keys(others)});
+  });
+  add('hawkRep','warn','🦅 Sale and invoice name different reps',
+    'The sale pays commission to one person while the invoice lines carry another name. One of them is wrong — or it should be a split.',
+    repMismatch.slice(0,30).map(d=>({
+      text:'<b>'+esc(d.r.client)+'</b> · '+money(bookedValue(d.r)),
+      sub:'sale: '+esc(person(d.r.rep)?person(d.r.rep).name:'?')+' · invoice lines: '+esc(d.others.join(', ')),
+      act:'<button class="sm" onclick="rowInfo(\''+d.r.id+'\')">Info</button> '+
+          '<button class="sm" onclick="editSplit(\''+d.r.id+'\')">Split it</button>'
+    })));
+
+  /* --- THE DATA HAWK: commission moving on jobs the customer has not paid --- */
+  const pastDueBy={}; OPENINV.forEach(v=>{ if(/past/i.test(v.s)) pastDueBy[norm(v.c)]=(pastDueBy[norm(v.c)]||0)+v.t; });
+  const owes=ROWS.filter(r=>!r.voidType && r.invoiced && pastDueBy[norm(r.client)]);
+  add('hawkOwes','warn','🦅 Commission moving while the customer still owes',
+    'These sales are invoiced (commission due or already paid out) but the balances snapshot shows the customer past due. Worth holding or checking before money goes out.',
+    owes.slice(0,30).map(r=>({
+      text:'<b>'+esc(r.client)+'</b> · sale '+money(bookedValue(r))+' · owes '+money(pastDueBy[norm(r.client)]),
+      sub:'stage: '+STAGE_LABEL[stageOf(r)]+(r.paid?' · commission paid '+fmt(r.paid):' · commission due '+(dueDate(r)?fmt(dueDate(r)):'')),
+      act:'<button class="sm" onclick="rowInfo(\''+r.id+'\')">Info</button>'
+    })));
+
+  /* --- THE DATA HAWK: a re-import changed the money --- */
+  const drift=ROWS.filter(r=>(r.edits||[]).some(e=>e.by==='sync'&&e.f==='value'));
+  add('hawkDrift','warn','🦅 Source system changed a sale’s value on re-import',
+    'The CRM sent a different figure than what was first recorded. The change is applied and logged — confirm it is a real price change and not an export error.',
+    drift.slice(0,30).map(r=>{
+      const e=(r.edits||[]).filter(x=>x.by==='sync'&&x.f==='value').slice(-1)[0];
+      return {text:'<b>'+esc(r.client)+'</b> · '+money2(+e.from||0)+' → '+money2(+e.to||0),
+        sub:'changed '+fmt(e.on)+' · originally '+money2(origOf(r).value||0),
+        act:'<button class="sm" onclick="rowInfo(\''+r.id+'\')">Info</button>'};
+    }));
+
+  /* --- THE DATA HAWK: identical invoice lines counted twice --- */
+  const seenLine={}, dupLines=[];
+  INVOICES.forEach(x=>{
+    const k=String(x.i)+'|'+x.d+'|'+norm(x.s||'')+'|'+(+x.v).toFixed(2);
+    if(seenLine[k] && +x.v>0) dupLines.push(x); else seenLine[k]=1;
+  });
+  add('hawkDupInv','warn','🦅 Identical invoice lines counted twice',
+    'The invoice audit holds the exact same line more than once (same invoice #, date, description, amount). Billed totals are inflated by these.',
+    dupLines.slice(0,30).map(x=>({
+      text:'<b>'+esc(x.c)+'</b> · invoice #'+esc(x.i)+' · '+money2(x.v),
+      sub:fmt(x.d)+(x.s?' · '+esc(x.s):'')+' — appears more than once',
+      act:''
     })));
 
   /* --- dates that cannot be right --- */
@@ -7141,13 +7305,17 @@ function renderChecks(){
   const bad=checks.filter(c=>c.sev==='bad'), warn=checks.filter(c=>c.sev==='warn');
   const count=s=>checks.filter(c=>c.sev===s).reduce((a,c)=>a+c.items.length,0);
   let h='';
-  h+=tile('Needs fixing',count('bad'),bad.length?bad.length+' kind'+(bad.length===1?'':'s')+' of problem':'nothing broken',
-      count('bad')?'bad':'ok');
-  h+=tile('Worth a look',count('warn'),warn.length+' kind'+(warn.length===1?'':'s'));
-  h+=tile('Sales checked',ROWS.length.toLocaleString(),CLIENTS.length?'against '+CLIENTS.length.toLocaleString()+' clients':'no roster synced yet');
+  h+=tlink(tile('Needs fixing',count('bad'),bad.length?bad.length+' kind'+(bad.length===1?'':'s')+' of problem':'nothing broken',
+      count('bad')?'bad':'ok'),
+      "jumpToChecks()",'See the failing checks below');
+  h+=tlink(tile('Worth a look',count('warn'),warn.length+' kind'+(warn.length===1?'':'s')),
+      "jumpToChecks()",'See the flagged checks below');
+  h+=tlink(tile('Sales checked',ROWS.length.toLocaleString(),CLIENTS.length?'against '+CLIENTS.length.toLocaleString()+' clients':'no roster synced yet'),
+      "setTab('sales')",'Open the Sales tab');
   const ls=lastSync();
-  h+=tile('Roster age', ls?Math.round((dObj(todayISO())-dObj(ls.on))/86400000)+' days':'—',
-      ls?'last synced '+fmtY(ls.on):'never synced', ls&&(dObj(todayISO())-dObj(ls.on))/86400000>7?'bad':'');
+  h+=tlink(tile('Roster age', ls?Math.round((dObj(todayISO())-dObj(ls.on))/86400000)+' days':'—',
+      ls?'last synced '+fmtY(ls.on):'never synced', ls&&(dObj(todayISO())-dObj(ls.on))/86400000>7?'bad':''),
+      "setTab('clients')",'Open the Clients tab — roster and sync');
   document.getElementById('chkTiles').innerHTML=h;
 
   const box=document.getElementById('chkBody');
@@ -8128,9 +8296,12 @@ function renderData(){
       '<td><button class="sm" onclick="toggleType(\''+r.id+'\')" title="Click to cycle">'+
         esc(TYPE_LABEL[r.type]||r.type)+'</button></td>'+
       '<td><span class="pill '+SRC_CLASS[r.src]+'" title="'+esc(provLine(r))+'">'+(SRC_LABEL[r.src]||r.src)+'</span>'+
-        ((r.edits&&r.edits.some(e=>e.by!=='sync'&&!/^(completed|invoiced|paid)$/.test(e.f)))?' <span class="pill n" title="Corrected by hand after it was logged — the Info button shows what and when">EDITED</span>':'')+'</td>'+
+        ((r.edits&&r.edits.some(e=>e.by!=='sync'&&!/^(completed|invoiced|paid)$/.test(e.f)))?' <span class="pill n" title="Corrected by hand after it was logged — the Info button shows what and when">EDITED</span>':'')+
+        (isSplit(r)?' <span class="pill '+(splitPending(r)?'no':'ok')+'" title="'+esc(rowShares(r).map(s=>{const sp=person(s.rep);return (sp?sp.name:'?')+' '+num(s.frac*100,0)+'%';}).join(' / '))+(splitPending(r)?' — commission HELD until both reps and an admin approve':' — approved')+'">'+(splitPending(r)?'SPLIT: HELD':'SPLIT ✓')+'</span>':'')+'</td>'+
       '<td><span class="pill st-'+stageOf(r)+'">'+STAGE_LABEL[stageOf(r)].toUpperCase()+'</span></td>'+
       '<td class="num"><button class="sm" onclick="rowInfo(\''+r.id+'\')" title="Where this sale came from and everything that happened to it">Info</button> '+
+        (splitPending(r)?'<button class="sm p" onclick="approveSplit(\''+r.id+'\')" title="Record rep and admin approvals — commission is held until all are in">Approve</button> ':
+          '<button class="sm" onclick="editSplit(\''+r.id+'\')" title="Split this sale\'s value and commission between reps">Split</button> ')+
         '<button class="sm danger" onclick="delRow(\''+r.id+'\')">Delete</button></td></tr>';
   });
   if(rows.length>600) h+='<tr><td colspan="9" class="empty">Showing the newest 600 of '+rows.length+' — narrow the filters to see more.</td></tr>';
@@ -8159,6 +8330,83 @@ function delRow(id){
   if(imported) addTombstone(r);   // remember the deletion so the next import respects it
   ROWS=ROWS.filter(x=>x.id!==id); save(K_ROWS,ROWS); render();
 }
+// Split a sale's value and commission between reps, prompt-style:
+//   "Zach 60, Josh 40"  — percentages are normalised; blank clears the split.
+function editSplit(id){
+  const r=ROWS.find(x=>x.id===id); if(!r)return;
+  const cur=isSplit(r)?rowShares(r).map(s=>{const p=person(s.rep);return (p?p.name:'?')+' '+num(s.frac*100,0);}).join(', '):'';
+  const raw=prompt('Split '+r.client+' — '+money2(bookedValue(r))+' between reps.\n\n'+
+    'Type: Name percent, Name percent   (e.g.  Zach 60, Josh 40)\n'+
+    'Leave blank to clear the split — everything goes back to '+
+    (person(r.rep)?person(r.rep).name:'the primary rep')+'.', cur);
+  if(raw===null) return;
+  if(!raw.trim()){
+    if(isSplit(r)){ logEdit(r,'split',cur,''); delete r.split; save(K_ROWS,ROWS); render(); toast('Split cleared'); }
+    return;
+  }
+  const parts=raw.split(/[,;]+/).map(s=>s.trim()).filter(Boolean);
+  const split=[];
+  for(const part of parts){
+    const m=part.match(/^(.*?)[\s:]+(\d+(?:\.\d+)?)\s*%?$/);
+    if(!m){ alert('Could not read "'+part+'" — use: Name percent (e.g. Zach 60).'); return; }
+    const pid=matchRep(m[1]);
+    if(!pid){ alert('No salesperson here matches "'+m[1].trim()+'". Add them on Comp plans first.'); return; }
+    if(split.some(s=>s.rep===pid)){ alert(person(pid).name+' is listed twice.'); return; }
+    split.push({rep:pid, pct:+m[2]});
+  }
+  const tot=split.reduce((a,s)=>a+s.pct,0);
+  if(!(tot>0)){ alert('The percentages add to zero — nothing saved.'); return; }
+  if(Math.abs(tot-100)>0.01 &&
+     !confirm('Those percentages add to '+num(tot,1)+'%, not 100%.\n\nUse them anyway as proportions of the whole?')) return;
+  const desc=split.map(s=>person(s.rep).name+' '+num(s.pct/tot*100,0)+'%').join(' / ');
+  logEdit(r,'split',cur,desc);
+  r.split=split;
+  // keep the primary rep the biggest holder so counts and exports stay sensible
+  const top=split.slice().sort((a,b)=>b.pct-a.pct)[0];
+  if(top && top.rep!==r.rep){ logEdit(r,'rep',r.rep,top.rep); r.rep=top.rep; }
+  // A new or changed split starts UNAPPROVED: commission on this sale is held
+  // until every rep on it approves and an admin signs off. If an unlocked admin
+  // is creating it, that counts as the admin's sign-off.
+  r.splitOk={reps:{},admin:null};
+  if(ADMIN){ r.splitOk.admin={by:ADMIN_USER||'',on:todayISO()}; logEdit(r,'splitOk','','admin signed off at creation'+(currentAdmin()?' ('+currentAdmin().name+')':'')); }
+  save(K_ROWS,ROWS); render();
+  toast('Split saved: '+desc+' — commission held until both reps'+(ADMIN?'':' and an admin')+' approve');
+}
+
+// Record approvals. A rep with a PIN proves it with the PIN; the admin sign-off
+// needs an unlocked admin session. Every approval is logged on the sale.
+function approveSplit(id){
+  const r=ROWS.find(x=>x.id===id); if(!r||!isSplit(r))return;
+  r.splitOk=r.splitOk||{reps:{},admin:null};
+  const shares=rowShares(r);
+  const pend=shares.filter(s=>!r.splitOk.reps[s.rep]);
+  const lines=pend.map((s,i)=>(i+1)+'. '+(person(s.rep)?person(s.rep).name:'?')+' (rep)');
+  if(!r.splitOk.admin) lines.push((pend.length+1)+'. Admin sign-off');
+  if(!lines.length){ toast('Split already fully approved'); return; }
+  const pick=prompt('Approve the split on '+r.client+' — '+
+    shares.map(s=>(person(s.rep)?person(s.rep).name:'?')+' '+num(s.frac*100,0)+'%').join(' / ')+
+    '\n\nStill needed:\n'+lines.join('\n')+'\n\nEnter the number of who is approving:','1');
+  if(pick===null) return;
+  const n=parseInt(pick,10);
+  if(n>=1 && n<=pend.length){
+    const who=person(pend[n-1].rep);
+    if(!who){ alert('That rep is no longer on the roster.'); return; }
+    if(who.pin){
+      const v=prompt(who.name+'’s PIN:'); if(v===null) return;
+      if(pinHash(v)!==who.pin){ alert('That is not '+who.name+'’s PIN.'); return; }
+    } else if(!confirm(who.name+' approves this split?')) return;
+    r.splitOk.reps[who.id]=todayISO();
+    logEdit(r,'splitOk','',who.name+' approved');
+  } else if(n===pend.length+1 && !r.splitOk.admin){
+    if(!ADMIN){ alert('The admin sign-off needs an unlocked admin — open the Admin tab first.'); return; }
+    r.splitOk.admin={by:ADMIN_USER||'',on:todayISO()};
+    logEdit(r,'splitOk','','admin signed off'+(currentAdmin()?' ('+currentAdmin().name+')':''));
+  } else { alert('Not one of the options — nothing recorded.'); return; }
+  save(K_ROWS,ROWS); render();
+  toast(splitState(r)==='ok' ? 'Fully approved — commission on this sale now processes'
+                             : 'Recorded — the split still needs more approvals');
+}
+
 // One line of provenance for a tooltip.
 function provLine(r){
   return (SRC_LABEL[r.src]||r.src)+(r.srcId?' · record '+r.srcId:'')+
@@ -8173,6 +8421,14 @@ function rowInfo(id){
   let t=r.client+' · '+fmtY(r.date)+' · '+money2(bookedValue(r))+' · '+(TYPE_LABEL[r.type]||r.type)+
     (p?' · '+p.name:'')+'\n';
   t+='Commission: '+num(rowRate(r),1)+'% = '+money2(rowComm(r))+(r.commRate!=null&&r.commRate!==''?' (rate frozen on this sale)':' (from the comp plan)')+'\n';
+  if(isSplit(r)){
+    t+='Split: '+rowShares(r).map(s=>{const sp=person(s.rep);
+      return (sp?sp.name:'?')+' '+num(s.frac*100,0)+'% = '+money2(rowComm(r)*s.frac);}).join(' · ')+'\n';
+    const ok=r.splitOk||{};
+    t+='Split approval: '+(splitState(r)==='ok'?'APPROVED — commission processes':
+      'PENDING — commission HELD. Still needed: '+
+      rowShares(r).filter(s=>!(ok.reps&&ok.reps[s.rep])).map(s=>person(s.rep)?person(s.rep).name:'?').concat(ok.admin?[]:['admin sign-off']).join(', '))+'\n';
+  }
   t+='\nSource: '+provLine(r)+'\n';
   if(r.orig){
     const same = o.date===r.date && o.client===r.client && (+o.value||0)===(+r.value||0) &&
