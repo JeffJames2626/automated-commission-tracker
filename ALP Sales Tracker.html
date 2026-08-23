@@ -113,6 +113,39 @@ a.emplink:hover{color:var(--grn-d);border-bottom-color:var(--grn)}
 .rcard .meta{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rcard .pills{margin-top:6px;display:flex;gap:4px;flex-wrap:wrap}
 .rcard .nmrow{display:flex;align-items:center;gap:7px;min-width:0}
+/* team pulse */
+.pulse{display:grid;grid-template-columns:minmax(300px,1.4fr) repeat(auto-fit,minmax(150px,1fr));grid-auto-flow:dense;gap:12px;margin-bottom:14px}
+.pulse .hero{grid-row:span 2;background:var(--ink);color:#f3f5f0;border-radius:13px;padding:20px 22px;display:flex;flex-direction:column;justify-content:space-between;min-height:190px}
+@media(max-width:700px){.pulse{grid-template-columns:1fr 1fr}.pulse .hero{grid-column:1/-1;grid-row:auto}}
+.pulse .hero .lab{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:#b9c2b2}
+.pulse .hero .big{font-size:48px;font-weight:700;letter-spacing:-.03em;line-height:1;margin:8px 0 6px}
+.pulse .hero .delta{font-size:13px;color:#d9e2d4}
+.pulse .hero svg{width:100%;height:34px;display:block;margin-top:8px}
+.delta.up{color:var(--grn-d)} .delta.down{color:var(--red)} .hero .delta.up{color:#8fce8f} .hero .delta.down{color:#f0a49b}
+.pulsegrid{display:grid;grid-template-columns:minmax(0,3fr) minmax(240px,2fr);gap:12px;margin-bottom:14px}
+@media(max-width:820px){.pulsegrid{grid-template-columns:1fr}}
+.lb{display:flex;flex-direction:column;gap:6px}
+.lb .row{display:grid;grid-template-columns:28px 40px minmax(0,1fr) 96px;gap:10px;align-items:center;padding:6px 4px;border-radius:9px;cursor:pointer}
+.lb .row:hover{background:var(--band)}
+.lb .rank{font-weight:700;color:var(--muted);text-align:center;font-size:13px}
+.lb .rank.m1{color:#b07109;font-size:18px}
+.lb .who{min-width:0}
+.lb .who .n{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lb .bar{height:18px;border-radius:0 4px 4px 0;margin-top:4px;transition:width .35s;min-width:2px}
+.lb .sub{font-size:11.5px;color:var(--muted);margin-top:3px}
+.lb .val{text-align:right}
+.lb .val b{display:block;font-size:15px}
+.lb .val svg{width:96px;height:22px;display:block;margin-top:2px}
+.mk{display:flex;flex-direction:column;gap:7px}
+.mk .r{display:grid;grid-template-columns:86px minmax(0,1fr) 28px;gap:8px;align-items:center;font-size:12.5px}
+.mk .r .t{height:12px;background:var(--band);border-radius:0 4px 4px 0;overflow:hidden}
+.mk .r .t i{display:block;height:100%;background:var(--grn);border-radius:0 4px 4px 0}
+.mk .r b{text-align:right}
+.feed{display:flex;flex-direction:column;gap:0}
+.feed .ev{display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-top:1px solid var(--line);font-size:13px}
+.feed .ev:first-child{border-top:none}
+.feed .ev .w{font-size:11px;color:var(--muted);font-family:ui-monospace,Menlo,Consolas,monospace;white-space:nowrap;padding-top:2px}
+.segs.pulse-per button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
 .rcard .chips2{margin-top:5px;display:flex;gap:5px;flex-wrap:wrap}
 .pill.sales{background:var(--grn);color:#fff;font-size:11.5px;padding:3px 10px;letter-spacing:.08em;box-shadow:0 1px 2px rgba(0,0,0,.15)}
 .pill.truck{background:var(--band);color:var(--ink);font-weight:600}
@@ -811,13 +844,13 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
 <div class="tab" id="tab-roster">
   <section>
     <div class="sechead"><h2>Team</h2><span class="hint" id="rosterCount"></span></div>
-    <div class="frow" style="margin-bottom:12px;grid-template-columns:minmax(200px,2fr) auto auto">
-      <div><label>Find</label><input id="rosterQ" placeholder="name, title, department, email" oninput="ROSTER_Q=this.value;renderRoster()"></div>
+    <div style="margin-bottom:12px;display:flex;gap:11px;flex-wrap:wrap;align-items:end">
+      <div style="flex:1 1 220px;min-width:0"><label>Find</label><input id="rosterQ" placeholder="name, title, truck, remote, email" oninput="ROSTER_Q=this.value;renderRoster()"></div>
       <div><label>&nbsp;</label><label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-weight:500"><input type="checkbox" id="rosterInactive" onchange="ROSTER_INACTIVE=this.checked;renderRoster()"> show former team members</label></div>
       <div id="rosterAddBtn"></div>
     </div>
-    <div class="note" id="rosterSyncNote" style="margin-bottom:10px"></div>
-    <div id="rosterHealth" style="margin-bottom:14px"></div>
+    <div id="teamPulse"></div>
+    <details id="rosterHealthWrap" style="margin-bottom:14px"><summary>Roster health <span class="note" id="rosterSyncNote"></span></summary><div id="rosterHealth" style="margin-top:10px"></div></details>
     <div id="rosterAddForm" style="display:none" class="card pad"></div>
     <div id="rosterDir" style="display:none" class="card pad"></div>
     <div class="roster" id="rosterBox"></div>
@@ -2089,7 +2122,7 @@ const SRC_LABEL={SA:'Service Autopilot',EL:'Elevation Advisor',GV:'Grovely',MN:'
 const SRC_CLASS={SA:'sa',EL:'el',GV:'mn',MN:'mn'};
 const SEASON_DEFAULT=[0.015,0.080,0.173,0.183,0.165,0.045,0.045,0.045,0.065,0.145,0.020,0.020];
 const ACV_DEFAULT=905.25;   // blended contract value, 2027 Simulator service mix
-const COLORS=['#3d6b3a','#2f5d7c','#c9a227','#7a4b8c','#a8332a','#3f7f77','#8a6f11','#5b4079'];
+const COLORS=['#2e8b4a','#2f6fd4','#b07109','#8b4fc9','#d9463a','#1289a8','#6d6b12','#c53f84'];   // per-person colors: validated for CVD separation + 3:1 contrast
 
 // The Sales Manager plan, used as the template for every new person.
 const PLAN_DEFAULT={
@@ -10695,6 +10728,8 @@ function renderRoster(){
   if(rb){ const g=GLOBAL.gsheet||{}; rb.innerHTML=g.rosterAt?'Roster synced from the sheet '+esc(String(g.rosterAt).replace('T',' ').slice(0,16))+(g.rosterPending?' · <b style="color:var(--red)">'+g.rosterPending+' row'+(g.rosterPending===1?'':'s')+' need a decision</b> — <a href="#" onclick="rosterSync(false);return false">review</a>':'') : (ADMIN?'Roster not synced from the sheet yet — ⟳ Sync roster (needs the sheet shared as “anyone with the link”).':''); }
   if(!ADMIN){ ['rosterAddForm','rosterDir'].forEach(id=>{ const f=document.getElementById(id); if(f) f.style.display='none'; }); }
   const rh=document.getElementById('rosterHealth'); if(rh){ if(ADMIN) renderRosterHealth(); else rh.innerHTML=''; }
+  const rw=document.getElementById('rosterHealthWrap'); if(rw) rw.style.display=ADMIN?'':'none';
+  renderTeamPulse();
   if(!list.length){ box.innerHTML='<div class="empty">Nobody matches.</div>'; return; }
   box.innerHTML=list.map(p=>{
     const a=empAccountStatus(p);
@@ -10719,6 +10754,111 @@ function empWhereChip(p){
   if(w==='truck') return '<span class="pill truck" title="assigned truck">🚚 '+esc(p.truck)+'</span>';
   if(w==='remote') return '<span class="pill truck" title="works remotely">🏠 Remote'+(p.location&&!/^remote$/i.test(p.location)?' · '+esc(p.location):'')+'</span>';
   return '<span class="pill truck" title="office work done at the shop">🏢 Shop'+(p.location&&!/^shop$/i.test(p.location)?' · '+esc(p.location):'')+'</span>';
+}
+
+/* ---- TEAM PULSE: what is going on, this week / month / year ---- */
+let TP_PERIOD='month';
+function tpSetPeriod(p){ TP_PERIOD=p; renderTeamPulse(); }
+function tpWindows(){
+  const t=todayISO(), y=t.slice(0,4), m=t.slice(0,7);
+  const prevMonth=(function(){ const yy=+y, mm=+m.slice(5,7); return mm===1?(yy-1)+'-12':yy+'-'+String(mm-1).padStart(2,'0'); })();
+  if(TP_PERIOD==='week'){ const ws=weekStart(t), pws=addDays(ws,-7), pwe=addDays(ws,-1); return {label:'this week',prev:'last week',from:ws,to:t,pfrom:pws,pto:pwe}; }
+  if(TP_PERIOD==='ytd'){ const doy=t.slice(5); return {label:'year to date',prev:'same point last year',from:y+'-01-01',to:t,pfrom:(+y-1)+'-01-01',pto:(+y-1)+'-'+doy}; }
+  return {label:'this month',prev:'last month',from:m+'-01',to:m+'-31',pfrom:prevMonth+'-01',pto:prevMonth+'-31'};
+}
+function tpSpark(vals,color,w,h){
+  w=w||96; h=h||22; const n=vals.length; if(n<2) return '';
+  const mx=Math.max(1,...vals), pad=3;
+  const pts=vals.map((v,i)=>[pad+(w-2*pad)*i/(n-1), h-pad-(h-2*pad)*v/mx]);
+  const d=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+  const last=pts[n-1];
+  return '<svg viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-hidden="true"><path d="'+d+'" fill="none" stroke="'+color+'" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>'+
+    '<circle cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="4" fill="'+color+'" stroke="var(--paper)" stroke-width="2"/></svg>';
+}
+function tpDelta(cur,prev,money$){
+  if(!prev && !cur) return '<span class="note">no activity yet</span>';
+  if(!prev) return '<span class="delta up">▲ new · nothing in the prior period</span>';
+  const pct=Math.round((cur-prev)/prev*100);
+  const up=cur>=prev;
+  return '<span class="delta '+(up?'up':'down')+'">'+(up?'▲':'▼')+' '+Math.abs(pct)+'% vs '+esc(tpWindows().prev)+' ('+(money$?money(prev):prev)+')</span>';
+}
+function renderTeamPulse(){
+  const box=document.getElementById('teamPulse'); if(!box) return;
+  const W=tpWindows(), today=todayISO();
+  const live=ROWS.filter(r=>!r.voidType);
+  const inW=r=>r.date>=W.from && r.date<=W.to, inP=r=>r.date>=W.pfrom && r.date<=W.pto;
+  const cur=live.filter(inW), prev=live.filter(inP);
+  const val=rs=>rs.reduce((a,r)=>a+netValue(r),0);
+  const curV=val(cur), prevV=val(prev);
+  const newN=cur.filter(r=>r.type==='new').length, upN=cur.filter(r=>r.type!=='new').length;
+  // weekly booked, last 12 weeks — the hero sparkline
+  const weeks=[]; let ws=weekStart(today); for(let i=0;i<12;i++){ weeks.unshift(ws); ws=addDays(ws,-7); }
+  const wk=weeks.map(w=>{ const we=addDays(w,6); return val(live.filter(r=>r.date>=w && r.date<=we)); });
+  const pipeline=live.filter(r=>!r.invoiced), pipeV=val(pipeline);
+  const dueNow=ROWS.filter(r=>!r.voidType && r.invoiced && !r.paid && !splitPending(r) && dueDate(r)<=today);
+  const dueC=dueNow.reduce((a,r)=>a+rowComm(r),0);
+  const cbOpen=ROWS.filter(r=>clawback(r)>0 && clawbackWindowOpen(r)), cbV=cbOpen.reduce((a,r)=>a+clawback(r),0);
+  const held=ROWS.filter(splitPending).length;
+  const hawk=(typeof hawkCached==='function')?hawkCached():{total:0};
+  const unmatched=empMatchQueue().length, orphans=empOrphanRows().length;
+  const money$=ADMIN;
+  let h='<div class="segs pulse-per" style="margin-bottom:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="note" style="margin-right:4px">Team pulse</span>'+
+    [['week','This week'],['month','This month'],['ytd','Year to date']].map(x=>'<button class="sm'+(TP_PERIOD===x[0]?' on':'')+'" onclick="tpSetPeriod(\''+x[0]+'\')">'+x[1]+'</button>').join('')+'</div>';
+  h+='<div class="pulse">'+
+    '<div class="hero"><div><div class="lab">Booked '+esc(W.label)+'</div><div class="big">'+money(curV)+'</div><div class="delta">'+tpDelta(curV,prevV,true)+'</div></div>'+tpSpark(wk,'#8fce8f',300,34)+'<div class="lab" style="margin-top:4px;font-weight:500;text-transform:none;letter-spacing:0">weekly booked · last 12 weeks</div></div>'+
+    tile('Sales '+W.label,cur.length,tpDelta(cur.length,prev.length,false))+
+    tile('New vs upsell',newN+' / '+upN,cur.length?Math.round(newN/cur.length*100)+'% new clients':'—')+
+    tile('Average sale',cur.length?money(curV/cur.length):'—',prev.length?'prior '+money(prevV/prev.length):'')+
+    tile('Pipeline',money(pipeV),pipeline.length+' sold, not yet invoiced')+
+    (money$?tile('Commission due now',money(dueC),dueNow.length+' sale'+(dueNow.length===1?'':'s')+' past the payment lag'+(held?' · '+held+' held on splits':''),dueC?'ok':''):'')+
+    (money$?tile('Chargebacks open',money(cbV),cbOpen.length+' reversal'+(cbOpen.length===1?'':'s')+' to recover',cbV?'bad':''):'')+
+    (ADMIN?tile('Needs attention',(hawk.total||0)+unmatched+orphans,(hawk.total||0)+' hawk · '+unmatched+' unmatched names · '+orphans+' orphan sales',((hawk.total||0)+unmatched+orphans)?'bad':'ok'):'')+
+    '</div>';
+  // leaderboard — production by person for the period, entity colors, 8-week sparkline
+  const sellers=PEOPLE.filter(p=>p.id!==EMP_UNASSIGNED && (empIsSales(p) || ROWS.some(r=>shareFor(r,p.id)>0)));
+  const lb=sellers.map(p=>{
+    const mine=cur.filter(r=>shareFor(r,p.id)>0), pm=prev.filter(r=>shareFor(r,p.id)>0);
+    const v=mine.reduce((a,r)=>a+netValue(r)*shareFor(r,p.id),0), pv=pm.reduce((a,r)=>a+netValue(r)*shareFor(r,p.id),0);
+    const w8=weeks.slice(-8).map(w=>{ const we=addDays(w,6); return live.filter(r=>r.date>=w&&r.date<=we&&shareFor(r,p.id)>0).reduce((a,r)=>a+netValue(r)*shareFor(r,p.id),0); });
+    return {p,v,pv,n:mine.length,newN:mine.filter(r=>r.type==='new'&&r.rep===p.id).length,w8};
+  }).sort((a,b)=>b.v-a.v || b.n-a.n);
+  const top=lb.length?Math.max(1,lb[0].v):1;
+  h+='<div class="pulsegrid"><div class="card pad"><div class="sechead"><h3>Leaderboard · '+esc(W.label)+'</h3><span class="hint">booked value, their share of splits</span></div>';
+  if(!lb.length) h+='<div class="empty">Nobody in a sales role yet.</div>';
+  else h+='<div class="lb">'+lb.map((x,i)=>'<div class="row" onclick="openEmp(\''+x.p.id+'\')" title="'+esc(empName(x.p))+': '+money(x.v)+' · '+x.n+' sale'+(x.n===1?'':'s')+' · prior '+money(x.pv)+'">'+
+      '<div class="rank'+(i===0&&x.v?' m1':'')+'">'+(i===0&&x.v?'🥇':i===1&&x.v?'🥈':i===2&&x.v?'🥉':(i+1))+'</div>'+empAvatar(x.p,40)+
+      '<div class="who"><div class="n">'+esc(empName(x.p))+(x.p.active?'':' <span class="pill n">former</span>')+'</div><div class="bar" style="width:'+Math.max(1,Math.round(x.v/top*100))+'%;background:'+pColor(x.p.id)+'"></div>'+
+      '<div class="sub">'+x.n+' sale'+(x.n===1?'':'s')+' · '+x.newN+' new · '+tpDelta(x.v,x.pv,true).replace(/ \([^)]*\)/,'')+'</div></div>'+
+      '<div class="val"><b>'+money(x.v)+'</b>'+tpSpark(x.w8,pColor(x.p.id))+'</div></div>').join('')+'</div>';
+  h+='</div>';
+  // team makeup — one measure (people), one hue
+  const L=PEOPLE.filter(p=>p.id!==EMP_UNASSIGNED && p.active);
+  const cnt=f=>L.filter(f).length;
+  const rows=[['Sales',cnt(p=>empIsSales(p))],['Estimators',cnt(p=>(p.roles||[]).indexOf('estimator')>-1)],['Technicians',cnt(p=>(p.roles||[]).indexOf('tech')>-1)],['Office',cnt(p=>(p.roles||[]).indexOf('office')>-1)],['Managers',cnt(p=>(p.roles||[]).indexOf('manager')>-1)],
+    ['On a truck',cnt(p=>empWhere(p)==='truck')],['At the shop',cnt(p=>empWhere(p)==='shop')],['Remote',cnt(p=>empWhere(p)==='remote')],['With a login',cnt(p=>empAccountStatus(p).u)]];
+  const mx=Math.max(1,L.length);
+  h+='<div class="card pad"><div class="sechead"><h3>Team makeup</h3><span class="hint">'+L.length+' active</span></div><div class="mk">'+
+    rows.map(r=>'<div class="r"><span>'+esc(r[0])+'</span><div class="t"><i style="width:'+Math.round(r[1]/mx*100)+'%"></i></div><b>'+r[1]+'</b></div>').join('')+'</div>';
+  // activity feed — last 10 money / identity events across the team, built straight from the records
+  const T=[]; const ev=(at,p,what)=>{ if(at&&p) T.push({at:String(at),p:p,what:what}); };
+  ROWS.forEach(r=>{ const p=person(r.rep); if(!p) return; const c=esc(r.client), v=money(netValue(r));
+    ev(r.srcAt||r.date,p,'Sale credited · <b>'+c+'</b> · '+v);
+    if(r.invoiced) ev(r.invoiced,p,'Invoiced · '+c+(r.invNo?' · #'+esc(r.invNo):''));
+    if(r.paid) ev(r.paid,p,'Commission paid · '+c+' · '+money(paidOut(r)));
+    if(r.voidType) ev(r.voidDate||r.date,p,'Sale '+esc(r.voidType)+' · '+c);
+    (r.edits||[]).forEach(e=>{ if(e.f==='rep') ev(e.at||e.on,p,'Sale reassigned · '+c); });
+  });
+  PEOPLE.forEach(p=>{ if(p.id===EMP_UNASSIGNED) return; (p.log||[]).slice(-6).forEach(l=>{ const d=l.det||{};
+    if(l.what==='alias-added') ev(l.at,p,'Now also known as “'+esc(d.name||'')+'”');
+    else if(l.what==='account-linked') ev(l.at,p,'Google account connected');
+    else if(l.what==='takeover') ev(l.at,p,'Took over '+(d.moved||0)+' accounts from '+esc(d.from||''));
+    else if(l.what==='active') ev(l.at,p,d.to?'Back on the active roster':'Marked as a former team member');
+    else if(l.what==='photo'&&!d.removed) ev(l.at,p,'Photo added'); }); });
+  if(typeof AUDIT!=='undefined') AUDIT.slice(-60).forEach(a=>{ if(a.action!=='login') return; const r=resolveEmployee('','*',{email:(a.det||{}).email}); if(r) ev(a.t,person(r.id),'Signed in'); });
+  T.sort((a,b)=>a.at<b.at?1:a.at>b.at?-1:0);
+  h+='<h3 style="margin:16px 0 6px">Latest</h3><div class="feed">'+(T.length?T.slice(0,10).map(x=>'<div class="ev">'+empAvatar(x.p,26)+'<div style="min-width:0"><div>'+x.what+'</div><div class="w">'+esc(String(x.at).replace('T',' ').slice(0,16))+' · '+empLink(x.p.id,empShort(x.p))+'</div></div></div>').join(''):'<div class="note">Nothing yet.</div>')+'</div>';
+  h+='</div></div>';
+  box.innerHTML=h;
 }
 
 /* ---- ROSTER HEALTH: the numbers an admin needs after a sync ---- */
