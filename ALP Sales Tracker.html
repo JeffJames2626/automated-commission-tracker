@@ -266,6 +266,10 @@ footer{padding:24px 0 40px;font-size:12px;color:var(--muted);text-align:center}
 .hawkchip.alert{background:var(--gold);border-color:var(--gold);color:#241f14}
 .hawkchip.alert:hover{background:#b8931f}
 .hawkchip.ok:hover{border-color:#5a7a5a}
+/* the house slogan */
+.slogan{margin:0 0 18px;padding:12px 16px;border-left:4px solid var(--gold);background:var(--gold-l);
+  border-radius:0 9px 9px 0;font-size:14px;color:#5c4a10}
+.slogan b{font-size:15px}
 
 /* ---- phone layout: hamburger header + fixed bottom action bar ---- */
 #hamBtn{display:none;background:transparent;border:1px solid #4a5346;color:#e6eae2;
@@ -1569,6 +1573,9 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
 
 <!-- ==================== COMMISSIONS ==================== -->
 <div class="tab" id="tab-comm">
+  <div class="slogan">🚮🗑️ <b>“Garbage in, garbage out.”</b> Every number on this report is only as good as the data behind it —
+    if something looks off, fix the record, not the report. The 🦅 Data Hawk on the Admin tab shows what needs fixing.
+    All values are <b>pre-tax</b>; commission is never paid on sales tax.</div>
   <section id="commControls">
     <div class="card pad">
       <div class="sechead"><h3>Monthly commission report</h3>
@@ -1601,6 +1608,8 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
 
 <!-- ==================== IMPORT ==================== -->
 <div class="tab" id="tab-import">
+  <div class="slogan">🚮🗑️ <b>“Garbage in, garbage out.”</b> Everything downstream — production, commissions, receivables —
+    is built from what gets imported here. Clean files in, clean numbers out. Values are always <b>pre-tax</b>.</div>
   <section>
     <div class="card">
       <div class="pad">
@@ -1627,6 +1636,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
         <div id="mapArea" style="display:none;margin-top:16px">
           <div class="warnbox" style="margin-bottom:14px">
             Match each column to what it means. <b>Date</b>, <b>Client</b>, and <b>Contract value</b> are required.
+            <b>Values must be PRE-TAX</b> — never map a with-tax total; commission is never paid on sales tax.
             If the export has a salesperson column, map it and each row goes to the right person — otherwise everything
             is credited to the person picked above. If it has the system's own <b>record ID</b> — the ticket number in
             Service Autopilot, the proposal number in Elevation — map that too: re-importing the same report then
@@ -1635,7 +1645,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
           <div class="frow">
             <div><label>Date closed *</label><select id="mapDate"></select></div>
             <div><label>Client *</label><select id="mapClient"></select></div>
-            <div><label>Contract value *</label><select id="mapValue"></select></div>
+            <div><label>Contract value * (pre-tax)</label><select id="mapValue"></select></div>
             <div><label>Salesperson</label><select id="mapRep"></select></div>
             <div><label>Service / job</label><select id="mapService"></select></div>
             <div><label>New vs upsell</label><select id="mapType"></select></div>
@@ -1656,7 +1666,8 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
       <details>
         <summary>Where these numbers come from in each system</summary>
         <div class="dbody note">
-          <p><b>Service Autopilot</b> — the recurring book: mowing, pest, fert/weed, vegetation management, aeration, power rake, and upsells to existing clients. Run a report with <i>one row per service sold</i> — date sold, client, and annual/contract value. Export to CSV.</p>
+          <p><b>Every value in this tracker is PRE-TAX.</b> Sales tax is never commissionable and never counts as production. If an export only offers with-tax totals, fix the export — the 🦅 Data Hawk compares sales against invoice tax data and flags values that look tax-inclusive.</p>
+          <p><b>Service Autopilot</b> — the recurring book: mowing, pest, fert/weed, vegetation management, aeration, power rake, and upsells to existing clients. Run a report with <i>one row per service sold</i> — date sold, client, and annual/contract value (pre-tax). Export to CSV.</p>
           <p><b>Elevation Advisor</b> — where landscape projects and revamps get priced and proposed. Export <i>accepted</i> proposals only, with the accepted date and proposal total. Filter to accepted/won before exporting or you'll be counting work nobody closed.</p>
           <p><b>Watch for double-counting.</b> A project written in Elevation and then billed through Service Autopilot lands in both exports. Exact duplicates are skipped automatically, and the Data checks tab flags a same-client, same-value sale showing up under both systems — but the same job entered two different ways won't always be caught. Spot-check after importing both.</p>
           <p style="margin-bottom:0"><b>Include the record ID column when you can.</b> Every imported sale keeps the row exactly as the export sent it, when it was imported, and the source system's own ID. With the ID mapped, a re-import recognises records it has seen before: unchanged ones are skipped, changed ones are updated in place with the change logged — except sales already paid or reversed, which are never touched by a sync.</p>
@@ -1756,7 +1767,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
           <option value="contract">Contract total</option><option value="visit">Per visit</option>
           <option value="monthly">Per month</option><option value="onetime">One-off</option></select></div>
         <div><label>Qty</label><input type="number" id="eQty" step="1" min="1" value="1"></div>
-        <div><label>Value $</label><input type="number" id="eValue" step="0.01"></div>
+        <div><label>Value $ (pre-tax)</label><input type="number" id="eValue" step="0.01"></div>
       </div>
       <div class="frow" style="margin-top:12px">
         <div><label>Type</label><select id="eType">
@@ -1893,12 +1904,13 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
         </div>
       </div>
       <div class="frow" style="margin-top:11px">
-        <div><label id="qValLab">Contract value $</label>
+        <div><label id="qValLab">Contract value $ (pre-tax)</label>
           <input type="number" id="qValue" step="0.01" placeholder="0.00" oninput="recalcBooked()"></div>
         <div id="qQtyWrap" style="display:none"><label id="qQtyLab">Visits</label>
           <input type="number" id="qQty" step="1" min="1" value="1" oninput="recalcBooked()"></div>
       </div>
       <div class="note" id="qRateNote" style="margin-top:7px"></div>
+      <div class="note" style="margin-top:5px">Values are <b>before sales tax</b> — commission is never paid on tax.</div>
       <div class="frow" style="margin-top:14px">
         <div><label>Type</label><div class="seg" id="qType">
           <button type="button" data-v="new" class="on" onclick="segPick('qType',this);typeTouched()">New client</button>
@@ -4903,9 +4915,9 @@ function basisChanged(){
   const b=segVal('qBasis');
   const lab=document.getElementById('qValLab'), qw=document.getElementById('qQtyWrap'),
         ql=document.getElementById('qQtyLab');
-  lab.textContent = b==='visit' ? 'Rate per visit $'
-                  : b==='monthly' ? 'Amount per month $'
-                  : b==='onetime' ? 'Job total $' : 'Contract value $';
+  lab.textContent = b==='visit' ? 'Rate per visit $ (pre-tax)'
+                  : b==='monthly' ? 'Amount per month $ (pre-tax)'
+                  : b==='onetime' ? 'Job total $ (pre-tax)' : 'Contract value $ (pre-tax)';
   const needsQty = (b==='visit'||b==='monthly');
   qw.style.display = needsQty ? '' : 'none';
   ql.textContent = b==='visit' ? 'Visits' : 'Months';
@@ -6627,7 +6639,8 @@ function renderHawkChip(){
 // What the hawk currently has its eye on, as counts per kind.
 function hawkCounts(){
   const HAWK_IDS={cross:'same job in both systems',dupes:'possible duplicates',hawkRep:'rep mismatches',
-    hawkOwes:'commission moving while customer owes',hawkDrift:'source changed values',hawkDupInv:'doubled invoice lines'};
+    hawkOwes:'commission moving while customer owes',hawkDrift:'source changed values',hawkDupInv:'doubled invoice lines',
+    hawkTax:'sale values that look tax-inclusive'};
   const out={total:0,parts:[],items:{}};
   runChecks().forEach(c=>{
     if(HAWK_IDS[c.id] && c.items.length){
@@ -7243,6 +7256,44 @@ function runChecks(){
       return {text:'<b>'+esc(r.client)+'</b> · '+money2(+e.from||0)+' → '+money2(+e.to||0),
         sub:'changed '+fmt(e.on)+' · originally '+money2(origOf(r).value||0),
         act:'<button class="sm" onclick="rowInfo(\''+r.id+'\')">Info</button>'};
+    }));
+
+  /* --- THE DATA HAWK: sale values that look TAX-INCLUSIVE --- */
+  // Commission is never paid on sales tax. Every invoice carries its pre-tax
+  // income and its tax, so when a sale's value matches an invoice's WITH-TAX
+  // total but not its pre-tax amount, somebody keyed the gross figure — and
+  // commission is quietly being paid on tax.
+  const taxByClient={};
+  INVOICES.forEach(function(x){
+    if(!(+x.t>0)) return;
+    const k=norm(x.c); const g=taxByClient[k]=taxByClient[k]||{};
+    const inv=g[x.i||('d'+x.d)]=g[x.i||('d'+x.d)]||{pre:0,tax:0,d:x.d,i:x.i};
+    inv.pre+=(+x.v||0);
+    inv.tax=Math.max(inv.tax,+x.t||0);   // the audit repeats invoice-level tax on every line
+  });
+  const taxHits=[];
+  ROWS.filter(r=>!r.voidType && bookedValue(r)>0).forEach(function(r){
+    const g=taxByClient[norm(r.client)]; if(!g) return;
+    const bv=bookedValue(r);
+    Object.keys(g).some(function(k){
+      const inv=g[k]; if(!(inv.tax>0)) return false;
+      const gap=Math.abs((dObj(inv.d)-dObj(r.date))/86400000); if(gap>75) return false;
+      const tot=inv.pre+inv.tax;
+      const tol=Math.max(tot*0.005,0.51);
+      if(Math.abs(bv-tot)<=tol && Math.abs(bv-inv.pre)>tol){
+        taxHits.push({r:r,inv:inv,tot:tot}); return true;
+      }
+      return false;
+    });
+  });
+  add('hawkTax','bad','🦅 Sale value looks TAX-INCLUSIVE',
+    'The sale matches an invoice’s WITH-TAX total, not its pre-tax amount. Values in this tracker are pre-tax — commission is never paid on sales tax. Edit the sale down to the pre-tax figure.',
+    taxHits.slice(0,30).map(function(d){
+      return {text:'<b>'+esc(d.r.client)+'</b> · sale '+money2(bookedValue(d.r))+' = invoice '+
+        (d.inv.i?'#'+esc(d.inv.i)+' ':'')+money2(d.inv.pre)+' + tax '+money2(d.inv.tax),
+        sub:'pre-tax value should be '+money2(d.inv.pre)+' · sold '+fmt(d.r.date),
+        act:'<button class="sm p" onclick="openEdit(\''+d.r.id+'\')">Edit the sale</button> '+
+            '<button class="sm" onclick="rowInfo(\''+d.r.id+'\')">Info</button>'};
     }));
 
   /* --- THE DATA HAWK: identical invoice lines counted twice --- */
@@ -9399,12 +9450,12 @@ function dl(blob,name){
 function csvCell(v){const s=String(v==null?'':v);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}
 function exportCSV(){
   if(!ROWS.length){alert('Nothing to export yet.');return;}
-  const lines=['Sold,Salesperson,Client,Service,Rate,Basis,Qty,Booked value,Type,Source,Service completed,Invoice sent,Commission due,Commission paid,Stage,Commission,Notes'];
+  const lines=['Sold,Salesperson,Client,Service,Rate,Basis,Qty,Booked value (pre-tax),Type,Source,Service completed,Invoice sent,Commission due,Commission paid,Stage,Commission,Notes'];
   ROWS.slice().sort((a,b)=>a.date<b.date?-1:1).forEach(r=>{
     const p=person(r.rep);
     lines.push([r.date,p?p.name:'',r.client,r.service,Number(r.value).toFixed(2),
       BASIS_LABEL[basisOf(r)],qtyOf(r),bookedValue(r).toFixed(2),
-      r.type==='new'?'New client':'Upsell',SRC_LABEL[r.src]||r.src,
+      TYPE_LABEL[r.type]||r.type,SRC_LABEL[r.src]||r.src,
       r.completed||'',r.invoiced||'',dueDate(r)||'',r.paid||'',
       STAGE_LABEL[stageOf(r)],rowComm(r).toFixed(2),r.notes].map(csvCell).join(','));
   });

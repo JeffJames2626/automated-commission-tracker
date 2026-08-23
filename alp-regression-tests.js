@@ -197,6 +197,23 @@
           items.filter(function(t){return /Customer/.test(t);}).length+' noise flags');
       }
 
+      /* ---------- HAWK-TAX: sale keyed with tax included gets flagged ---------- */
+      if(typeof runChecks==='function' && typeof INVOICES!=='undefined'){
+        var invSnap=INVOICES;
+        // invoice: $100 pre-tax + $8.90 tax = $108.90 with tax
+        INVOICES=[{c:'Tax Trap Co', i:'T1', d:'2026-06-10', s:'Mow', v:100, k:'Maintenance', t:8.9}];
+        // BAD sale keyed at the with-tax figure; GOOD sale keyed pre-tax
+        ROWS=[ mkRow({client:'Tax Trap Co', value:108.90, date:'2026-06-05'}),
+               mkRow({client:'Tax Trap Co', value:100,    date:'2026-06-05'}) ];
+        var tx=runChecks().find(function(c){return c.id==='hawkTax';});
+        checkTrue('HAWK-TAX with-tax sale value flagged', tx && tx.items.length===1,
+          tx?tx.items.length:'no check');
+        checkTrue('HAWK-TAX pre-tax sale NOT flagged',
+          !(tx && tx.items.some(function(it){return /100\.00 = /.test(it.text.replace(/<[^>]*>/g,''));})),
+          'ok');
+        INVOICES=invSnap;
+      }
+
       /* ---------- DATA HAWK: cross-CRM double-count caught despite differences ---------- */
       // different spelling, $50 apart, 10 days apart — the naive exact-match missed all of this
       ROWS=[ mkRow({type:'upsell', value:12500, client:'Test Customer A', src:'EL', date:'2026-06-05'}),
