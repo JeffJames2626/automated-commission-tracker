@@ -1783,6 +1783,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
         <div><label>Source</label><select id="eSrc">
           <option value="SA">Service Autopilot</option><option value="EL">Elevation Advisor</option>
           <option value="GV">Grovely</option><option value="MN">Manual</option></select></div>
+        <div><label>Invoice #</label><input id="eInvNo" autocomplete="off" placeholder="the REAL invoice number"></div>
       </div>
       <div style="margin-top:12px">
         <label>Notes</label>
@@ -2549,6 +2550,14 @@ const STAGES=[
   ['reversed','Reversed','Cancelled, refunded or written off']
 ];
 const STAGE_LABEL={}; STAGES.forEach(x=>STAGE_LABEL[x[0]]=x[1]);
+
+/* ---- THE LAW: the real invoice and invoice number ----
+   A sale may not be marked invoiced (and so can never be paid) unless it
+   carries the actual invoice number AND the uploaded invoice PDF in the
+   evidence vault. No paper, no money. */
+function hasInvoiceEvidence(r){
+  return !!(r.invNo && String(r.invNo).trim() && r.files && r.files.length);
+}
 
 function payLag(){ const v=+GLOBAL.payLag; return isNaN(v)?30:v; }
 // The waiting period that applies to THIS sale. Frozen onto the row when it is invoiced,
@@ -4380,9 +4389,10 @@ const AI_RATES={'claude-opus-5':[5,25],'claude-sonnet-5':[3,15],'claude-haiku-4-
 const AI_SCHEMA={
   type:'object',
   additionalProperties:false,
-  required:['client','sold_date','invoice_date','document_type','source','items','confidence','notes'],
+  required:['client','sold_date','invoice_date','invoice_number','document_type','source','items','confidence','notes'],
   properties:{
     client:{type:'string',description:'Customer or company the work is for. Empty string if it cannot be determined.'},
+    invoice_number:{type:'string',description:'The invoice number exactly as printed on the document (digits and any prefix). Empty string if the document is not an invoice or shows none.'},
     sold_date:{type:'string',description:'Date the work was sold, signed or accepted, as YYYY-MM-DD. Empty string if absent.'},
     invoice_date:{type:'string',description:'Date the invoice was issued, as YYYY-MM-DD. Empty string if this is not an invoice.'},
     document_type:{type:'string',enum:['invoice','proposal','estimate','contract','other']},
@@ -4411,6 +4421,7 @@ function aiPrompt(){
   '',
   'Rules:',
   '- Report only what the document actually says. If a field is not in the document, return an empty string. Never invent a client name, a date or a figure.',
+  '- If the document is an invoice, copy the invoice number exactly as printed. The real invoice number matters here.',
   '- Values are the contract value for that line, excluding tax. If the document shows both a subtotal and a total with tax, use the pre-tax figure.',
   '- Do not include tax, shipping or discount lines as items.',
   '- If the same service appears on several lines, combine them into one item with the summed value.',
@@ -5112,7 +5123,7 @@ function quickSave(again){
 
   GLOBAL.lastRep=rp; GLOBAL.lastSrc=row.src; save(K_GLOBAL,GLOBAL);
 
-  toast('Added '+client+(value?' · '+money(value):''));
+  toast('Added '+client+(value?' · '+money(value):'')+' — attach the real invoice (Edit) before it can be invoiced');
   if(again){
     // Keep person, date, type, source and basis — those repeat. Clear what does not.
     ['qClient','qService','qValue'].forEach(i=>document.getElementById(i).value='');
@@ -6791,6 +6802,7 @@ function hawkCounts(){
   const HAWK_IDS={cross:'same job in both systems',dupes:'possible duplicates',hawkRep:'rep mismatches',
     hawkOwes:'commission moving while customer owes',hawkDrift:'source changed values',hawkDupInv:'doubled invoice lines',
     hawkTax:'sale values that look tax-inclusive',
+    hawkNoInv:'sales missing their real invoice',
     hawkChain:'AUDIT TRAIL TAMPERED', hawkAfterPaid:'money changed after payout',
     hawkBump:'value raised right before payout', hawkPaidDel:'paid sales deleted', hawkNight:'dead-of-night changes'};
   const out={total:0,parts:[],items:{}};
@@ -7446,6 +7458,27 @@ function runChecks(){
         sub:'pre-tax value should be '+money2(d.inv.pre)+' · sold '+fmt(d.r.date),
         act:'<button class="sm p" onclick="openEdit(\''+d.r.id+'\')">Edit the sale</button> '+
             '<button class="sm" onclick="rowInfo(\''+d.r.id+'\')">Info</button>'};
+    }));
+
+  /* --- THE DATA HAWK: THE LAW — every sale needs its real invoice --- */
+  // An approved sale is backed by the actual invoice: the number AND the
+  // uploaded PDF in the evidence vault. Money-stage sales missing either are
+  // the loudest thing on the board; every other sale missing them is listed too.
+  const lawless=ROWS.filter(r=>!isReversed(r) && !hasInvoiceEvidence(r));
+  const stageRank={paid:0,due:1,invoiced:2,completed:3,sold:4};
+  const lawRk=r=>{ const v=stageRank[stageOf(r)]; return v==null?9:v; };   // NOT ||9 — paid ranks 0, and 0||9 is 9
+  lawless.sort((a,b)=>lawRk(a)-lawRk(b));
+  const lawMoney=lawless.filter(r=>r.invoiced||r.paid).length;
+  add('hawkNoInv','bad','🦅🚨 NO INVOICE ON FILE — the real invoice and invoice number is the law',
+    'Every approved sale must carry the actual invoice number AND the uploaded invoice PDF (evidence vault). '+
+    (lawMoney?('<b>'+lawMoney+' of these are already at the money stage.</b> '):'')+
+    'The pipeline now refuses to mark anything invoiced or paid without both. Fix each one: Edit → invoice # + 🦅 Read an invoice PDF.',
+    lawless.slice(0,40).map(function(r){
+      const missing=[]; if(!(r.invNo&&String(r.invNo).trim())) missing.push('invoice #');
+      if(!(r.files&&r.files.length)) missing.push('PDF upload');
+      return {text:'<b>'+esc(r.client)+'</b> · '+money2(bookedValue(r))+' · <span class="pill '+((r.invoiced||r.paid)?'no':'mid')+'">'+STAGE_LABEL[stageOf(r)].toUpperCase()+'</span>',
+        sub:'missing: '+missing.join(' and ')+' · '+fmt(r.date)+' · '+(person(r.rep)?person(r.rep).name:'?'),
+        act:'<button class="sm p" onclick="openEdit(\''+r.id+'\')">Fix it</button>'};
     }));
 
   /* --- THE DATA HAWK: the audit trail itself --- */
@@ -8281,6 +8314,16 @@ function clearPipeFilters(){
 }
 function setStage(id,field,val){
   const r=ROWS.find(x=>x.id===id); if(!r)return;
+  // THE LAW: no invoice number + uploaded invoice PDF, no invoiced/paid stage.
+  if((field==='invoiced'||field==='paid') && val && !hasInvoiceEvidence(r)){
+    alert('🚨 THE LAW: the real invoice and invoice number.\n\n'+r.client+' cannot be marked '+
+      (field==='paid'?'commission-paid':'invoiced')+' until the sale carries:\n'+
+      '  1. the actual invoice number, and\n  2. the uploaded invoice PDF (evidence vault).\n\n'+
+      'Opening the editor — add both there (🦅 Read an invoice PDF does the upload).');
+    renderPipe&&renderPipe();      // reset the date input that was just typed into
+    openEdit(r.id);
+    return;
+  }
   logEdit(r,field,r[field],val||'');
   r[field]=val||'';
   // Freeze what was handed over, so a later reversal is measured against the real figure.
@@ -8295,13 +8338,23 @@ function setStage(id,field,val){
   renderPipe(); renderData(); renderComm(); renderAlerts();
 }
 function bulkStamp(field){
-  const rows=pipeRows().filter(r=>!r[field]);
+  let rows=pipeRows().filter(r=>!r[field]);
   if(!rows.length){alert('Everything showing already has that date filled in.');return;}
+  // THE LAW applies in bulk too: invoiced/paid only with invoice # + uploaded PDF.
+  let lawSkipped=0;
+  if(field==='invoiced'||field==='paid'){
+    const ok=rows.filter(hasInvoiceEvidence);
+    lawSkipped=rows.length-ok.length; rows=ok;
+    if(!rows.length){ alert('🚨 THE LAW: none of these sales carry the real invoice number and uploaded invoice PDF, so none can be marked '+field+'. Add both via Edit on each sale.'); return; }
+  }
   const label={completed:'service completed',invoiced:'invoice sent',paid:'commission paid'}[field];
-  if(!confirm('Set "'+label+'" to '+fmtY(todayISO())+' on '+rows.length+' sale'+(rows.length===1?'':'s')+'?\n\nRows that already have a date are left alone.'))return;
+  if(!confirm('Set "'+label+'" to '+fmtY(todayISO())+' on '+rows.length+' sale'+(rows.length===1?'':'s')+'?'+
+    (lawSkipped?'\n\n('+lawSkipped+' skipped — no invoice number + uploaded PDF on file.)':'')+
+    '\n\nRows that already have a date are left alone.'))return;
   const today=todayISO();
   rows.forEach(r=>{ logEdit(r,field,r[field],today); r[field]=today; if(field==='paid') r.paidAmt=rowComm(r); });
   save(K_ROWS,ROWS); render();
+  if(lawSkipped) toast(lawSkipped+' skipped — invoice evidence missing');
 }
 function setLag(){
   const v=Math.max(0,Math.round(pNum(document.getElementById('pLag').value)));
@@ -8906,6 +8959,7 @@ function openEdit(id){
   document.getElementById('eValue').value=r.value;
   document.getElementById('eType').value=r.type;
   document.getElementById('eSrc').value=r.src||'MN';
+  document.getElementById('eInvNo').value=r.invNo||'';
   document.getElementById('eNotes').value=r.notes||'';
   document.getElementById('eProv').textContent=provLine(r);
   attachClientPicker(document.getElementById('eClient'));
@@ -8914,6 +8968,9 @@ function openEdit(id){
   document.getElementById('eFound').innerHTML='';
   const w=[];
   const p=person(r.rep);
+  if(!hasInvoiceEvidence(r)) w.push('🚨 <b>THE LAW:</b> this sale carries '+
+    ((r.invNo&&String(r.invNo).trim())?'no uploaded invoice PDF':( (r.files&&r.files.length)?'no invoice number':'no invoice number and no uploaded PDF'))+
+    '. It cannot be marked invoiced or paid until both are on file — enter the # above and use 🦅 Read an invoice PDF below.');
   if(p && r.date<p.start) w.push('<b>PRE-PLAN:</b> sold before '+esc(p.name.split(' ')[0])+'’s plan starts ('+fmtY(p.start)+'), so it earns $0 commission. Fix the date, pick another rep, or move the plan start on Comp plans.');
   if(r.paid) w.push('<b>Commission already paid on this sale.</b> The paid month keeps its frozen figure; changing value or type here only affects what is owed going forward (and any clawback).');
   if(r.voidType) w.push('This sale is reversed ('+esc(VOID_LABEL[r.voidType]||r.voidType)+'). Un-reverse it on the Pipeline tab if that was a mistake.');
@@ -8933,6 +8990,8 @@ function pdfDiffFor(r, x){
   const items=Array.isArray(x.items)?x.items.filter(function(i){return i&&(i.service||i.value);}):[];
   const total=items.reduce(function(a,i){return a+(+i.value||0);},0);
   if(x.client && norm(x.client)!==norm(r.client)) out.push({f:'client', from:r.client, to:x.client});
+  if(x.invoice_number && String(x.invoice_number).trim() && String(x.invoice_number).trim()!==String(r.invNo||''))
+    out.push({f:'invNo', from:r.invNo||'', to:String(x.invoice_number).trim()});
   const d=pDate(x.sold_date)||pDate(x.invoice_date);
   if(d && d!==r.date) out.push({f:'date', from:r.date, to:d});
   if(total>0 && Math.abs(total-bookedValue(r))>0.01) out.push({f:'value', from:String(r.value), to:String(Math.round(total*100)/100)});
@@ -9031,6 +9090,7 @@ function saveEdit(){
     ['value', value],
     ['type',  document.getElementById('eType').value],
     ['src',   document.getElementById('eSrc').value],
+    ['invNo', document.getElementById('eInvNo').value.trim()],
     ['notes', document.getElementById('eNotes').value.trim()]
   ];
   let touched=0;
@@ -9147,6 +9207,9 @@ function rowInfo(id){
       rowShares(r).filter(s=>!(ok.reps&&ok.reps[s.rep])).map(s=>person(s.rep)?person(s.rep).name:'?').concat(ok.admin?[]:['admin sign-off']).join(', '))+'\n';
   }
   t+='\nSource: '+provLine(r)+'\n';
+  t+='Invoice evidence: '+(hasInvoiceEvidence(r)
+    ? '#'+r.invNo+' + PDF on file ✓'
+    : '🚨 MISSING ('+((r.invNo&&String(r.invNo).trim())?'PDF upload':((r.files&&r.files.length)?'invoice #':'invoice # and PDF'))+') — cannot be invoiced or paid until fixed')+'\n';
   if(r.orig){
     const same = o.date===r.date && o.client===r.client && (+o.value||0)===(+r.value||0) &&
                  o.type===r.type && (o.service||'')===(r.service||'') && o.rep===r.rep;
@@ -9801,6 +9864,7 @@ function doImport(){
   save(K_IMPLOG,IMPLOG);
   clearImport(); TAB='sales'; render();
   let msg='Imported '+added+' sale'+(added===1?'':'s')+'.';
+  if(added) msg+='\n\n🚨 THE LAW: each sale still needs its real invoice number and uploaded invoice PDF before it can be marked invoiced or paid. The 🦅 Data Hawk lists every sale missing them.';
   if(updated) msg+='\n\nUpdated '+updated+' already here — the source changed them. The originals are kept on each sale.';
   if(dupes) msg+='\n\nSkipped '+dupes+' already logged and unchanged.';
   if(tombed) msg+='\n\nHeld out '+tombed+' record'+(tombed===1?'':'s')+' you had deleted — they will not come back until restored on the Admin tab.';

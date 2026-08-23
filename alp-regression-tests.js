@@ -256,6 +256,30 @@
         results.push({name:'AUDIT machinery exists', expected:true, actual:false, pass:false});
       }
 
+      /* ---------- THE LAW: no invoice number + PDF, no invoiced/paid ---------- */
+      if(typeof hasInvoiceEvidence==='function'){
+        var law=mkRow({value:1000});
+        checkTrue('LAW bare sale has no evidence', !hasInvoiceEvidence(law), hasInvoiceEvidence(law));
+        law.invNo='12345';
+        checkTrue('LAW invoice # alone is NOT enough', !hasInvoiceEvidence(law), hasInvoiceEvidence(law));
+        law.invNo=''; law.files=[{id:1,name:'x.pdf',kb:10}];
+        checkTrue('LAW PDF alone is NOT enough', !hasInvoiceEvidence(law), hasInvoiceEvidence(law));
+        law.invNo='12345';
+        checkTrue('LAW both = evidence complete', hasInvoiceEvidence(law), hasInvoiceEvidence(law));
+        // hawk lists lawless sales, money-stage ones counted
+        ROWS=[ mkRow({client:'Lawless Sold Co', value:500}),
+               Object.assign(mkRow({client:'Lawless Paid Co', value:800, invoiced:'2026-06-01', paid:'2026-06-10', paidAmt:80})),
+               Object.assign(mkRow({client:'Lawful Co', value:900, invoiced:'2026-06-01'}),{invNo:'777',files:[{id:9,name:'i.pdf',kb:5}]}) ];
+        var lc=runChecks().find(function(c){return c.id==='hawkNoInv';});
+        check('LAW hawk flags exactly the 2 lawless sales', 2, lc?lc.items.length:-1);
+        checkTrue('LAW hawk names the money-stage one loudest',
+          lc && /Lawless Paid/.test(lc.items[0].text.replace(/<[^>]*>/g,'')), lc?lc.items[0].text.slice(0,40):'');
+        checkTrue('LAW lawful sale not flagged',
+          !(lc&&lc.items.some(function(it){return /Lawful/.test(it.text);})), 'ok');
+      } else {
+        results.push({name:'hasInvoiceEvidence() exists', expected:true, actual:false, pass:false});
+      }
+
       /* ---------- PDF DIFF: invoice-vs-sale comparison is exact ---------- */
       if(typeof pdfDiffFor==='function'){
         var pr=mkRow({client:'Diff Co', date:'2026-06-05', value:1000, service:'Mow'});
