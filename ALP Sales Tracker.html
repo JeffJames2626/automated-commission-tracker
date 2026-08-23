@@ -149,6 +149,21 @@ a.emplink:hover{color:var(--grn-d);border-bottom-color:var(--grn)}
 .feed .ev:first-child{border-top:none}
 .feed .ev .w{font-size:11px;color:var(--muted);font-family:ui-monospace,Menlo,Consolas,monospace;white-space:nowrap;padding-top:2px}
 .segs.pulse-per button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+/* 30,000 ft */
+.flow{display:flex;gap:0;align-items:stretch;flex-wrap:wrap;margin-bottom:14px}
+.flow .fstep{flex:1 1 150px;min-width:150px;background:var(--paper);border:1px solid var(--line);border-radius:11px;padding:13px 15px;box-shadow:var(--shadow);position:relative;margin-right:26px}
+.flow .fstep:last-child{margin-right:0}
+.flow .fstep:not(:last-child):after{content:"→";position:absolute;right:-22px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:17px}
+.flow .lab{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.flow .val{font-size:23px;font-weight:700;letter-spacing:-.02em;margin-top:4px}
+.flow .sub{font-size:12px;color:var(--muted);margin-top:3px}
+.vchart{background:var(--paper);border:1px solid var(--line);border-radius:11px;box-shadow:var(--shadow);padding:16px 18px;margin-bottom:14px}
+.vchart svg{width:100%;height:240px;display:block}
+.vleg{display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);margin-top:8px}
+.vleg i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:baseline}
+.hawkbar{display:flex;gap:11px;flex-wrap:wrap;align-items:end;margin-bottom:12px}
+.hawkbar .frow{flex:1}
+
 .rcard .chips2{margin-top:5px;display:flex;gap:5px;flex-wrap:wrap}
 .pill.sales{background:var(--grn);color:#fff;font-size:11.5px;padding:3px 10px;letter-spacing:.08em;box-shadow:0 1px 2px rgba(0,0,0,.15)}
 .pill.truck{background:var(--band);color:var(--ink);font-weight:600}
@@ -593,6 +608,37 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
 <div class="alertbar" id="alertBar"></div>
 
 <!-- ==================== TEAM ==================== -->
+<div class="tab" id="tab-view">
+  <section>
+    <div class="sechead"><h2>30,000 ft</h2><span class="hint" id="viewHint"></span></div>
+    <div id="viewHero" style="margin-bottom:14px"></div>
+    <h3 style="margin:0 0 8px">Where the money is</h3>
+    <div class="flow" id="viewFlow"></div>
+    <div class="flow" id="viewComm"></div>
+    <div class="vchart"><div class="sechead" style="margin-bottom:6px"><h3>Twelve months</h3><span class="hint">net booked (sales) vs billed (invoice audit, pre-tax) vs collected (payments)</span></div>
+      <div id="viewChart"></div>
+      <div class="vleg" id="viewLegend"></div>
+    </div>
+    <div class="pulsegrid">
+      <div class="card pad"><div class="sechead"><h3>People &amp; pipeline</h3></div><div class="tiles small" id="viewPeople"></div></div>
+      <div class="card pad"><div class="sechead"><h3>Can the numbers be trusted right now?</h3><span class="hint">the Data Hawk’s live verdict</span></div><div class="tiles small" id="viewTrust"></div><div class="note" id="viewFeeds" style="margin-top:8px"></div></div>
+    </div>
+  </section>
+</div>
+
+<div class="tab" id="tab-hawk">
+  <section>
+    <div class="sechead"><h2>🦅 Data Hawk</h2>
+      <span class="hint">The tracker’s discrepancy hunter — 25+ checks over every sale, invoice, payment, balance, payout and reversal. Detection here, decisions by you. 🚮🗑️ garbage in, garbage out.</span></div>
+    <div class="tiles" id="chkTiles" style="margin-bottom:16px"></div>
+    <div class="hawkbar">
+      <div class="frow" style="grid-template-columns:minmax(180px,2fr) auto"><div><label>Find</label><input id="hawkQ" placeholder="client, person, check name" oninput="renderChecks()"></div>
+      <div><label>Show</label><select id="hawkSev" onchange="renderChecks()"><option value="">Everything</option><option value="bad">Needs fixing</option><option value="warn">Worth a look</option></select></div></div>
+    </div>
+    <div id="chkBody"></div>
+  </section>
+</div>
+
 <div class="tab" id="tab-team">
   <section>
     <div class="sechead"><h2>Team roll-up</h2><span class="hint" id="teamRange"></span></div>
@@ -1343,9 +1389,8 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
 
     <section class="adminsec">
       <div class="hdr"><h3>🦅 Data Hawk</h3>
-        <span class="hint">The tracker’s discrepancy hunter — doubles across systems, drifting figures, money moving when it shouldn’t. It sweeps every record so nothing slips into a commission run.</span></div>
-      <div class="tiles" id="chkTiles" style="margin-bottom:16px"></div>
-      <div id="chkBody"></div>
+        <span class="hint">The discrepancy hunter has its own tab now.</span></div>
+      <div class="note" id="adminHawkNote"></div>
     </section>
 
     <section class="adminsec">
@@ -3503,6 +3548,8 @@ const TABS=[
   ['svc','Services',false,'What we do and when we do it — every service and its season'],
   ['prop','Property',false,'Property measurements against what gets sold'],
   ['map','Map',false,'Locations, proximity and canvassing prompts'],
+  ['view','30,000 ft',true,'The whole company at a glance — sold, billed, collected, owed, commission and risk'],
+  ['hawk','🦅 Data Hawk',true,'Every finding the discrepancy hunter has right now, in one place'],
   ['team','Team cost',true,'Every rep\u2019s production, pay and cost side by side'],
   ['plans','Comp plans',true,'Hourly rates, commission and standards for each person'],
   ['comm','Commissions',true,'Monthly commission reports and what is owed'],
@@ -3590,7 +3637,7 @@ function render(){
   renderTeam(); renderScore(); renderPlanList(); planToForm(); renderScenarios(); renderHours();
   renderData(); renderSeason(); renderHoursTab(); renderPipe(); renderOSC(); renderAdj(); renderComm();
   renderClients(); renderTakeover(); renderProperty(); renderMap(); renderRevenue(); renderPayments(); renderBalances(); renderAlerts(); renderAIStatus();
-  renderRoster(); renderServices(); if(EP_ID) renderEmp();
+  renderRoster(); renderServices(); if(TAB==='view') renderView(); if(TAB==='hawk') renderChecks(); if(EP_ID) renderEmp();
   renderPauseBar(); renderHawkChip();
 }
 function setHWho(v){ HWHO=v; renderHoursTab(); }
@@ -3689,6 +3736,8 @@ function renderAdmin(){
   if(b) b.innerHTML=ROWS.length.toLocaleString()+' sales · '+CLIENTS.length.toLocaleString()+' roster records · '+
     INVOICES.length.toLocaleString()+' invoice lines · '+HOURS.length.toLocaleString()+' hour entries';
 
+  const ahn=document.getElementById('adminHawkNote');
+  if(ahn){ const c=hawkCached(); ahn.innerHTML=(c.total?('<b>'+c.total+' finding'+(c.total===1?'':'s')+'</b> — '+esc(c.parts.slice(0,4).join(' · '))+(c.parts.length>4?' …':'')):'<b>All clear.</b>')+' <button class="sm" onclick="setTab(\'hawk\')">Open the Data Hawk</button>'; }
   renderChecks();
   renderTombstones();
   renderAudit();
@@ -7632,7 +7681,7 @@ function renderHawkChip(){
     const bar=document.querySelector('header .hbtns');
     if(!bar) return;
     el=document.createElement('button'); el.id='hawkChip'; el.className='hawkchip';
-    el.onclick=function(){ setTab('admin'); setTimeout(jumpToChecks,120); };
+    el.onclick=function(){ if(ADMIN){ setTab('hawk'); } else { setTab('admin'); } };
     bar.insertBefore(el, bar.firstChild);
   }
   const c=hawkCached();
@@ -8806,7 +8855,13 @@ function renderChecks(){
   }
   const order={bad:0,warn:1,info:2};
   checks.sort((a,b)=>order[a.sev]-order[b.sev]);
-  box.innerHTML=checks.map(c=>{
+  const qEl=document.getElementById('hawkQ'), sEl=document.getElementById('hawkSev');
+  const q=qEl?norm(qEl.value):'', sev=sEl?sEl.value:'';
+  let shown=checks;
+  if(sev) shown=shown.filter(c=>c.sev===sev);
+  if(q) shown=shown.map(c=>{ if(norm(c.title).indexOf(q)>-1) return c; const items=c.items.filter(it=>norm(String(it.text)+String(it.sub)).indexOf(q)>-1); return items.length?Object.assign({},c,{items}):null; }).filter(Boolean);
+  if(!shown.length){ box.innerHTML='<div class="card"><div class="empty">Nothing matches that filter.</div></div>'; return; }
+  box.innerHTML=shown.map(c=>{
     const pill=c.sev==='bad'?'<span class="pill no">FIX</span>':
                c.sev==='warn'?'<span class="pill mid">CHECK</span>':'<span class="pill n">FYI</span>';
     let x='<div class="card" style="margin-bottom:16px"><div class="pad" style="padding-bottom:8px">'+
@@ -11379,6 +11434,86 @@ function renderTeamPulse(){
   h+='<h3 style="margin:16px 0 6px">Latest</h3><div class="feed">'+(T.length?T.slice(0,10).map(x=>'<div class="ev">'+empAvatar(x.p,26)+'<div style="min-width:0"><div>'+x.what+'</div><div class="w">'+esc(String(x.at).replace('T',' ').slice(0,16))+' · '+empLink(x.p.id,empShort(x.p))+'</div></div></div>').join(''):'<div class="note">Nothing yet.</div>')+'</div>';
   h+='</div></div>';
   box.innerHTML=h;
+}
+
+/* ---- 30,000 FT: the whole company on one screen ----
+   Money flow left to right (sold → billed → collected → still owed), the
+   commission liability from the payout ledger and the balance engine, a
+   twelve-month trend, and the Data Hawk's live verdict on whether the
+   numbers underneath can be trusted today. Admin only. ---- */
+const VIEW_COLORS={booked:'#2e8b4a',billed:'#2f6fd4',collected:'#b07109'};   // slots 1–3 of the validated palette
+function monthsBack(n){ const out=[]; let m=todayISO().slice(0,7); for(let i=0;i<n;i++){ out.unshift(m); const y=+m.slice(0,4),mm=+m.slice(5,7); m=(mm===1?(y-1)+'-12':y+'-'+String(mm-1).padStart(2,'0')); } return out; }
+function renderView(){
+  const hero=document.getElementById('viewHero'); if(!hero||!ADMIN) return;
+  const t=todayISO(), y=t.slice(0,4), lastY=String(+y-1);
+  const live=ROWS.filter(r=>!isReversed(r) && r.date<=t);
+  const netYTD=live.filter(r=>r.date.slice(0,4)===y).reduce((a,r)=>a+netValue(r),0);
+  const netPrevSame=ROWS.filter(r=>!isReversed(r)&&r.date>=lastY+'-01-01'&&r.date<=lastY+t.slice(4)).reduce((a,r)=>a+netValue(r),0);
+  const billedYTD=INVOICES.filter(x=>String(x.d).slice(0,4)===y).reduce((a,x)=>a+(+x.v||0),0);
+  const collectedYTD=PAYMENTS.filter(x=>String(x.d).slice(0,4)===y).reduce((a,x)=>a+(+x.a||0),0);
+  const owedNow=OPENINV.reduce((a,x)=>a+(+x.t||0),0);
+  const pipeline=live.filter(r=>!r.invoiced&&!r.voidType).reduce((a,r)=>a+netValue(r),0);
+  document.getElementById('viewHint').textContent='as of '+fmtY(t);
+  hero.innerHTML='<div class="pulse" style="margin:0"><div class="hero" style="grid-row:auto"><div><div class="lab">Net booked '+y+'</div><div class="big">'+money(netYTD)+'</div>'+
+    '<div class="delta">'+(netPrevSame?((netYTD>=netPrevSame?'<span class="delta up">▲':'<span class="delta down">▼')+' '+Math.abs(Math.round((netYTD-netPrevSame)/netPrevSame*100))+'% vs '+lastY+' to this date ('+money(netPrevSame)+')</span>'):'<span class="note">no '+lastY+' data to compare</span>')+'</div></div>'+
+    '<div class="lab" style="font-weight:500;text-transform:none;letter-spacing:0">sales net of reversals · future-dated sales excluded</div></div></div>';
+  const F=(lab,val,sub)=>'<div class="fstep"><div class="lab">'+lab+'</div><div class="val mono">'+val+'</div>'+(sub?'<div class="sub">'+sub+'</div>':'')+'</div>';
+  document.getElementById('viewFlow').innerHTML=
+    F('Sold (net)',money(netYTD),y+' · from logged sales')+
+    F('Billed',money(billedYTD),'invoice audit · pre-tax')+
+    F('Collected',money(collectedYTD),'payments feed'+(PAYMENTS.length?'':' — not imported'))+
+    F('Still owed',money(owedNow),OPENINV.length?OPENINV.length.toLocaleString()+' open invoices':'balances not imported');
+  // commission liability — ledger + balance engine
+  const paidAll=PAYOUTS.filter(x=>x.status==='paid').reduce((a,x)=>a+x.amount,0);
+  const cbApplied=-PAYOUTS.filter(x=>x.status==='applied').reduce((a,x)=>a+x.amount,0);
+  const forgiven=-PAYOUTS.filter(x=>x.status==='forgiven').reduce((a,x)=>a+x.amount,0);
+  const held=ROWS.filter(r=>splitPending(r)&&!r.voidType).reduce((a,r)=>a+rowComm(r),0);
+  const ym=t.slice(0,7);
+  let payableNow=0; PEOPLE.filter(p=>p.active&&empIsSales(p)&&p.id!==EMP_UNASSIGNED).forEach(p=>{ const pos=compPosition(p,ym); if(pos) payableNow+=pos.payable; });
+  document.getElementById('viewComm').innerHTML=
+    F('Commission paid',money(paidAll),'payout ledger · all time')+
+    F('Chargebacks recovered',money(cbApplied||0),forgiven?money(forgiven)+' forgiven — outside the window':'')+
+    F('Payable now',money(payableNow),'balance engine · carries month to month')+
+    F('Held on splits',money(held),'waiting for approvals');
+  // 12-month chart: three series, one axis
+  const months=monthsBack(12);
+  const S={booked:months.map(m=>ROWS.filter(r=>!isReversed(r)&&r.date.slice(0,7)===m&&r.date<=t).reduce((a,r)=>a+netValue(r),0)),
+           billed:months.map(m=>INVOICES.filter(x=>String(x.d).slice(0,7)===m).reduce((a,x)=>a+(+x.v||0),0)),
+           collected:months.map(m=>PAYMENTS.filter(x=>String(x.d).slice(0,7)===m).reduce((a,x)=>a+(+x.a||0),0))};
+  const mx=Math.max(1,...S.booked,...S.billed,...S.collected);
+  const W=760,Hh=220,padL=8,padR=8,padT=12,padB=26;
+  const X=i=>padL+(W-padL-padR)*i/(months.length-1);
+  const Y=v=>padT+(Hh-padT-padB)*(1-v/mx);
+  let svg='<svg viewBox="0 0 '+W+' '+Hh+'" preserveAspectRatio="none" role="img" aria-label="Twelve month trend of net booked, billed and collected">';
+  [0.25,0.5,0.75,1].forEach(f=>{ svg+='<line x1="'+padL+'" x2="'+(W-padR)+'" y1="'+Y(mx*f)+'" y2="'+Y(mx*f)+'" stroke="var(--line)" stroke-width="1"/>'; });
+  Object.keys(S).forEach(k=>{ const col=VIEW_COLORS[k];
+    const d=S[k].map((v,i)=>(i?'L':'M')+X(i).toFixed(1)+' '+Y(v).toFixed(1)).join(' ');
+    svg+='<path d="'+d+'" fill="none" stroke="'+col+'" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>';
+    S[k].forEach((v,i)=>{ svg+='<circle cx="'+X(i).toFixed(1)+'" cy="'+Y(v).toFixed(1)+'" r="4" fill="'+col+'" stroke="var(--paper)" stroke-width="2"><title>'+months[i]+' · '+(k==='booked'?'net booked':k)+': '+money(v)+'</title></circle>'; });
+  });
+  months.forEach((m,i)=>{ if(i%2===(months.length%2?0:1)) svg+='<text x="'+X(i).toFixed(1)+'" y="'+(Hh-8)+'" text-anchor="middle" font-size="10" fill="var(--muted)">'+MON[+m.slice(5,7)-1]+'</text>'; });
+  svg+='</svg>';
+  document.getElementById('viewChart').innerHTML=svg;
+  document.getElementById('viewLegend').innerHTML=[['booked','Net booked (sales)'],['billed','Billed (pre-tax)'],['collected','Collected (payments)']].map(x=>'<span><i style="background:'+VIEW_COLORS[x[0]]+'"></i>'+x[1]+'</span>').join('')+
+    '<span class="note" style="margin-left:auto">peak month '+money(mx)+'</span>';
+  // people & pipeline
+  const act=PEOPLE.filter(p=>p.active&&p.id!==EMP_UNASSIGNED);
+  const lead=act.filter(empIsSales).map(p=>({p,v:live.filter(r=>r.date.slice(0,4)===y&&shareFor(r,p.id)>0).reduce((a,r)=>a+netValue(r)*shareFor(r,p.id),0)})).sort((a,b)=>b.v-a.v)[0];
+  document.getElementById('viewPeople').innerHTML=
+    tile('Team',act.length,act.filter(empIsSales).length+' selling · '+PEOPLE.filter(p=>!p.active&&p.id!==EMP_UNASSIGNED).length+' former')+
+    tile('Top producer '+y,lead&&lead.v?empName(lead.p):'—',lead&&lead.v?money(lead.v)+' net':'')+
+    tile('Pipeline',money(pipeline),'sold, not yet invoiced')+
+    tile('Clients / leads',CLIENTS.filter(c=>isClient(c)&&!c.gone).length.toLocaleString()+' / '+CLIENTS.filter(c=>isLead(c)&&!c.gone).length.toLocaleString(),'from the roster sync');
+  // trust
+  const c=hawkCached(true);
+  const legacy=payoutReviewRows().length, revRev=reversalReviewRows().length, unmatched=empMatchQueue().length;
+  document.getElementById('viewTrust').innerHTML=
+    tile('Hawk findings',c.total,(c.parts||[]).slice(0,2).join(' · ')||'all clear',c.total?'bad':'ok')+
+    tile('Payouts to confirm',legacy,legacy?'legacy paid sales':'ledger complete',legacy?'bad':'ok')+
+    tile('Reversals to review',revRev,revRev?'no date or unconfirmed payout':'none',revRev?'bad':'ok')+
+    tile('Unmatched names',unmatched,unmatched?'Employee match needed':'everyone resolves',unmatched?'bad':'ok');
+  const feeds=(typeof mergeStatus==='function')?mergeStatus():[];
+  document.getElementById('viewFeeds').innerHTML=feeds.length?('Feeds: '+feeds.map(x=>esc(x.f.label)+' '+(x.state==='never'?'<b style="color:var(--red)">never</b>':x.days+'d ago'+(x.state==='stale'?' <b style="color:var(--red)">overdue</b>':''))).join(' · ')):'';
 }
 
 /* ---- ROSTER HEALTH: the numbers an admin needs after a sync ---- */
