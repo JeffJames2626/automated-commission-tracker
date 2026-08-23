@@ -108,7 +108,13 @@ a.maplink{color:inherit;text-decoration:none;border-bottom:1px dotted #b9c2b2;wh
 a.maplink:hover{color:var(--blue);border-bottom-color:var(--blue)}
 a.maplink.ico{border:none;margin-left:4px;font-size:12px}
 a.emplink:hover{color:var(--grn-d);border-bottom-color:var(--grn)}
-.roster{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.roster{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;margin-bottom:4px}
+.rtools{display:flex;gap:8px;align-items:center;margin-bottom:12px}
+.rtools input{flex:1 1 auto;min-width:0}
+.rtools button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.rgroup{margin:16px 0 8px;display:flex;align-items:baseline;gap:9px}
+.rgroup h3{margin:0}
+.rgroup .n{font-size:12px;color:var(--muted)}
 .rcard{display:flex;gap:12px;align-items:center;padding:12px 14px;cursor:pointer;background:var(--paper);border:1px solid var(--line);border-radius:11px;box-shadow:var(--shadow);transition:.12s;min-width:0}
 .rcard:hover{border-color:#b9c2b2;box-shadow:0 5px 18px rgba(28,33,25,.13);transform:translateY(-1px)}
 .rcard.off{opacity:.6}
@@ -614,7 +620,8 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
 <div class="tab" id="tab-view">
   <section>
     <div class="sechead"><h2>30,000 ft</h2><span class="hint" id="viewHint"></span></div>
-    <div id="viewHero" style="margin-bottom:14px"></div>
+    <div id="teamPulse" style="margin-bottom:4px"></div>
+    <div id="viewHero"></div>
     <h3 style="margin:0 0 8px">The eight that matter</h3>
     <div class="note" style="margin-bottom:8px">Jeff’s KPI list, each tied to its Service Autopilot report. Computed live where the data is already here; the grey ones say exactly which report to bring in — nothing is made up.</div>
     <div class="tiles" id="viewEight" style="margin-bottom:10px"></div>
@@ -903,17 +910,15 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
 <div class="tab" id="tab-roster">
   <section>
     <div class="sechead"><h2>Team</h2><span class="hint" id="rosterCount"></span></div>
-    <div style="margin-bottom:12px;display:flex;gap:11px;flex-wrap:wrap;align-items:end">
-      <div style="flex:1 1 220px;min-width:0"><label>Find</label><input id="rosterQ" placeholder="name, title, truck, remote, email" oninput="ROSTER_Q=this.value;renderRoster()"></div>
-      <div><label>&nbsp;</label><label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-weight:500"><input type="checkbox" id="rosterInactive" onchange="ROSTER_INACTIVE=this.checked;renderRoster()"> show former team members</label></div>
-      <div id="rosterAddBtn"></div>
+    <div class="rtools">
+      <input id="rosterQ" placeholder="Find — name, title, truck, remote…" oninput="ROSTER_Q=this.value;renderRoster()">
+      <button class="sm" id="rosterFormerBtn" onclick="ROSTER_INACTIVE=!ROSTER_INACTIVE;renderRoster()">Former</button>
+      <span id="rosterAddBtn"></span>
     </div>
-    <div id="teamPulse"></div>
-    <details id="rosterHealthWrap" style="margin-bottom:14px"><summary>Roster health <span class="note" id="rosterSyncNote"></span></summary><div id="rosterHealth" style="margin-top:10px"></div></details>
+    <details id="rosterHealthWrap" style="margin-bottom:12px"><summary>Roster health &amp; sync <span class="note" id="rosterSyncNote"></span></summary><div id="rosterHealth" style="margin-top:10px"></div></details>
     <div id="rosterAddForm" style="display:none" class="card pad"></div>
     <div id="rosterDir" style="display:none" class="card pad"></div>
-    <div class="roster" id="rosterBox"></div>
-    <div class="note" style="margin-top:12px">One record per person, for good. A name is how we show somebody; the record is how the tracker knows them — every sale, invoice line, commission and login points at it. Leaving the company makes a record <b>former</b>, never deleted.</div>
+    <div id="rosterBox"></div>
   </section>
 </div>
 
@@ -11304,32 +11309,40 @@ function renderRoster(){
   const q=norm(ROSTER_Q);
   let list=PEOPLE.filter(p=>p.id!==EMP_UNASSIGNED && (ROSTER_INACTIVE||p.active));
   if(q) list=list.filter(p=>norm(empName(p)+' '+(p.title||'')+' '+(p.dept||'')+' '+(p.email||'')+' '+(p.truck||'')+' '+empWhere(p)).indexOf(q)>-1);
-  list.sort((a,b)=>(a.active===b.active?0:a.active?-1:1)||empName(a).localeCompare(empName(b)));
   const cnt=document.getElementById('rosterCount');
-  if(cnt) cnt.textContent=PEOPLE.filter(p=>p.active&&p.id!==EMP_UNASSIGNED).length+' active · '+PEOPLE.filter(p=>!p.active&&p.id!==EMP_UNASSIGNED).length+' former';
+  const nA=PEOPLE.filter(p=>p.active&&p.id!==EMP_UNASSIGNED).length, nF=PEOPLE.filter(p=>!p.active&&p.id!==EMP_UNASSIGNED).length;
+  if(cnt) cnt.textContent=nA+' active'+(nF?' · '+nF+' former':'');
+  const fb=document.getElementById('rosterFormerBtn');
+  if(fb){ fb.className='sm'+(ROSTER_INACTIVE?' on':''); fb.textContent='Former'+(nF?' ('+nF+')':''); fb.style.display=nF?'':'none'; }
   const ab=document.getElementById('rosterAddBtn');
-  if(ab) ab.innerHTML=ADMIN?'<label>&nbsp;</label><span style="display:flex;gap:6px;flex-wrap:wrap"><button class="p" onclick="empAddToggle()">+ Add team member</button><button onclick="rosterSync(false)" title="Pull the Team Members sheet">⟳ Sync roster</button><button onclick="empDirToggle()">Import CSV</button></span>':'';
-  const rb=document.getElementById('rosterSyncNote');
-  if(rb){ const g=GLOBAL.gsheet||{}; rb.innerHTML=g.rosterAt?'Roster synced from the sheet '+esc(String(g.rosterAt).replace('T',' ').slice(0,16))+(g.rosterPending?' · <b style="color:var(--red)">'+g.rosterPending+' row'+(g.rosterPending===1?'':'s')+' need a decision</b> — <a href="#" onclick="rosterSync(false);return false">review</a>':'') : (ADMIN?'Roster not synced from the sheet yet — ⟳ Sync roster (needs the sheet shared as “anyone with the link”).':''); }
+  if(ab) ab.innerHTML=ADMIN?'<button class="sm p" onclick="empAddToggle()" title="Add a team member">＋ Add</button> <button class="sm" onclick="rosterSync(false)" title="Pull the Team Members sheet">⟳</button> <button class="sm" onclick="empDirToggle()" title="Import a directory CSV">CSV</button>':'';
   if(!ADMIN){ ['rosterAddForm','rosterDir'].forEach(id=>{ const f=document.getElementById(id); if(f) f.style.display='none'; }); }
   const rh=document.getElementById('rosterHealth'); if(rh){ if(ADMIN) renderRosterHealth(); else rh.innerHTML=''; }
   const rw=document.getElementById('rosterHealthWrap'); if(rw) rw.style.display=ADMIN?'':'none';
-  renderTeamPulse();
   if(!list.length){ box.innerHTML='<div class="empty">Nobody matches.</div>'; return; }
-  box.innerHTML=list.map(p=>{
-    const a=empAccountStatus(p);
-    return '<div class="rcard'+(p.active?'':' off')+'" onclick="openEmp(\''+p.id+'\')">'+empAvatar(p,52,true)+
-      '<div style="min-width:0;flex:1"><div class="nmrow"><div class="nm">'+esc(empName(p))+'</div>'+(empIsSales(p)?'<span class="pill sales">SALES</span>':'')+'</div>'+
-      '<div class="meta">'+esc(p.title||'—')+(p.dept?' · '+esc(p.dept):'')+'</div>'+
-      '<div class="meta">'+(p.email?esc(p.email):'<span style="color:var(--red)">no company email</span>')+'</div>'+
-      '<div class="chips2">'+empWhereChip(p)+(p.phone?'<span class="pill phone">☎ '+esc(p.phone)+'</span>':'')+'</div>'+
-      '<div class="pills">'+(p.active?'<span class="pill ok">ACTIVE</span>':'<span class="pill n">FORMER</span>')+
-      ((p.roles||[]).indexOf('estimator')>-1?'<span class="pill el">ESTIMATOR</span>':'')+
-      '<span class="pill '+a.cls+'" title="'+esc(a.detail)+'">'+a.label+'</span>'+
-      ((p.google&&p.google.email)?'<span class="pill ok" title="Google account linked: '+esc(p.google.email)+'">GOOGLE ✓</span>':'')+
-      '</div></div></div>';
-  }).join('');
+  // one card, only what identifies the person; login/Google chrome is admin business
+  const card=p=>{ const a=ADMIN?empAccountStatus(p):null;
+    return '<div class="rcard'+(p.active?'':' off')+'" onclick="openEmp(\''+p.id+'\')">'+empAvatar(p,48,true)+
+      '<div style="min-width:0;flex:1"><div class="nmrow"><div class="nm">'+esc(empName(p))+'</div>'+(empIsSales(p)?'<span class="pill sales">SALES</span>':'')+(p.active?'':'<span class="pill n">FORMER</span>')+'</div>'+
+      '<div class="meta">'+esc(p.title||'—')+'</div>'+
+      '<div class="chips2">'+empWhereChip(p)+(p.phone?'<span class="pill phone">☎ '+esc(p.phone)+'</span>':'')+
+      (a?'<span class="pill '+a.cls+'" title="'+esc(a.detail)+'">'+a.label+'</span>':'')+
+      (ADMIN&&p.google&&p.google.email?'<span class="pill ok" title="Google linked: '+esc(p.google.email)+'">G ✓</span>':'')+
+      '</div></div></div>'; };
+  const byName=(a,b)=>empName(a).localeCompare(empName(b));
+  const has=(p,r)=>(p.roles||[]).indexOf(r)>-1;
+  const groups=[
+    ['Sales & estimating', list.filter(p=>p.active&&(empIsSales(p)||has(p,'estimator')))],
+    ['Field', list.filter(p=>p.active&&!empIsSales(p)&&!has(p,'estimator')&&has(p,'tech'))],
+    ['Office & management', list.filter(p=>p.active&&!empIsSales(p)&&!has(p,'estimator')&&!has(p,'tech'))],
+    ['Former team members', list.filter(p=>!p.active)]
+  ];
+  box.innerHTML=groups.filter(g=>g[1].length).map(g=>
+    '<div class="rgroup"><h3>'+esc(g[0])+'</h3><span class="n">'+g[1].length+'</span></div>'+
+    '<div class="roster">'+g[1].sort(byName).map(card).join('')+'</div>').join('');
 }
+
+
 
 // Where they work from: their truck, or the office (with a location if one is set).
 // Where they work from: their truck; otherwise the shop, or remote.
@@ -11464,9 +11477,8 @@ function renderView(){
   const owedNow=OPENINV.reduce((a,x)=>a+(+x.t||0),0);
   const pipeline=live.filter(r=>!r.invoiced&&!r.voidType).reduce((a,r)=>a+netValue(r),0);
   document.getElementById('viewHint').textContent='as of '+fmtY(t);
-  hero.innerHTML='<div class="pulse" style="margin:0"><div class="hero" style="grid-row:auto"><div><div class="lab">Net booked '+y+'</div><div class="big">'+money(netYTD)+'</div>'+
-    '<div class="delta">'+(netPrevSame?((netYTD>=netPrevSame?'<span class="delta up">▲':'<span class="delta down">▼')+' '+Math.abs(Math.round((netYTD-netPrevSame)/netPrevSame*100))+'% vs '+lastY+' to this date ('+money(netPrevSame)+')</span>'):'<span class="note">no '+lastY+' data to compare</span>')+'</div></div>'+
-    '<div class="lab" style="font-weight:500;text-transform:none;letter-spacing:0">sales net of reversals · future-dated sales excluded</div></div></div>';
+  renderTeamPulse();
+  hero.innerHTML='<div class="note" style="margin:6px 0 14px">Net booked '+y+': <b>'+money(netYTD)+'</b> '+(netPrevSame?((netYTD>=netPrevSame?'<span class="delta up">▲ ':'<span class="delta down">▼ ')+Math.abs(Math.round((netYTD-netPrevSame)/netPrevSame*100))+'%</span> vs '+lastY+' to this date ('+money(netPrevSame)+')'):'· no '+lastY+' data to compare')+' · net of reversals · future-dated excluded</div>';
   const F=(lab,val,sub)=>'<div class="fstep"><div class="lab">'+lab+'</div><div class="val mono">'+val+'</div>'+(sub?'<div class="sub">'+sub+'</div>':'')+'</div>';
 
   /* ---- THE EIGHT — Jeff's KPI list, each mapped to its SA report ---- */
