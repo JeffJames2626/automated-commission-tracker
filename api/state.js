@@ -20,6 +20,11 @@ import crypto from 'node:crypto';
 // either that session token (x-session) or the legacy shared password
 // (x-app-password) — so nothing breaks while people migrate to real logins.
 const ROOT_ADMIN = 'jeff@automatedlawnandpest.com';   // seeded as admin when the users table is empty
+// The Google OAuth Client ID is PUBLIC by design (it ships in page JS on every
+// site using Google sign-in), so it lives here in code. An env var, if ever
+// set, still takes precedence.
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ||
+  '96381167271-fg32gstb7df6k19fe0fe0dm0v64k0khr.apps.googleusercontent.com';
 function sessSecret() { return process.env.SESSION_SECRET || process.env.APP_PASSWORD || ''; }
 function signSession(payload) {
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
@@ -61,12 +66,12 @@ function unauthorized(res) {
 export default async function handler(req, res) {
   // ---- public config: tells the page whether Google login is set up ----
   if (req.method === 'GET' && req.query && req.query.config === '1') {
-    return res.status(200).json({ googleClientId: process.env.GOOGLE_CLIENT_ID || '' });
+    return res.status(200).json({ googleClientId: GOOGLE_CLIENT_ID });
   }
 
   // ---- Google sign-in: swap a Google ID token for a 30-day session ----
   if (req.query && req.query.auth === 'google' && req.method === 'POST') {
-    if (!process.env.GOOGLE_CLIENT_ID) return res.status(500).json({ error: 'GOOGLE_CLIENT_ID is not set on the server' });
+    if (!GOOGLE_CLIENT_ID) return res.status(500).json({ error: 'GOOGLE_CLIENT_ID is not set on the server' });
     if (!DB_URL) return res.status(500).json({ error: 'no database' });
     let body = req.body;
     if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = null; } }
@@ -78,7 +83,7 @@ export default async function handler(req, res) {
       if (!g.ok) return res.status(401).json({ error: 'Google rejected the token' });
       info = await g.json();
     } catch (e) { return res.status(502).json({ error: 'could not reach Google to verify' }); }
-    if (info.aud !== process.env.GOOGLE_CLIENT_ID) return res.status(401).json({ error: 'token is for a different app' });
+    if (info.aud !== GOOGLE_CLIENT_ID) return res.status(401).json({ error: 'token is for a different app' });
     if (info.email_verified !== 'true' && info.email_verified !== true) return res.status(401).json({ error: 'email not verified with Google' });
     const email = String(info.email || '').toLowerCase();
     const sql2 = neon(DB_URL);
