@@ -256,6 +256,33 @@
         results.push({name:'AUDIT machinery exists', expected:true, actual:false, pass:false});
       }
 
+      /* ---------- PDF DIFF: invoice-vs-sale comparison is exact ---------- */
+      if(typeof pdfDiffFor==='function'){
+        var pr=mkRow({client:'Diff Co', date:'2026-06-05', value:1000, service:'Mow'});
+        var extract={client:'Diff Company LLC', sold_date:'2026-06-08',
+          items:[{service:'Sprinkler Repair', value:1250}]};
+        var dfs=pdfDiffFor(pr, extract);
+        var byF={}; dfs.forEach(function(d){byF[d.f]=d;});
+        checkTrue('PDF diff catches client mismatch', !!byF.client, JSON.stringify(byF.client||''));
+        check('PDF diff catches date', '2026-06-08', byF.date?byF.date.to:'(none)');
+        check('PDF diff catches value (summed items)', '1250', byF.value?byF.value.to:'(none)');
+        checkTrue('PDF diff catches service on single-item invoice', !!byF.service, byF.service?byF.service.to:'');
+        // agreement -> empty diff
+        var agree={client:'Diff Co', sold_date:'2026-06-05', items:[{service:'Mow', value:1000}]};
+        check('PDF diff is EMPTY when invoice agrees', 0, pdfDiffFor(pr,agree).length);
+      } else {
+        results.push({name:'pdfDiffFor() exists', expected:true, actual:false, pass:false});
+      }
+
+      /* ---------- SERVICE catalog merges SA list + real usage ---------- */
+      if(typeof serviceCatalog==='function'){
+        if(typeof svcDirty==='function') svcDirty();
+        var cat=serviceCatalog();
+        checkTrue('service catalog is non-empty', cat.length>10, cat.length);
+        checkTrue('service catalog entries carry a hint line', !!(cat[0]&&cat[0].sub!==undefined), JSON.stringify(cat[0]||''));
+        if(typeof svcDirty==='function') svcDirty();
+      }
+
       /* ---------- C2: tombstones stop deleted records resurrecting ---------- */
       if(typeof addTombstone==='function' && typeof isTombstoned==='function'){
         TOMBSTONES=[];

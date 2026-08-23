@@ -105,6 +105,38 @@ export default async function handler(req, res) {
       return res.status(405).json({ error: 'audit log is append-only' });
     }
 
+    // ===== EVIDENCE FILE VAULT =====
+    // Invoice PDFs attached to sales live here — append-only like the audit
+    // log (no delete route), stamped with server time and sender IP, so an
+    // attached invoice can't quietly disappear later.
+    if (req.query && req.query.file === '1') {
+      await sql`CREATE TABLE IF NOT EXISTS file_vault (
+        id BIGSERIAL PRIMARY KEY,
+        at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        ip TEXT, name TEXT, sha TEXT, kb INT, data TEXT
+      )`;
+      const ip = String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim();
+      if (req.method === 'POST') {
+        let body = req.body;
+        if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = null; } }
+        if (!body || !body.data || !body.name) return res.status(400).json({ error: 'name and data required' });
+        const b64 = String(body.data);
+        if (b64.length > 7_000_000) return res.status(413).json({ error: 'file too large (5MB max)' });
+        const r = await sql`INSERT INTO file_vault (ip, name, sha, kb, data)
+          VALUES (${ip}, ${String(body.name).slice(0,200)}, ${String(body.sha||'').slice(0,64)},
+                  ${Math.round(b64.length*3/4/1024)}, ${b64}) RETURNING id, at`;
+        return res.status(200).json({ ok: true, id: r[0].id, at: r[0].at });
+      }
+      if (req.method === 'GET') {
+        const id = parseInt(req.query.id || '0', 10);
+        if (!id) return res.status(400).json({ error: 'id required' });
+        const rows = await sql`SELECT name, sha, kb, data, at FROM file_vault WHERE id = ${id}`;
+        if (!rows.length) return res.status(404).json({ error: 'not found' });
+        return res.status(200).json(rows[0]);
+      }
+      return res.status(405).json({ error: 'file vault is append-only' });
+    }
+
     if (req.method === 'GET') {
       const rows = await sql`SELECT data, updated FROM app_state WHERE id = 'main'`;
       if (!rows.length) return res.status(200).json({ empty: true });

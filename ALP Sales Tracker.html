@@ -1788,6 +1788,15 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
         <label>Notes</label>
         <input id="eNotes" autocomplete="off">
       </div>
+      <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+        <div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap">
+          <button class="sm" onclick="document.getElementById('ePdf').click()">🦅 Read an invoice PDF</button>
+          <span class="note">The Data Hawk reads it, proposes corrections, and stores the PDF with this sale as evidence.</span>
+        </div>
+        <input type="file" id="ePdf" accept="application/pdf,.pdf" style="display:none" onchange="editPdfPicked(event)">
+        <div id="eFiles" class="note" style="margin-top:8px"></div>
+        <div id="eFound" style="margin-top:8px"></div>
+      </div>
       <div class="note" id="eWarn" style="margin-top:10px"></div>
     </div>
     <div class="foot">
@@ -5016,6 +5025,7 @@ function openQuick(){
   segSet('qBasis','contract'); basisChanged();
   TYPE_MANUAL=false;
   attachClientPicker(document.getElementById('qClient'));
+  attachServicePicker(document.getElementById('qService'));
   document.getElementById('qTypeNote').innerHTML='';
   renderQRecent();
   m.classList.add('on');
@@ -6217,7 +6227,7 @@ function invApply(){
     alert('That is more invoice history than this browser will store.\n\nNothing was saved. Import a shorter date range.');
     INVOICES=load(K_INV,[]); return;
   }
-  histDirty();
+  histDirty(); svcDirty();
   INVSYNC.push({on:todayISO(),at:new Date().toISOString().slice(11,16),
     lines:rows.length, from, to, total:Math.round(rows.reduce((a,x)=>a+x.v,0)),
     replaced:before-kept.length});
@@ -8812,6 +8822,72 @@ function attachClientPicker(input){
   input.addEventListener('blur',function(){ setTimeout(close,150); });
 }
 
+/* ---- searchable service picker ----
+   Same idea as the client picker: type to filter, click or arrow-Enter to pick.
+   The list merges the Service Autopilot catalog (with category and rate) with
+   every service name actually billed or logged, so real-world spellings appear. */
+let SVC_CACHE=null;
+function serviceCatalog(){
+  if(SVC_CACHE) return SVC_CACHE;
+  const seen={}, out=[];
+  SA_SERVICES.forEach(function(s){
+    seen[norm(s.n)]=1;
+    out.push({n:s.n, sub:s.c+(s.r?' · $'+s.r.toFixed(2):''), w:0});
+  });
+  const counts={};
+  INVOICES.forEach(function(x){ if(x.s) counts[x.s]=(counts[x.s]||0)+1; });
+  ROWS.forEach(function(r){ if(r.service) counts[r.service]=(counts[r.service]||0)+1; });
+  Object.keys(counts).forEach(function(n){
+    if(seen[norm(n)]) return; seen[norm(n)]=1;
+    out.push({n:n, sub:'used '+counts[n]+'×', w:1});
+  });
+  SVC_CACHE=out; return out;
+}
+function svcDirty(){ SVC_CACHE=null; }
+function attachServicePicker(input){
+  if(!input || input.dataset.spick) return;
+  input.dataset.spick='1';
+  const wrap=document.createElement('div'); wrap.className='cpickwrap';
+  input.parentNode.insertBefore(wrap,input); wrap.appendChild(input);
+  const dd=document.createElement('div'); dd.className='cpick'; dd.style.display='none';
+  wrap.appendChild(dd);
+  let items=[], sel=-1;
+  function close(){ dd.style.display='none'; sel=-1; }
+  function pick(i){ if(!items[i])return; input.value=items[i].n; close();
+    input.dispatchEvent(new Event('input',{bubbles:true})); }
+  function renderList(){
+    const q=norm(input.value);
+    let list=serviceCatalog();
+    if(q) list=list.filter(function(s){return norm(s.n).indexOf(q)>-1;});
+    list=list.slice().sort(function(a,b){
+      const as=q&&norm(a.n).indexOf(q)===0?0:1, bs=q&&norm(b.n).indexOf(q)===0?0:1;
+      return as-bs || a.w-b.w || (a.n<b.n?-1:1);
+    });
+    items=list.slice(0,50);
+    if(!items.length){ dd.innerHTML='<div class="ci free">No catalog match — keeps whatever you type</div>'; dd.style.display='block'; return; }
+    dd.innerHTML=items.map(function(s,i){
+      return '<div class="ci'+(i===sel?' on':'')+'" data-i="'+i+'"><b>'+esc(s.n)+'</b>'+
+        '<span class="note">'+esc(s.sub)+'</span></div>';
+    }).join('');
+    dd.style.display='block';
+    const on=dd.querySelector('.ci.on'); if(on) on.scrollIntoView({block:'nearest'});
+  }
+  input.addEventListener('input',function(){ sel=-1; renderList(); });
+  input.addEventListener('focus',renderList);
+  input.addEventListener('keydown',function(e){
+    if(dd.style.display==='none') return;
+    if(e.key==='ArrowDown'){ e.preventDefault(); sel=Math.min(items.length-1,sel+1); renderList(); }
+    else if(e.key==='ArrowUp'){ e.preventDefault(); sel=Math.max(0,sel-1); renderList(); }
+    else if(e.key==='Enter' && sel>=0){ e.preventDefault(); e.stopPropagation(); pick(sel); }
+    else if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); close(); }
+    else if(e.key==='Tab'){ close(); }
+  });
+  dd.addEventListener('mousedown',function(e){
+    const el=e.target.closest('.ci'); if(el && el.dataset.i!=null){ e.preventDefault(); pick(+el.dataset.i); }
+  });
+  input.addEventListener('blur',function(){ setTimeout(close,150); });
+}
+
 /* ---- edit a sale after creation ----
    Fixes wrong client, date, value, rep, type — the things imports and quick
    fingers get wrong. Every change goes through logEdit (by 'user'), so the
@@ -8833,6 +8909,9 @@ function openEdit(id){
   document.getElementById('eNotes').value=r.notes||'';
   document.getElementById('eProv').textContent=provLine(r);
   attachClientPicker(document.getElementById('eClient'));
+  attachServicePicker(document.getElementById('eService'));
+  renderEditFiles(r);
+  document.getElementById('eFound').innerHTML='';
   const w=[];
   const p=person(r.rep);
   if(p && r.date<p.start) w.push('<b>PRE-PLAN:</b> sold before '+esc(p.name.split(' ')[0])+'’s plan starts ('+fmtY(p.start)+'), so it earns $0 commission. Fix the date, pick another rep, or move the plan start on Comp plans.');
@@ -8841,7 +8920,98 @@ function openEdit(id){
   document.getElementById('eWarn').innerHTML=w.join('<br><br>');
   document.getElementById('editModal').classList.add('on');
 }
-function closeEdit(){ EDIT_ID=null; document.getElementById('editModal').classList.remove('on'); }
+function closeEdit(){ EDIT_ID=null; document.getElementById('editModal').classList.remove('on');
+  document.getElementById('eFound').innerHTML=''; }
+
+/* ---- the Hawk reads an invoice PDF against THIS sale ----
+   Extracts client, date, and totals with Claude, shows a field-by-field
+   diff against the sale, applies only what you click, and stores the PDF
+   in the server evidence vault with a reference on the sale. */
+// What the PDF says vs what the sale says — pure, testable.
+function pdfDiffFor(r, x){
+  const out=[];
+  const items=Array.isArray(x.items)?x.items.filter(function(i){return i&&(i.service||i.value);}):[];
+  const total=items.reduce(function(a,i){return a+(+i.value||0);},0);
+  if(x.client && norm(x.client)!==norm(r.client)) out.push({f:'client', from:r.client, to:x.client});
+  const d=pDate(x.sold_date)||pDate(x.invoice_date);
+  if(d && d!==r.date) out.push({f:'date', from:r.date, to:d});
+  if(total>0 && Math.abs(total-bookedValue(r))>0.01) out.push({f:'value', from:String(r.value), to:String(Math.round(total*100)/100)});
+  if(items.length===1 && items[0].service && norm(items[0].service)!==norm(r.service||''))
+    out.push({f:'service', from:r.service||'', to:items[0].service});
+  return out;
+}
+async function editPdfPicked(ev){
+  const f=ev.target.files[0]; ev.target.value=''; if(!f) return;
+  const r=ROWS.find(function(x){return x.id===EDIT_ID;}); if(!r) return;
+  const box=document.getElementById('eFound');
+  const cfg=aiCfg();
+  if(!cfg.key){ box.innerHTML='<div class="warnbox">No Claude API key set — Import tab → "Reading PDFs with Claude". The PDF was not stored.</div>'; return; }
+  if(f.size>5*1024*1024){ box.innerHTML='<div class="warnbox">That PDF is over 5MB.</div>'; return; }
+  box.innerHTML='<div class="note">🦅 Reading '+esc(f.name)+'…</div>';
+  try{
+    const b64=await fileToBase64(f);
+    // 1) store the evidence FIRST, so the PDF exists even if nothing gets applied
+    let fileRef=null;
+    if(CLOUD.on && cloudPw()){
+      const sha=await sha256hex(b64.slice(0,100000)+':'+b64.length);
+      const up=await fetch(CLOUD.url+'?file=1',{method:'POST',
+        headers:{'content-type':'application/json','x-app-password':cloudPw()},
+        body:JSON.stringify({name:f.name,sha:sha,data:b64})});
+      if(up.ok){ const j=await up.json();
+        fileRef={id:j.id,name:f.name,kb:Math.round(f.size/1024),sha:sha,at:todayISO()};
+        (r.files=r.files||[]).push(fileRef); save(K_ROWS,ROWS);
+        auditRecord('pdf-attach',{rowId:r.id,client:r.client,file:f.name,kb:fileRef.kb,sha:sha,vaultId:j.id});
+        renderEditFiles(r);
+      }
+    }
+    // 2) read it
+    const {out}=await askClaude(b64, cfg.model, cfg.key);
+    const diffs=pdfDiffFor(r,out);
+    window.__EPDF={diffs:diffs};
+    if(!diffs.length){
+      box.innerHTML='<div class="found"><h5>🦅 '+esc(f.name)+'</h5><div class="note">The invoice agrees with this sale — client, date and money all line up.'+
+        (fileRef?' PDF stored in the evidence vault (#'+fileRef.id+').':' <b>Cloud is off, so the PDF was NOT stored.</b>')+'</div></div>';
+      return;
+    }
+    let h='<div class="found"><h5>🦅 The invoice disagrees with this sale</h5>';
+    diffs.forEach(function(d,i){
+      h+='<div class="li"><span class="g"><b>'+esc(d.f)+'</b>: "'+esc(String(d.from).slice(0,40))+'" → "'+esc(String(d.to).slice(0,40))+'"</span>'+
+        '<button class="sm p" onclick="applyPdfField('+i+')">Apply</button></div>';
+    });
+    h+='<div class="note" style="margin-top:8px">Only what you click gets applied — each change is logged with the PDF as backing evidence.'+
+      (fileRef?' Stored as vault file #'+fileRef.id+'.':' <b>Cloud is off, so the PDF was NOT stored.</b>')+'</div></div>';
+    box.innerHTML=h;
+  }catch(e){
+    box.innerHTML='<div class="warnbox">'+esc(e.message||String(e))+'</div>';
+  }
+}
+function applyPdfField(i){
+  const r=ROWS.find(function(x){return x.id===EDIT_ID;}); if(!r) return;
+  const d=window.__EPDF && window.__EPDF.diffs[i]; if(!d) return;
+  logEdit(r, d.f, r[d.f], d.to, 'pdf');
+  r[d.f]= d.f==='value' ? pNum(d.to) : d.to;
+  save(K_ROWS,ROWS);
+  openEdit(r.id);      // refresh the form with the applied value
+  toast(d.f+' updated from the invoice');
+}
+function renderEditFiles(r){
+  const el=document.getElementById('eFiles'); if(!el) return;
+  const fs=r.files||[];
+  el.innerHTML=fs.length
+    ? '📎 '+fs.map(function(f){return '<a href="#" onclick="viewVaultFile('+f.id+');return false;">'+esc(f.name)+'</a> ('+f.kb+' KB, '+fmtY(f.at)+')';}).join(' · ')
+    : '';
+}
+async function viewVaultFile(id){
+  try{
+    const rsp=await fetch(CLOUD.url+'?file=1&id='+id,{headers:{'x-app-password':cloudPw()}});
+    if(!rsp.ok){ toast('Could not fetch the file (is ☁ on?)'); return; }
+    const j=await rsp.json();
+    const bin=atob(j.data); const arr=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+    const url=URL.createObjectURL(new Blob([arr],{type:'application/pdf'}));
+    window.open(url,'_blank','noopener');
+  }catch(e){ toast('Could not open the file'); }
+}
 function saveEdit(){
   const r=ROWS.find(x=>x.id===EDIT_ID); if(!r){closeEdit();return;}
   const date=pDate(document.getElementById('eDate').value);
@@ -8997,6 +9167,9 @@ function rowInfo(id){
     t+='\nBilled to this client since the sale ('+bills.length+' line'+(bills.length===1?'':'s')+'):\n'+
       bills.slice(0,8).map(x=>'  '+(x.i?'#'+x.i+' · ':'')+x.d+' · '+money2(x.v)+(x.s?' · '+x.s:'')).join('\n')+
       (bills.length>8?'\n  …and '+(bills.length-8)+' more':'');
+  }
+  if(r.files&&r.files.length){
+    t+='\nAttached evidence:\n'+r.files.map(f=>'  📎 '+f.name+' ('+f.kb+' KB, vault #'+f.id+', '+f.at+')').join('\n')+'\n';
   }
   if(r.srcRaw&&Object.keys(r.srcRaw).length){
     t+='\n\nExactly as the export sent it:\n'+Object.keys(r.srcRaw).map(k=>'  '+k+': '+r.srcRaw[k]).join('\n');
