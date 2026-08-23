@@ -1,0 +1,19 @@
+# Customer data — NEVER commit these
+*.json
+*.csv
+*.xls
+*.xlsx
+alp-sales-backup*
+Clients*.csv
+Leads*.csv
+Payments*.csv
+Balances*.csv
+invoice_audit*
+
+# OS / editor / tooling
+.DS_Store
+Thumbs.db
+*.log
+.claude/
+.vscode/
+.idea/
