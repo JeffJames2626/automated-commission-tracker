@@ -151,6 +151,20 @@ footer{padding:24px 0 40px;font-size:12px;color:var(--muted);text-align:center}
 .lockwrap h3{margin:12px 0 6px}
 .lockwrap .note{margin-bottom:16px}
 .lockwrap input{text-align:center;font-size:19px;letter-spacing:.32em;padding:11px}
+#lockGoogle{margin:0 0 14px}
+#lockGoogle .gsi{display:flex;justify-content:center;margin:10px 0}
+#lockGoogle .or{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;margin:14px 0 4px}
+#lockGoogle .or:before,#lockGoogle .or:after{content:"";flex:1;border-top:1px solid var(--line)}
+/* Login wall: on the hosted site nothing shows until a company Google account is signed in. */
+#loginWall{position:fixed;inset:0;z-index:9000;background:var(--sand);display:flex;align-items:center;justify-content:center;padding:24px}
+#loginWall .card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:34px 30px;max-width:440px;width:100%;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.08)}
+#loginWall .ico{font-size:40px;line-height:1}
+#loginWall h2{margin:12px 0 4px}
+#loginWall .sub{color:var(--muted);font-size:13px;margin-bottom:18px}
+#loginWall .gsi{display:flex;justify-content:center;min-height:44px;margin:8px 0}
+#loginWall .alt{margin-top:18px;font-size:12px;color:var(--muted)}
+#loginWall .alt a{color:inherit;cursor:pointer;text-decoration:underline}
+body.walled>*:not(#loginWall){visibility:hidden}
 .adminsec{margin-bottom:22px}
 .adminsec > .hdr{display:flex;align-items:baseline;gap:11px;margin-bottom:11px;flex-wrap:wrap}
 .adminsec > .hdr h3{font-size:16px}
@@ -470,6 +484,8 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
 </style>
 </head>
 <body>
+
+<div id="loginWall" style="display:none"></div>
 
 <header>
   <div class="wrap">
@@ -1191,6 +1207,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
       <div class="ico">🔒</div>
       <h3>Admin</h3>
       <div class="note">Pay, cost, data quality and the imports live in here. Reps do not need to see it.</div>
+      <div id="lockGoogle"></div>
       <div id="lockForm">
         <div id="lockWho" style="margin-bottom:11px"></div>
         <input type="password" id="adminPin" placeholder="PIN" autocomplete="off"
@@ -3029,6 +3046,7 @@ function renderAdmin(){
   open.style.display   = ADMIN ? '' : 'none';
   if(!ADMIN){
     renderLockWho();
+    renderLockGoogle();
     const admins=adminUsers();
     const only=admins.length===1?admins[0]:null;
     const sub=locked.querySelector('.lockwrap .note');
@@ -10219,12 +10237,13 @@ async function googleInit(){
   if(!cloudHasBackend()) return;
   try{
     const r=await fetch(CLOUD.url+'?config=1'); const j=await r.json();
-    if(!j.googleClientId) return;
+    if(!j.googleClientId){ window.__GCID=false; renderLoginWall(); return; }
     window.__GCID=j.googleClientId;
     const sc=document.createElement('script'); sc.src='https://accounts.google.com/gsi/client'; sc.async=true;
-    sc.onload=function(){ renderGoogleBtn(); };
+    sc.onload=function(){ renderGoogleBtn(); renderLoginWall(); renderLockGoogle(); };
+    sc.onerror=function(){ const w=document.getElementById('wallWait'); if(w) w.textContent='Google sign-in could not load. Check your connection, or use the tracker password.'; };
     document.head.appendChild(sc);
-  }catch(e){}
+  }catch(e){ window.__GCID=false; renderLoginWall(); }
 }
 function renderGoogleBtn(){
   const bar=document.querySelector('header .hbtns'); if(!bar) return;
@@ -10248,8 +10267,8 @@ async function googleCredential(resp){
       headers:{'content-type':'application/json'}, body:JSON.stringify({credential:resp.credential})});
     const j=await r.json().catch(function(){return {};});
     if(!r.ok){
-      alert(j.denied
-        ? j.email+' is not on the team list yet.\n\nAn admin adds it: Admin tab → Team logins.'
+      alert(j.wrongDomain ? (j.error||'Only company Google accounts can use this tracker.')
+        : j.denied ? j.email+' is not on the team list yet.\n\nAn admin adds it: Admin tab → Team logins.'
         : (j.error||'Sign-in failed.'));
       return;
     }
@@ -10257,7 +10276,7 @@ async function googleCredential(resp){
     localStorage.setItem(K_DEVUSER, (j.name||j.email)+' <'+j.email+'>');   // the audit trail now names a verified person
     auditRecord('login',{email:j.email,role:j.role,method:'google'});
     applySessionIdentity(true);
-    renderGoogleBtn();
+    renderGoogleBtn(); renderLoginWall();
     if(!CLOUD.on) cloudStart(true); else cloudPull(false);
     render();
     toast('Signed in as '+j.email+(j.role==='admin'?' — admin unlocked':''));
@@ -10265,8 +10284,114 @@ async function googleCredential(resp){
 }
 function googleSignOut(){
   auditRecord('logout',{email:(session()||{}).email});
+  sessionDrop('Signed out');
+}
+// Forget the Google session everywhere it matters: admin re-locks, cloud sync
+// stops, and on the hosted site the login wall comes back up.
+function sessionDrop(why){
   localStorage.removeItem(K_SESS);
-  renderGoogleBtn(); toast('Signed out');
+  try{ sessionStorage.removeItem(K_PWUNLOCK); }catch(e){}
+  ADMIN=false; ADMIN_USER=null;
+  if(TAB_INFO[TAB] && TAB_INFO[TAB].admin===true) TAB='score';
+  CLOUD.on=false; clearTimeout(CLOUD.pushTimer); cloudSetStatus('off');
+  renderGoogleBtn(); renderLoginWall(); render();
+  if(why) toast(why);
+}
+// A token carries its own expiry; read it so a stale session never shows data.
+function sessionValid(){
+  const s=session(); if(!s) return false;
+  try{
+    const b=String(s.token).split('.')[0].replace(/-/g,'+').replace(/_/g,'/');
+    const p=JSON.parse(atob(b));
+    if(p.x && Date.now()>p.x) return false;
+  }catch(e){}
+  return true;
+}
+// Ask the server whether this session is still on the team list (it re-reads
+// the role every call, so a removed or demoted login is caught here too).
+async function sessionCheck(){
+  const s=session(); if(!s || !cloudHasBackend()) return;
+  try{
+    const r=await fetch(CLOUD.url+'?me=1',{headers:{'x-session':s.token}});
+    if(r.status===401){ sessionDrop('Your sign-in is no longer valid — please sign in again'); return; }
+    if(!r.ok) return;
+    const j=await r.json();
+    if(j && j.email){
+      const changed = j.role!==s.role;
+      s.role=j.role; s.name=j.name||s.name;
+      localStorage.setItem(K_SESS,JSON.stringify(s));
+      if(changed){ ADMIN=false; ADMIN_USER=null; }
+      applySessionIdentity(true); renderGoogleBtn(); if(changed) render();
+    }
+  }catch(e){}
+}
+
+/* ---- LOGIN WALL ----
+   On the hosted site (automatedpest.com) the tracker shows nothing until a
+   company Google account is signed in. Signing out puts the wall back up.
+   Opened from a file or localhost there is no Google backend, so the wall
+   stays down and the PIN alone guards Admin, as before. */
+const K_PWUNLOCK='alp_pw_unlock';
+function authRequired(){
+  if(!cloudHasBackend()) return false;
+  if(/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) return false;
+  return window.__GCID!==false;          // false = backend answered "no Google login here"
+}
+function pwUnlocked(){ try{ return sessionStorage.getItem(K_PWUNLOCK)==='1'; }catch(e){ return false; } }
+function authOK(){ return !authRequired() || sessionValid() || pwUnlocked(); }
+function renderLoginWall(){
+  const w=document.getElementById('loginWall'); if(!w) return;
+  const walled=!authOK();
+  document.body.classList.toggle('walled',walled);
+  w.style.display=walled?'':'none';
+  if(!walled) return;
+  if(!w.dataset.built){
+    w.dataset.built='1';
+    w.innerHTML='<div class="card"><div class="ico">🔒</div><h2>ALP Sales Tracker</h2>'+
+      '<div class="sub">Sign in with your <b>@automatedlawnandpest.com</b> Google account to open the tracker.</div>'+
+      '<div class="gsi" id="wallGsi"></div>'+
+      '<div class="note" id="wallWait">Connecting to Google sign-in…</div>'+
+      '<div class="alt">Google not working? <a onclick="wallPassword()">Use the tracker password instead</a></div></div>';
+  }
+  const host=document.getElementById('wallGsi'), wait=document.getElementById('wallWait');
+  if(window.__GCID && typeof google!=='undefined' && google.accounts){
+    host.innerHTML='';
+    google.accounts.id.initialize({client_id:window.__GCID, callback:googleCredential});
+    google.accounts.id.renderButton(host,{theme:'outline',size:'large',text:'signin_with'});
+    if(wait) wait.style.display='none';
+  }
+}
+// Fallback for the day Google is down: the shared password, checked by the
+// server, good for this tab only (closing it brings the wall back).
+async function wallPassword(){
+  const p=prompt('Tracker password:',''); if(!p) return;
+  try{
+    const r=await fetch(CLOUD.url+'?me=1',{headers:{'x-app-password':p}});
+    if(!r.ok){ alert(r.status===401?'That password was rejected.':'Could not reach the server ('+r.status+').'); return; }
+  }catch(e){ alert('Could not reach the server.'); return; }
+  localStorage.setItem(CLOUD.pwKey,p);
+  try{ sessionStorage.setItem(K_PWUNLOCK,'1'); }catch(e){}
+  auditRecord('login',{method:'password'});
+  renderLoginWall();
+  if(!CLOUD.on) cloudStart(true);
+  render();
+}
+// Admin lock screen: sign in with Google (admins unlock on the spot) or use a PIN.
+function renderLockGoogle(){
+  const box=document.getElementById('lockGoogle'); if(!box) return;
+  const s=session();
+  if(!cloudHasBackend() || !window.__GCID){ box.innerHTML=''; return; }
+  if(s){
+    box.innerHTML='<div class="note">Signed in as <b>'+esc(s.name||s.email)+'</b>'+
+      (s.role==='admin'?'':' — not an admin login')+'. Enter an admin PIN below.</div>';
+    return;
+  }
+  if(typeof google==='undefined' || !google.accounts){ box.innerHTML='<div class="note">Loading Google sign-in…</div>'; return; }
+  box.innerHTML='<div class="note">Sign in with Google — admins unlock automatically.</div>'+
+    '<div class="gsi" id="lockGsi"></div><div class="or">or enter your PIN</div>';
+  const host=document.getElementById('lockGsi');
+  google.accounts.id.initialize({client_id:window.__GCID, callback:googleCredential});
+  google.accounts.id.renderButton(host,{theme:'outline',size:'medium',text:'signin_with'});
 }
 
 // Load a full state object into localStorage AND the in-memory globals, without a reload.
@@ -10340,7 +10465,7 @@ async function cloudPull(seed){
   if(!CLOUD.on) return;
   try{
     const {ok,status,j}=await cloudFetch('GET');
-    if(status===401){ CLOUD.on=false; cloudSetStatus('off'); cloudAskPassword(true); return; }
+    if(status===401){ CLOUD.on=false; cloudSetStatus('off'); if(j.revoked||session()) sessionDrop('Your sign-in is no longer valid — please sign in again'); else cloudAskPassword(true); return; }
     if(!ok){ CLOUD.lastErr=j.error||('HTTP '+status); cloudSetStatus('error'); return; }
     if(j.empty){
       // nothing in the cloud yet — push what's here to seed it
@@ -10367,7 +10492,7 @@ async function cloudPushNow(allowShrink){
     const hdrs={'x-base-updated': localStorage.getItem(CLOUD.appliedKey)||''};
     if(allowShrink) hdrs['x-allow-shrink']='1';
     const {ok,status,j}=await cloudFetch('POST',body,hdrs);
-    if(status===401){ CLOUD.on=false; cloudSetStatus('off'); cloudAskPassword(true); }
+    if(status===401){ CLOUD.on=false; cloudSetStatus('off'); if(j.revoked||session()) sessionDrop('Your sign-in is no longer valid — please sign in again'); else cloudAskPassword(true); }
     else if(status===409 && j.shrink){
       // This device holds far less than the cloud — almost always a fresh browser
       // about to destroy the real dataset. Default to pulling the cloud down.
@@ -10427,9 +10552,12 @@ async function cloudStart(seed){
 }
 function cloudInit(){
   cloudBadge(); cloudSetStatus('off');
+  if(!sessionValid() && session()) localStorage.removeItem(K_SESS);   // expired token: gone
+  renderLoginWall();                  // hosted site: wall first, before any data paints
   googleInit();
   applySessionIdentity(true);
-  if(cloudHasBackend() && cloudAuthed()) cloudStart(true);
+  sessionCheck();
+  if(cloudHasBackend() && authOK() && cloudAuthed()) cloudStart(true);
   // re-pull when the tab regains focus, so another device's changes show up
   document.addEventListener('visibilitychange',()=>{ if(!document.hidden && CLOUD.on) cloudPull(false); });
   // audit trail: verify the local chain on boot, ship anything queued

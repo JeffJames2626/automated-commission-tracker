@@ -20,12 +20,29 @@ import crypto from 'node:crypto';
 // either that session token (x-session) or the legacy shared password
 // (x-app-password) — so nothing breaks while people migrate to real logins.
 const ROOT_ADMIN = 'jeff@automatedlawnandpest.com';   // seeded as admin when the users table is empty
+// Only company Google accounts may ever sign in or be added to the team list.
+// Checked against the VERIFIED email Google returns (never a typed one), after
+// lowercasing and trimming, on an exact domain match — so gmail.com, a
+// look-alike like automatedlawnandpest.co, or a sub-domain all fail.
+const ALLOWED_DOMAIN = (process.env.ALLOWED_DOMAIN || 'automatedlawnandpest.com').toLowerCase();
+function normEmail(e) { return String(e || '').trim().toLowerCase(); }
+function companyEmail(e) {
+  e = normEmail(e);
+  const at = e.lastIndexOf('@');
+  return at > 0 && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e) && e.slice(at + 1) === ALLOWED_DOMAIN;
+}
 // The Google OAuth Client ID is PUBLIC by design (it ships in page JS on every
 // site using Google sign-in), so it lives here in code. An env var, if ever
 // set, still takes precedence.
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ||
   '96381167271-fg32gstb7df6k19fe0fe0dm0v64k0khr.apps.googleusercontent.com';
+// Set SESSION_SECRET in Vercel so session signing does not share a key with the
+// tracker password (until then it falls back to APP_PASSWORD so nothing breaks).
 function sessSecret() { return process.env.SESSION_SECRET || process.env.APP_PASSWORD || ''; }
+function safeEqual(a, b) {
+  const x = Buffer.from(String(a || '')), y = Buffer.from(String(b || ''));
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
 function signSession(payload) {
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
   const sig = crypto.createHmac('sha256', sessSecret()).update(body).digest('base64url');
@@ -36,7 +53,7 @@ function verifySession(token) {
     const [body, sig] = String(token || '').split('.');
     if (!body || !sig) return null;
     const want = crypto.createHmac('sha256', sessSecret()).update(body).digest('base64url');
-    if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(want))) return null;
+    if (!safeEqual(sig, want)) return null;
     const p = JSON.parse(Buffer.from(body, 'base64url').toString());
     if (!p.e || !p.x || Date.now() > p.x) return null;
     return p;   // {e: email, n: name, r: role, x: expiry}
@@ -85,7 +102,10 @@ export default async function handler(req, res) {
     } catch (e) { return res.status(502).json({ error: 'could not reach Google to verify' }); }
     if (info.aud !== GOOGLE_CLIENT_ID) return res.status(401).json({ error: 'token is for a different app' });
     if (info.email_verified !== 'true' && info.email_verified !== true) return res.status(401).json({ error: 'email not verified with Google' });
-    const email = String(info.email || '').toLowerCase();
+    const email = normEmail(info.email);
+    if (!companyEmail(email) || (info.hd && String(info.hd).toLowerCase() !== ALLOWED_DOMAIN))
+      return res.status(403).json({ denied: true, email, wrongDomain: true,
+        error: 'Only @' + ALLOWED_DOMAIN + ' Google accounts can use this tracker.' });
     const sql2 = neon(DB_URL);
     await ensureUsers(sql2);
     const u = await sql2`SELECT email, name, role FROM users WHERE email = ${email}`;
@@ -122,10 +142,10 @@ export default async function handler(req, res) {
   // ---- auth gate: a Google-backed session OR the legacy shared password ----
   const want = process.env.APP_PASSWORD || '';
   if (!want) return res.status(500).json({ error: 'APP_PASSWORD is not set on the server' });
-  const sess = verifySession(req.headers['x-session']);
+  let sess = verifySession(req.headers['x-session']);
   const got = req.headers['x-app-password'] || '';
-  if (!sess && got !== want) return unauthorized(res);
-  const who = sess ? sess.e : '';   // verified identity, when there is one
+  const pwOk = !!got && safeEqual(got, want);
+  if (!sess && !pwOk) return unauthorized(res);
 
   if (!DB_URL) return res.status(500).json({ error: 'No database is connected yet (DATABASE_URL missing)' });
 
@@ -139,6 +159,28 @@ export default async function handler(req, res) {
     )`;
   } catch (e) {
     return res.status(500).json({ error: 'DB connect failed: ' + (e.message || String(e)) });
+  }
+
+  // A session's role is NOT trusted from the token: it is re-read from the users
+  // table on every request, so removing or demoting someone takes effect on
+  // their very next click instead of when a 30-day token expires.
+  if (sess) {
+    try {
+      await ensureUsers(sql);
+      const u = await sql`SELECT name, role FROM users WHERE email = ${sess.e}`;
+      if (!u.length || !companyEmail(sess.e)) return res.status(401).json({ error: 'signed out', revoked: true });
+      sess = { e: sess.e, n: sess.n || u[0].name, r: u[0].role, x: sess.x };
+    } catch (e) {
+      return res.status(500).json({ error: 'DB op failed: ' + (e.message || String(e)) });
+    }
+  }
+  const who = sess ? sess.e : '';   // verified identity, when there is one
+
+  // ---- who am I: lets the page confirm its session is still good ----
+  if (req.method === 'GET' && req.query && req.query.me === '1') {
+    return res.status(200).json(sess
+      ? { email: sess.e, name: sess.n, role: sess.r, expires: sess.x, method: 'google' }
+      : { email: '', name: '', role: 'admin', method: 'password' });
   }
 
   try {
@@ -213,7 +255,7 @@ export default async function handler(req, res) {
     // Who may sign in with Google, and as what role. Root admin is seeded once.
     if (req.query && req.query.users === '1') {
       await ensureUsers(sql);
-      const isAdmin = (sess && sess.r === 'admin') || (!sess && got === want);   // password path counts as admin (legacy)
+      const isAdmin = (sess && sess.r === 'admin') || (!sess && pwOk);   // password path counts as admin (legacy)
       if (req.method === 'GET') {
         const rows = await sql`SELECT email, name, role, added_by, added_at FROM users ORDER BY added_at`;
         return res.status(200).json({ users: rows, you: who || '(password)' });
@@ -222,15 +264,17 @@ export default async function handler(req, res) {
       let body = req.body;
       if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = null; } }
       if (req.method === 'POST') {
-        const email = String(body && body.email || '').toLowerCase().trim();
-        const role = (body && body.role) === 'admin' ? 'admin' : 'rep';
+        const email = normEmail(body && body.email);
+        let role = (body && body.role) === 'admin' ? 'admin' : 'rep';
         if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'that is not an email address' });
+        if (!companyEmail(email)) return res.status(400).json({ error: 'only @' + ALLOWED_DOMAIN + ' addresses can be on the team list' });
+        if (email === ROOT_ADMIN) role = 'admin';   // the root admin can never be demoted
         await sql`INSERT INTO users (email, name, role, added_by) VALUES (${email}, ${String(body.name||'').slice(0,80)}, ${role}, ${who||'password-admin'})
           ON CONFLICT (email) DO UPDATE SET role = EXCLUDED.role, name = COALESCE(NULLIF(EXCLUDED.name,''), users.name)`;
         return res.status(200).json({ ok: true });
       }
       if (req.method === 'DELETE') {
-        const email = String((req.query.email) || (body && body.email) || '').toLowerCase().trim();
+        const email = normEmail((req.query.email) || (body && body.email));
         if (email === ROOT_ADMIN) return res.status(400).json({ error: 'the root admin cannot be removed' });
         await sql`DELETE FROM users WHERE email = ${email}`;
         return res.status(200).json({ ok: true });

@@ -277,6 +277,37 @@
         results.push({name:'google login plumbing exists', expected:true, actual:false, pass:false});
       }
 
+      /* ---------- LOGIN WALL: signed out = nothing to see ---------- */
+      if(typeof sessionValid==='function' && typeof authOK==='function' && typeof authRequired==='function'){
+        var wallSnap=localStorage.getItem('alp_session_v1');
+        var gcidSnap=window.__GCID;
+        function fakeTok(x){   // same shape the server signs: base64url(json).sig
+          var b=btoa(JSON.stringify({e:'t@automatedlawnandpest.com',n:'T',r:'rep',x:x})).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+          return b+'.notasignature';
+        }
+        localStorage.removeItem('alp_session_v1');
+        checkTrue('WALL no session is not valid', !sessionValid(), sessionValid());
+        localStorage.setItem('alp_session_v1', JSON.stringify({token:fakeTok(Date.now()-1000),email:'t@automatedlawnandpest.com',role:'rep'}));
+        checkTrue('WALL expired token is not valid', !sessionValid(), sessionValid());
+        localStorage.setItem('alp_session_v1', JSON.stringify({token:fakeTok(Date.now()+86400000),email:'t@automatedlawnandpest.com',role:'rep'}));
+        checkTrue('WALL live token is valid', sessionValid(), sessionValid());
+        // wall gating: no backend => never walled; backend + no session => walled
+        window.__GCID=false;
+        localStorage.removeItem('alp_session_v1');
+        checkTrue('WALL no Google backend -> wall stays down', authOK(), authOK());
+        if(location.protocol==='http:'||location.protocol==='https:'){
+          window.__GCID='fake-client-id';
+          var hosted = !/^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+          checkTrue('WALL hosted + signed out -> walled', authOK()===!hosted, authOK());
+          localStorage.setItem('alp_session_v1', JSON.stringify({token:fakeTok(Date.now()+86400000),email:'t@automatedlawnandpest.com',role:'rep'}));
+          checkTrue('WALL hosted + signed in -> open', authOK(), authOK());
+        }
+        window.__GCID=gcidSnap;
+        if(wallSnap!=null) localStorage.setItem('alp_session_v1',wallSnap); else localStorage.removeItem('alp_session_v1');
+      } else {
+        results.push({name:'login wall exists (sessionValid/authOK/authRequired)', expected:true, actual:false, pass:false});
+      }
+
       /* ---------- THE LAW: no invoice number + PDF, no invoiced/paid ---------- */
       if(typeof hasInvoiceEvidence==='function'){
         var law=mkRow({value:1000});
