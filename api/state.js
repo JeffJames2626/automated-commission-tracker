@@ -36,8 +36,14 @@ export default async function handler(req, res) {
     };
     if (!DB_URL) out.db = 'no DATABASE_URL';
     else {
-      try { const sql = neon(DB_URL); await sql`SELECT 1`; out.db = 'ok'; }
-      catch (e) { out.db = 'fail: ' + (e.message || String(e)).slice(0, 140); }
+      try {
+        const sql = neon(DB_URL);
+        await sql`CREATE TABLE IF NOT EXISTS app_state (id TEXT PRIMARY KEY, data TEXT, updated TIMESTAMPTZ NOT NULL DEFAULT now())`;
+        const r = await sql`SELECT length(data) AS len, updated FROM app_state WHERE id='main'`;
+        out.db = 'ok';
+        out.has_data = r.length > 0;
+        if (r.length) { out.data_kb = Math.round((r[0].len || 0) / 1024); out.updated = r[0].updated; }
+      } catch (e) { out.db = 'fail: ' + (e.message || String(e)).slice(0, 140); }
     }
     return res.status(200).json(out);
   }
