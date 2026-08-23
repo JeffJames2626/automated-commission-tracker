@@ -1719,6 +1719,55 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
 <button class="fab fab-left" onclick="openGear()" title="The most valuable doors to be at next, in driving order">&#9881;&#65039; Next stops <kbd>G</kbd></button>
 <button class="fab fab-mid" onclick="openAsk()" title="Ask anything about the status of a sold or invoiced job">&#10024; AI assistant</button>
 
+<div class="modal" id="editModal" onclick="if(event.target===this)closeEdit()">
+  <div class="sheet">
+    <div class="top">
+      <h3>Edit sale</h3>
+      <span class="note" id="eProv"></span>
+      <button class="x" onclick="closeEdit()" title="Close (Esc)">&times;</button>
+    </div>
+    <div class="body">
+      <div class="frow">
+        <div><label>Salesperson</label><select id="eRep"></select></div>
+        <div><label>Date sold</label><input type="date" id="eDate"></div>
+      </div>
+      <div style="margin-top:12px">
+        <label>Client</label>
+        <input id="eClient" autocomplete="off" list="qClientList">
+      </div>
+      <div style="margin-top:12px">
+        <label>Service / job</label>
+        <input id="eService" autocomplete="off">
+      </div>
+      <div class="frow" style="margin-top:12px">
+        <div><label>Basis</label><select id="eBasis">
+          <option value="contract">Contract total</option><option value="visit">Per visit</option>
+          <option value="monthly">Per month</option><option value="onetime">One-off</option></select></div>
+        <div><label>Qty</label><input type="number" id="eQty" step="1" min="1" value="1"></div>
+        <div><label>Value $</label><input type="number" id="eValue" step="0.01"></div>
+      </div>
+      <div class="frow" style="margin-top:12px">
+        <div><label>Type</label><select id="eType">
+          <option value="new">New client</option><option value="upsell">Upsell</option>
+          <option value="renewal">Renewal</option></select></div>
+        <div><label>Source</label><select id="eSrc">
+          <option value="SA">Service Autopilot</option><option value="EL">Elevation Advisor</option>
+          <option value="GV">Grovely</option><option value="MN">Manual</option></select></div>
+      </div>
+      <div style="margin-top:12px">
+        <label>Notes</label>
+        <input id="eNotes" autocomplete="off">
+      </div>
+      <div class="note" id="eWarn" style="margin-top:10px"></div>
+    </div>
+    <div class="foot">
+      <button class="p" onclick="saveEdit()">Save changes</button>
+      <button onclick="closeEdit()">Cancel</button>
+      <span class="note" style="margin-left:auto">Every change is logged on the sale</span>
+    </div>
+  </div>
+</div>
+
 <div class="modal" id="askModal" onclick="if(event.target===this)closeAsk()">
   <div class="sheet wide">
     <div class="top">
@@ -4950,6 +4999,12 @@ document.addEventListener('keydown',e=>{
   const askEl=document.getElementById('askModal');
   if(askEl && askEl.classList.contains('on')){
     if(e.key==='Escape'){ e.preventDefault(); closeAsk(); }
+    return;
+  }
+  const editEl=document.getElementById('editModal');
+  if(editEl && editEl.classList.contains('on')){
+    if(e.key==='Escape'){ e.preventDefault(); closeEdit(); }
+    else if(e.key==='Enter' && !e.shiftKey && !/TEXTAREA/.test(e.target.tagName||'')){ e.preventDefault(); saveEdit(); }
     return;
   }
   if(!typing && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key==='a'||e.key==='A')){
@@ -8385,7 +8440,7 @@ function renderData(){
   rows.slice(0,600).forEach(r=>{
     const p=person(r.rep), pre=p&&r.date<p.start;
     h+='<tr'+(pre?' style="opacity:.45"':'')+'>'+
-      '<td class="mono">'+fmtY(r.date)+(pre?' <span class="pill n">PRE-PLAN</span>':'')+'</td>'+
+      '<td class="mono">'+fmtY(r.date)+(pre?' <span class="pill n" title="Sold before '+esc(p?p.name.split(' ')[0]:'this rep')+'’s comp plan starts'+(p?' ('+fmtY(p.start)+')':'')+' — earns $0 commission and no production credit. Click Edit to fix the date or rep, or change the plan start on Comp plans.">PRE-PLAN</span>':'')+'</td>'+
       '<td><span class="dot" style="background:'+pColor(r.rep)+'"></span>'+esc(p?p.name:'—')+'</td>'+
       '<td><a href="#" onclick="openClient('+JSON.stringify(r.client).replace(/"/g,'&quot;')+
         ');return false;"><b>'+esc(r.client)+'</b></a></td><td>'+esc(r.service||'—')+'</td>'+
@@ -8397,7 +8452,8 @@ function renderData(){
         ((r.edits&&r.edits.some(e=>e.by!=='sync'&&!/^(completed|invoiced|paid)$/.test(e.f)))?' <span class="pill n" title="Corrected by hand after it was logged — the Info button shows what and when">EDITED</span>':'')+
         (isSplit(r)?' <span class="pill '+(splitPending(r)?'no':'ok')+'" title="'+esc(rowShares(r).map(s=>{const sp=person(s.rep);return (sp?sp.name:'?')+' '+num(s.frac*100,0)+'%';}).join(' / '))+(splitPending(r)?' — commission HELD until both reps and an admin approve':' — approved')+'">'+(splitPending(r)?'SPLIT: HELD':'SPLIT ✓')+'</span>':'')+'</td>'+
       '<td><span class="pill st-'+stageOf(r)+'">'+STAGE_LABEL[stageOf(r)].toUpperCase()+'</span></td>'+
-      '<td class="num"><button class="sm" onclick="rowInfo(\''+r.id+'\')" title="Where this sale came from and everything that happened to it">Info</button> '+
+      '<td class="num"><button class="sm" onclick="openEdit(\''+r.id+'\')" title="Fix the client, date, value, rep, or type — changes are logged">Edit</button> '+
+        '<button class="sm" onclick="rowInfo(\''+r.id+'\')" title="Where this sale came from and everything that happened to it">Info</button> '+
         (splitPending(r)?'<button class="sm p" onclick="approveSplit(\''+r.id+'\')" title="Record rep and admin approvals — commission is held until all are in">Approve</button> ':
           '<button class="sm" onclick="editSplit(\''+r.id+'\')" title="Split this sale\'s value and commission between reps">Split</button> ')+
         '<button class="sm danger" onclick="delRow(\''+r.id+'\')">Delete</button></td></tr>';
@@ -8428,6 +8484,76 @@ function delRow(id){
   if(imported) addTombstone(r);   // remember the deletion so the next import respects it
   ROWS=ROWS.filter(x=>x.id!==id); save(K_ROWS,ROWS); render();
 }
+/* ---- edit a sale after creation ----
+   Fixes wrong client, date, value, rep, type — the things imports and quick
+   fingers get wrong. Every change goes through logEdit (by 'user'), so the
+   original stays on the record, the EDITED pill appears, and a source re-import
+   can never overwrite the correction. */
+let EDIT_ID=null;
+function openEdit(id){
+  const r=ROWS.find(x=>x.id===id); if(!r)return;
+  EDIT_ID=id;
+  fillPeople('eRep', r.rep); document.getElementById('eRep').value=r.rep;
+  document.getElementById('eDate').value=r.date;
+  document.getElementById('eClient').value=r.client;
+  document.getElementById('eService').value=r.service||'';
+  document.getElementById('eBasis').value=basisOf(r);
+  document.getElementById('eQty').value=qtyOf(r);
+  document.getElementById('eValue').value=r.value;
+  document.getElementById('eType').value=r.type;
+  document.getElementById('eSrc').value=r.src||'MN';
+  document.getElementById('eNotes').value=r.notes||'';
+  document.getElementById('eProv').textContent=provLine(r);
+  // reuse the quick-add client suggestions
+  const cdl=document.getElementById('qClientList');
+  if(cdl && !cdl.dataset.built && CLIENTS.length){
+    cdl.innerHTML=CLIENTS.filter(c=>!c.gone).slice(0,2000).map(c=>'<option value="'+esc(c.n)+'">').join('');
+    cdl.dataset.built='1';
+  }
+  const w=[];
+  const p=person(r.rep);
+  if(p && r.date<p.start) w.push('<b>PRE-PLAN:</b> sold before '+esc(p.name.split(' ')[0])+'’s plan starts ('+fmtY(p.start)+'), so it earns $0 commission. Fix the date, pick another rep, or move the plan start on Comp plans.');
+  if(r.paid) w.push('<b>Commission already paid on this sale.</b> The paid month keeps its frozen figure; changing value or type here only affects what is owed going forward (and any clawback).');
+  if(r.voidType) w.push('This sale is reversed ('+esc(VOID_LABEL[r.voidType]||r.voidType)+'). Un-reverse it on the Pipeline tab if that was a mistake.');
+  document.getElementById('eWarn').innerHTML=w.join('<br><br>');
+  document.getElementById('editModal').classList.add('on');
+}
+function closeEdit(){ EDIT_ID=null; document.getElementById('editModal').classList.remove('on'); }
+function saveEdit(){
+  const r=ROWS.find(x=>x.id===EDIT_ID); if(!r){closeEdit();return;}
+  const date=pDate(document.getElementById('eDate').value);
+  const client=document.getElementById('eClient').value.trim();
+  const value=pNum(document.getElementById('eValue').value);
+  if(!date){ toast('That date is not readable'); return; }
+  if(!client){ toast('Client name is required'); return; }
+  if(!(value>0) && !r.voidType){ toast('Value has to be more than zero'); return; }
+  const qty=Math.max(1,Math.round(pNum(document.getElementById('eQty').value))||1);
+  const changes=[
+    ['rep',   document.getElementById('eRep').value],
+    ['date',  date],
+    ['client',client],
+    ['service',document.getElementById('eService').value.trim()],
+    ['basis', document.getElementById('eBasis').value],
+    ['qty',   qty],
+    ['value', value],
+    ['type',  document.getElementById('eType').value],
+    ['src',   document.getElementById('eSrc').value],
+    ['notes', document.getElementById('eNotes').value.trim()]
+  ];
+  let touched=0;
+  changes.forEach(function(c){
+    const f=c[0], nv=c[1];
+    const ov=f==='basis'?basisOf(r) : f==='qty'?qtyOf(r) : r[f];
+    if(String(ov==null?'':ov)===String(nv==null?'':nv)) return;
+    logEdit(r,f,ov,nv,'user');
+    r[f]=nv; touched++;
+  });
+  if(!touched){ closeEdit(); toast('Nothing changed'); return; }
+  save(K_ROWS,ROWS);
+  closeEdit(); render();
+  toast(touched+' field'+(touched===1?'':'s')+' updated — the original stays on the record');
+}
+
 // Split a sale's value and commission between reps, prompt-style:
 //   "Zach 60, Josh 40"  — percentages are normalised; blank clears the split.
 function editSplit(id){
