@@ -1887,8 +1887,8 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
     </div>
     <div class="body">
       <div class="drop" id="qDrop" onclick="document.getElementById('qPdf').click()">
-        <div class="t">Drop an invoice or proposal PDF here</div>
-        <div class="s" id="qDropSub">Claude reads it and fills this form in — you check it before it saves</div>
+        <div class="t">Drop the invoice PDF here</div>
+        <div class="s" id="qDropSub">Stored with the sale as evidence when you save · with a Claude key it also fills this form in</div>
       </div>
       <input type="file" id="qPdf" accept="application/pdf,.pdf" style="display:none" onchange="pdfPicked(event)">
       <div id="qFound"></div>
@@ -4524,33 +4524,65 @@ async function askClaude(b64, model, key){
 
 function pdfPicked(e){ const f=e.target.files[0]; if(f) readPdf(f); e.target.value=''; }
 
+let PENDING_PDF=null;   // a PDF dropped on quick-add, stored with the sale when it saves
+// Store a held PDF against a just-saved sale: evidence vault + local folder copy.
+// Fire-and-forget — the save itself never waits on the network.
+async function attachPendingPdf(row, pdf){
+  try{
+    let stored=false;
+    if(CLOUD.on && cloudPw()){
+      const sha=await sha256hex(pdf.b64.slice(0,100000)+':'+pdf.b64.length);
+      const up=await fetch(CLOUD.url+'?file=1',{method:'POST',
+        headers:{'content-type':'application/json','x-app-password':cloudPw()},
+        body:JSON.stringify({name:pdf.name,sha:sha,data:pdf.b64})});
+      if(up.ok){
+        const j=await up.json();
+        (row.files=row.files||[]).push({id:j.id,name:pdf.name,kb:pdf.kb,sha:sha,at:todayISO()});
+        save(K_ROWS,ROWS);
+        auditRecord('pdf-attach',{rowId:row.id,client:row.client,file:pdf.name,kb:pdf.kb,sha:sha,vaultId:j.id});
+        stored=true;
+      }
+    }
+    const archName=(row.invNo?('INV '+row.invNo+' - '):'')+row.client+' - '+pdf.name;
+    const localPath=await archivePdfLocal(archName, pdf.b64);
+    toast(stored
+      ? '📎 Invoice stored with '+row.client+(localPath?' (+ folder copy)':'')
+      : '🚨 Invoice NOT stored — turn ☁ on and re-attach via Edit');
+    if(typeof renderData==='function') renderData();
+  }catch(e){ toast('🚨 Invoice NOT stored — re-attach via Edit'); }
+}
 async function readPdf(file){
   const drop=document.getElementById('qDrop'), sub=document.getElementById('qDropSub');
-  const cfg=aiCfg();
-  if(!cfg.key){
-    document.getElementById('qFound').innerHTML='<div class="warnbox" style="margin-top:12px">'+
-      '<b>No API key set yet.</b> Import tab → "Reading PDFs with Claude — setup". It takes a minute: '+
-      'get a key from console.anthropic.com, paste it in, and this works from then on.</div>';
-    return;
-  }
   if(!/pdf$/i.test(file.name) && file.type!=='application/pdf'){
     toast('That is not a PDF'); return;
   }
-  if(file.size>30*1024*1024){ toast('That PDF is too big — 30MB limit'); return; }
-
+  if(file.size>5*1024*1024){ toast('That PDF is too big — 5MB limit for evidence storage'); return; }
+  // ALWAYS hold the PDF: it gets stored with the sale as evidence when you save,
+  // key or no key. The Claude key only powers the form auto-fill below.
+  const b64All=await fileToBase64(file);
+  PENDING_PDF={name:file.name, b64:b64All, kb:Math.round(file.size/1024), invNo:''};
+  const cfg=aiCfg();
+  if(!cfg.key){
+    document.getElementById('qFound').innerHTML='<div class="found" style="margin-top:12px"><h5>📎 '+esc(file.name)+' attached</h5>'+
+      '<div class="note">It will be <b>stored with this sale as evidence</b> the moment you save — THE LAW’s PDF half, handled.<br><br>'+
+      'ℹ️ No Claude API key set, so the form can’t auto-fill — type the details in yourself. '+
+      '(Import tab → “Reading PDFs with Claude” to turn on auto-fill; takes a minute, costs pennies per PDF.)</div></div>';
+    return;
+  }
   drop.classList.add('busy');
   sub.innerHTML='<span class="spin"></span>Reading '+esc(file.name)+'…';
   document.getElementById('qFound').innerHTML='';
   try{
-    const b64=await fileToBase64(file);
+    const b64=b64All;
     const {out,cost}=await askClaude(b64,cfg.model,cfg.key);
+    if(out && out.invoice_number) PENDING_PDF.invNo=String(out.invoice_number).trim();
     applyExtract(out,file.name,cost);
   }catch(err){
     document.getElementById('qFound').innerHTML='<div class="warnbox" style="margin-top:12px">'+
       '<b>Could not read that PDF.</b><br>'+esc(err.message)+'</div>';
   }finally{
     drop.classList.remove('busy');
-    sub.textContent='Claude reads it and fills this form in — you check it before it saves';
+    sub.textContent='Stored with the sale as evidence when you save · with a Claude key it also fills this form in';
     renderAIStatus();
   }
 }
@@ -5038,6 +5070,7 @@ function openQuick(){
   TYPE_MANUAL=false;
   attachClientPicker(document.getElementById('qClient'));
   attachServicePicker(document.getElementById('qService'));
+  PENDING_PDF=null;   // a fresh quick-add starts with no held PDF
   document.getElementById('qTypeNote').innerHTML='';
   renderQRecent();
   m.classList.add('on');
@@ -5117,9 +5150,11 @@ function quickSave(again){
     voidType:'',voidDate:'',voidAmt:0,voidNote:'',
     srcAt:new Date().toISOString()};
   row.orig=snapOrig(row);
+  if(PENDING_PDF && PENDING_PDF.invNo && !row.invNo) row.invNo=PENDING_PDF.invNo;   // the printed invoice # rides along
   ROWS.push(row); save(K_ROWS,ROWS);
   auditRecord('create',{rowId:row.id, client:row.client, value:bookedValue(row), type:row.type,
     rep:(person(row.rep)||{}).name||row.rep, src:row.src});
+  if(PENDING_PDF){ attachPendingPdf(row, PENDING_PDF); PENDING_PDF=null; }
   QADDED.unshift(row.id);
 
   GLOBAL.lastRep=rp; GLOBAL.lastSrc=row.src; save(K_GLOBAL,GLOBAL);
