@@ -104,6 +104,9 @@ tr.tot:hover{background:var(--band)}
 .av{display:inline-flex;align-items:center;justify-content:center;border-radius:50%;overflow:hidden;color:#fff;font-weight:700;flex:none;vertical-align:middle;letter-spacing:.02em}
 .av img{width:100%;height:100%;object-fit:cover;display:block}
 a.emplink{color:inherit;text-decoration:none;border-bottom:1px dotted #b9c2b2;cursor:pointer}
+a.maplink{color:inherit;text-decoration:none;border-bottom:1px dotted #b9c2b2;white-space:nowrap}
+a.maplink:hover{color:var(--blue);border-bottom-color:var(--blue)}
+a.maplink.ico{border:none;margin-left:4px;font-size:12px}
 a.emplink:hover{color:var(--grn-d);border-bottom-color:var(--grn)}
 .roster{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
 .rcard{display:flex;gap:12px;align-items:center;padding:12px 14px;cursor:pointer;background:var(--paper);border:1px solid var(--line);border-radius:11px;box-shadow:var(--shadow);transition:.12s;min-width:0}
@@ -2576,6 +2579,31 @@ function seasonShare(fromISO,toISO){
 function payStart(p){ return (p.payFrom && p.payFrom<p.start) ? p.payFrom : p.start; }
 
 const norm=x=>String(x||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+
+/* ---- GOOGLE MAPS: every property links straight to the map ----
+   A roster record carries addr/city/zip (and lat/lng once geocoded); an
+   address string is accepted too. Street address is preferred as the query
+   so Google resolves the real parcel; coordinates are the fallback. */
+function mapQuery(c){
+  if(!c) return '';
+  if(typeof c==='string') return c.trim();
+  const a=[c.addr,c.city,c.state,c.zip].filter(Boolean).join(', ');
+  if(a) return a;
+  return (c.lat&&c.lng)?(c.lat+','+c.lng):'';
+}
+function mapHref(c){ const q=mapQuery(c); return q?'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(q):''; }
+function dirHref(c){ const q=mapQuery(c); return q?'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(q):''; }
+// Text link: the address itself opens Google Maps in a new tab.
+function mapLink(c,label){
+  const h=mapHref(c); const txt=label!=null?label:(typeof c==='string'?c:[c&&c.addr,c&&c.city].filter(Boolean).join(', '));
+  if(!h) return esc(txt);
+  return '<a class="maplink" href="'+h+'" target="_blank" rel="noopener" title="Open in Google Maps" onclick="event.stopPropagation()">📍 '+esc(txt)+'</a>';
+}
+// Icon-only pin for a client name in a table (looked up on the roster by name).
+function mapPin(clientName){
+  const c=CLIENTS.find(x=>norm(x.n)===norm(clientName)); const h=mapHref(c);
+  return h?'<a class="maplink ico" href="'+h+'" target="_blank" rel="noopener" title="'+esc(mapQuery(c))+' — open in Google Maps" onclick="event.stopPropagation()">📍</a>':'';
+}
 
 /* ---- history: what a customer has already bought ---- */
 // Built once from the invoice audit, because scanning 4,500 lines per lookup is wasteful.
@@ -5230,7 +5258,7 @@ function renderClientPage(){
   x+='<div class="cphead"><div style="flex:1;min-width:240px">';
   if(c){
     x+='<div class="sub">'+
-      (c.addr?esc(c.addr)+(c.city?', '+esc(c.city):'')+(c.zip?' '+esc(c.zip):'')+'<br>':'')+
+      (c.addr?mapLink(c, c.addr+(c.city?', '+c.city:'')+(c.zip?' '+c.zip:''))+' · <a class="maplink" href="'+dirHref(c)+'" target="_blank" rel="noopener">Directions</a><br>':'')+
       (c.em?esc(c.em)+' · ':'')+(c.ph?esc(c.ph):'')+
       '</div>';
   } else {
@@ -6133,7 +6161,7 @@ function renderClients(){
     const age=lead&&c.lead?Math.round((dObj(todayISO())-dObj(c.lead))/86400000):null;
     x+='<tr'+(c.gone?' style="opacity:.45"':'')+'>'+
       '<td><a href="#" onclick="openClient('+JSON.stringify(c.n).replace(/"/g,'&quot;')+');return false;"><b>'+
-        esc(c.n)+'</b></a>'+
+        esc(c.n)+'</b></a>'+(mapHref(c)?'<a class="maplink ico" href="'+mapHref(c)+'" target="_blank" rel="noopener" title="'+esc(mapQuery(c))+' — open in Google Maps">📍</a>':'')+
         (lead?' <span class="pill mid">LEAD</span>':'')+
         (c.converted?' <span class="pill ok">CONVERTED</span>':(c.gone?' <span class="pill n">GONE</span>':''))+
         (c.u?'<div class="note">'+esc(c.u)+'</div>':'')+'</td>'+
@@ -6600,7 +6628,7 @@ function pickPoint(i){
   let h='<div class="card" style="box-shadow:none"><div class="pad" style="padding:13px 14px">';
   h+='<div style="font-weight:700;font-size:14.5px">'+esc(c.n)+'</div>';
   h+='<div class="note">'+(isLead(c)?'Lead':'Client')+(c.at?' · '+esc(c.at):'')+
-     (c.zip?' · '+esc(c.zip):'')+(c.addr?'<br>'+esc(c.addr):'')+'</div>';
+     (c.zip?' · '+esc(c.zip):'')+(c.addr?'<br>'+mapLink(c,c.addr):'')+'</div>';
   RADII.forEach(rr=>{
     const all=near(c,rr[0]).filter(x=>x.c!==c);
     const cls=all.filter(x=>isClient(x.c)).length, lds=all.filter(x=>isLead(x.c)).length;
@@ -7754,7 +7782,7 @@ function renderCloverleaf(){
       '<div class="sub">'+esc(x.r.service)+' finished '+fmtY(x.r.completed)+
         (x.age===0?' — today':' — '+x.age+' day'+(x.age===1?'':'s')+' ago')+
         ' · '+money(bookedValue(x.r))+
-        (c.addr?'<br>'+esc(c.addr):'')+'</div>'+
+        (c.addr?'<br>'+mapLink(c,c.addr):'')+'</div>'+
       '<div class="doors">'+
         x.doors.map((d,i)=>'<div class="door"><span class="num">'+(i+1)+'</span>'+
           '<span class="who"><b>'+esc(d.c.n)+'</b>'+
@@ -8744,7 +8772,7 @@ function renderOSC(){
               o.outcome==='held'?'mid':past?'n':'sa';
     h+='<tr><td class="mono">'+fmtY(day)+'<div class="note">'+esc(o.when.slice(11,16))+
         ' · '+o.mins+' min'+(past&&o.outcome==='booked'?' · <span style="color:var(--red)">needs an outcome</span>':'')+'</div></td>'+
-      '<td><b>'+esc(o.client)+'</b>'+(o.addr?'<div class="note">'+esc(o.addr)+'</div>':'')+'</td>'+
+      '<td><b>'+esc(o.client)+'</b>'+(o.addr?'<div class="note">'+mapLink(o.addr)+'</div>':'')+'</td>'+
       '<td><span class="dot" style="background:'+pColor(o.rep)+'"></span>'+(p?empLink(p.id,empShort(p)):'—')+'</td>'+
       '<td class="note">'+esc(o.want||'—')+'</td>'+
       '<td><select style="max-width:130px;font-size:12.5px;padding:4px 6px" onchange="setOSC(&quot;'+o.id+'&quot;,&quot;outcome&quot;,this.value)">'+
@@ -9317,6 +9345,8 @@ function hReadFile(e){
    RENDER — sales + season
    ============================================================ */
 function renderData(){
+  const _pins={}; CLIENTS.forEach(c=>{ const k=norm(c.n); if(!_pins[k] && mapHref(c)) _pins[k]='<a class="maplink ico" href="'+mapHref(c)+'" target="_blank" rel="noopener" title="'+esc(mapQuery(c))+' — open in Google Maps" onclick="event.stopPropagation()">📍</a>'; });
+  const pinOf=n=>_pins[norm(n)]||'';
   const q=document.getElementById('fSearch').value.toLowerCase().trim();
   const fr=document.getElementById('fRep').value, fs=document.getElementById('fSource').value;
   const ft=document.getElementById('fType').value, ff=document.getElementById('fFrom').value, fto=document.getElementById('fTo').value;
@@ -9343,7 +9373,7 @@ function renderData(){
       '<td class="mono">'+fmtY(r.date)+(pre?' <span class="pill n" title="Sold before '+esc(p?p.name.split(' ')[0]:'this rep')+'’s comp plan starts'+(p?' ('+fmtY(p.start)+')':'')+' — earns $0 commission and no production credit. Click Edit to fix the date or rep, or change the plan start on Comp plans.">PRE-PLAN</span>':'')+'</td>'+
       '<td><span class="dot" style="background:'+pColor(r.rep)+'"></span>'+(p?empLink(p.id):'—')+(isSplit(r)?' <span class="pill n" title="split sale">split</span>':'')+'</td>'+
       '<td><a href="#" onclick="openClient('+JSON.stringify(r.client).replace(/"/g,'&quot;')+
-        ');return false;"><b>'+esc(r.client)+'</b></a></td><td>'+esc(r.service||'—')+'</td>'+
+        ');return false;"><b>'+esc(r.client)+'</b></a>'+pinOf(r.client)+'</td><td>'+esc(r.service||'—')+'</td>'+
       '<td class="num mono">'+money2(bookedValue(r))+
         (basisOf(r)!=='contract'?'<div class="note">'+esc(valueLabel(r))+'</div>':'')+'</td>'+
       '<td><button class="sm" onclick="toggleType(\''+r.id+'\')" title="Click to cycle">'+
@@ -10080,7 +10110,7 @@ function renderGearPlan(){
   plan.forEach((s,i)=>{
     const c=s.c, tel=String(c.ph||'').replace(/[^0-9+]/g,'');
     h+='<div class="gstop"><div class="rank">'+(i+1)+'</div><div class="g">'+
-      '<b>'+esc(c.n)+'</b> <span class="note">'+esc(gearAddr(c)||'no address on file')+'</span><br>'+
+      '<b>'+esc(c.n)+'</b> <span class="note">'+(gearAddr(c)?mapLink(c,gearAddr(c)):'no address on file')+'</span><br>'+
       '<span class="mono"><b>'+money(s.val)+'</b></span> <span class="note">('+esc(s.valWhy)+')</span> · '+
       '<b>'+num(s.prob*100,0)+'%</b> likely · <span class="note">'+s.time+
       (i?' · '+num(s.leg,1)+' mi from stop '+i:'')+(c.sp?' · owner: '+esc(c.sp):'')+'</span>'+
@@ -11333,7 +11363,7 @@ function renderEmp(){
       '<button class="sm" onclick="epSec(\'history\')">Full history →</button>';
   }
   else if(EP_SEC==='sales'){
-    const addrOf={}; CLIENTS.forEach(c=>{ const k=norm(c.n); if(!addrOf[k]) addrOf[k]=[c.addr,c.city].filter(Boolean).join(', '); });
+    const addrOf={}; CLIENTS.forEach(c=>{ const k=norm(c.n); if(!addrOf[k] && c.addr) addrOf[k]=mapLink(c); });
     const services=[...new Set(D.rows.map(r=>r.service).filter(Boolean))].sort();
     const F=EP_F;
     let list=D.rows.filter(r=>(!F.from||r.date>=F.from)&&(!F.to||r.date<=F.to)&&(!F.service||r.service===F.service)&&(!F.type||r.type===F.type)&&(!F.src||r.src===F.src)&&(!F.status||stageOf(r)===F.status));
@@ -11350,7 +11380,7 @@ function renderEmp(){
     list.forEach(r=>{
       const sh=shareFor(r,p.id), st=stageOf(r), cs=empCommState(r), addr=addrOf[norm(r.client)]||'';
       h+='<tr'+(r.voidType?' style="opacity:.55"':'')+'><td class="mono">'+fmtY(r.date)+'</td>'+
-        '<td><a href="#" onclick="openClient('+JSON.stringify(r.client).replace(/"/g,'&quot;')+');return false"><b>'+esc(r.client)+'</b></a>'+(addr?'<div class="note">'+esc(addr)+'</div>':'')+(isSplit(r)?' <span class="pill n">split '+Math.round(sh*100)+'%</span>':'')+
+        '<td><a href="#" onclick="openClient('+JSON.stringify(r.client).replace(/"/g,'&quot;')+');return false"><b>'+esc(r.client)+'</b></a>'+(addr?'<div class="note">'+addr+'</div>':'')+(isSplit(r)?' <span class="pill n">split '+Math.round(sh*100)+'%</span>':'')+
         ((r.repHow==='unmatched-default'||r.repHow==='orphan')?' <span class="pill no" title="source said: '+esc(r.repRaw||r.repOrphan||'')+'">NEEDS REVIEW</span>':'')+'</td>'+
         '<td class="note">'+esc(r.service||'')+'</td><td>'+esc(TYPE_LABEL[r.type]||r.type)+'</td>'+
         '<td class="num mono">'+money(netValue(r)*sh)+(r.voidType?'<div class="note">'+esc(r.voidType)+'</div>':'')+'</td>'+
@@ -11364,7 +11394,8 @@ function renderEmp(){
   }
   else if(EP_SEC==='invoices'){
     const openBy={}; OPENINV.forEach(v=>{ openBy[String(v.i)]=v; });
-    const addrOf={}; CLIENTS.forEach(c=>{ const k=norm(c.n); if(!addrOf[k]) addrOf[k]=[c.addr,c.city].filter(Boolean).join(', '); });
+    const addrOf={}; CLIENTS.forEach(c=>{ const k=norm(c.n); if(!addrOf[k] && c.addr) addrOf[k]=mapLink(c); });
+    OPENINV.forEach(v=>{ const k=norm(v.c); if(!addrOf[k] && v.addr) addrOf[k]=mapLink({addr:v.addr,city:v.city}); });
     const byC={}; D.inv.forEach(x=>{ const k=norm(x.c); (byC[k]=byC[k]||{n:0,v:0}); byC[k].n++; byC[k].v+=(+x.v||0); });
     const openTot=D.inv.filter(x=>openBy[String(x.i)]).reduce((a,x)=>a+(+x.v||0),0);
     h+='<div class="note" style="margin-bottom:8px">Lines from the Service Autopilot invoice export whose <b>Sales Rep</b> field resolves to this person. Amounts are pre-tax. This never changes who a sale is credited to: where a line names this person but the matching sale is credited to someone else, it is marked.</div>';
@@ -11374,7 +11405,7 @@ function renderEmp(){
       const ob=openBy[String(x.i)]; const addr=addrOf[norm(x.c)]||'';
       const sale=ROWS.find(r=>norm(r.client)===norm(x.c) && ((r.invNo&&String(r.invNo)===String(x.i)) || Math.abs((dObj(x.d)-dObj(r.date))/86400000)<=60));
       const other=sale && shareFor(sale,p.id)===0;
-      h+='<tr><td class="mono">'+fmtY(x.d)+'</td><td class="mono">'+esc(x.i||'')+'</td><td><a href="#" onclick="openClient('+JSON.stringify(x.c).replace(/"/g,'&quot;')+');return false">'+esc(x.c)+'</a>'+(addr?'<div class="note">'+esc(addr)+'</div>':'')+'</td>'+
+      h+='<tr><td class="mono">'+fmtY(x.d)+'</td><td class="mono">'+esc(x.i||'')+'</td><td><a href="#" onclick="openClient('+JSON.stringify(x.c).replace(/"/g,'&quot;')+');return false">'+esc(x.c)+'</a>'+(addr?'<div class="note">'+addr+'</div>':'')+'</td>'+
         '<td class="note">'+esc(x.s||'')+'</td><td class="num mono">'+money2(+x.v||0)+(+x.t?'<div class="note">+'+money2(+x.t)+' tax</div>':'')+'</td>'+
         '<td>'+(ob?'<span class="pill '+(/past/i.test(ob.s)?'no':'mid')+'">'+esc(ob.s)+'</span>':'<span class="pill ok" title="not in the open-balances snapshot">cleared</span>')+'</td>'+
         '<td>'+(sale?'<button class="sm" onclick="rowInfo(\''+sale.id+'\')">'+esc(TYPE_LABEL[sale.type]||sale.type)+' · '+money(netValue(sale))+'</button>'+(other?' <span class="pill no" title="this invoice line names '+esc(empShort(p))+' but the sale is credited to '+esc(empName(person(sale.rep)))+'">credited to '+esc(empShort(person(sale.rep)))+'</span>':''):'<span class="note">no logged sale</span>')+'</td></tr>';
@@ -11416,9 +11447,9 @@ function renderEmp(){
   }
   else if(EP_SEC==='accounts'){
     h+='<div class="note" style="margin-bottom:8px">Accounts whose Service Autopilot salesperson resolves to this person (through a confirmed mapping or a takeover rule).</div>';
-    h+='<div class="scroll tallscroll"><table><thead><tr><th>Account</th><th>Type</th><th>City</th><th>Since</th><th>SA says</th></tr></thead><tbody>';
+    h+='<div class="scroll tallscroll"><table><thead><tr><th>Account</th><th>Type</th><th>Property</th><th>Since</th><th>SA says</th></tr></thead><tbody>';
     D.accts.slice().sort((a,b)=>(a.n||'').localeCompare(b.n||'')).slice(0,500).forEach(c=>{
-      h+='<tr><td><a href="#" onclick="openClient('+JSON.stringify(c.n).replace(/"/g,'&quot;')+');return false"><b>'+esc(c.n)+'</b></a></td><td>'+esc(c.ct||'')+'</td><td class="note">'+esc(c.city||'')+'</td><td class="mono">'+(c.since?fmtY(c.since):c.lead?fmtY(c.lead):'—')+'</td><td class="note">'+esc(c.sp||'')+(c.spWas?' <span class="note">(was '+esc(c.spWas)+')</span>':'')+'</td></tr>';
+      h+='<tr><td><a href="#" onclick="openClient('+JSON.stringify(c.n).replace(/"/g,'&quot;')+');return false"><b>'+esc(c.n)+'</b></a></td><td>'+esc(c.ct||'')+'</td><td class="note">'+(c.addr?mapLink(c):esc(c.city||''))+'</td><td class="mono">'+(c.since?fmtY(c.since):c.lead?fmtY(c.lead):'—')+'</td><td class="note">'+esc(c.sp||'')+(c.spWas?' <span class="note">(was '+esc(c.spWas)+')</span>':'')+'</td></tr>';
     });
     h+='</tbody></table></div>'+(D.accts.length>500?'<div class="note">Showing 500 of '+D.accts.length.toLocaleString()+'.</div>':'');
   }
