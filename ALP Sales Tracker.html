@@ -259,6 +259,14 @@ footer{padding:24px 0 40px;font-size:12px;color:var(--muted);text-align:center}
 .fab-mid{right:auto;left:50%;transform:translateX(-50%);background:#ee4f9a}
 .fab-mid:hover{background:#d63e87;transform:translateX(-50%) translateY(-1px)}
 
+/* ---- the Data Hawk's perch: a chip that always shows what it sees ---- */
+.hawkchip{background:transparent;border:1px solid #4a5346;color:#a9b3a5;border-radius:20px;
+  padding:7px 13px;font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap;transition:.12s}
+.hawkchip.ok{color:#8fce8f;border-color:#3c5a3c}
+.hawkchip.alert{background:var(--gold);border-color:var(--gold);color:#241f14}
+.hawkchip.alert:hover{background:#b8931f}
+.hawkchip.ok:hover{border-color:#5a7a5a}
+
 /* ---- phone layout: hamburger header + fixed bottom action bar ---- */
 #hamBtn{display:none;background:transparent;border:1px solid #4a5346;color:#e6eae2;
   font-size:20px;line-height:1;padding:8px 13px;border-radius:8px}
@@ -1187,8 +1195,8 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
     </section>
 
     <section class="adminsec">
-      <div class="hdr"><h3>Data checks</h3>
-        <span class="hint">Duplicates, gaps and figures that do not add up. Worth a look before a commission run.</span></div>
+      <div class="hdr"><h3>🦅 Data Hawk</h3>
+        <span class="hint">The tracker’s discrepancy hunter — doubles across systems, drifting figures, money moving when it shouldn’t. It sweeps every record so nothing slips into a commission run.</span></div>
       <div class="tiles" id="chkTiles" style="margin-bottom:16px"></div>
       <div id="chkBody"></div>
     </section>
@@ -2797,7 +2805,7 @@ function render(){
   renderTeam(); renderScore(); renderPlanList(); planToForm(); renderScenarios(); renderHours();
   renderData(); renderSeason(); renderHoursTab(); renderPipe(); renderOSC(); renderAdj(); renderComm();
   renderClients(); renderTakeover(); renderProperty(); renderMap(); renderRevenue(); renderPayments(); renderBalances(); renderAlerts(); renderAIStatus();
-  renderPauseBar();
+  renderPauseBar(); renderHawkChip();
 }
 function setHWho(v){ HWHO=v; renderHoursTab(); }
 
@@ -6503,10 +6511,35 @@ function uploadStatusText(){
   if(formers) bits.push(formers+' active accounts still carry a former team member’s name — Clients tab, account takeover.');
   const pendSplits=ROWS.filter(splitPending).length;
   if(pendSplits) bits.push(pendSplits+' split sale'+(pendSplits===1?'':'s')+' awaiting approval — commission is HELD until both reps and an admin sign off (Sales tab → Approve).');
-  const hawk=hawkCounts();
-  if(hawk.total) bits.push('🦅 Data hawk: '+hawk.total+' discrepanc'+(hawk.total===1?'y':'ies')+' flagged ('+hawk.parts.join(', ')+') — Admin tab → Data checks, or ask me "show discrepancies".');
+  const hawk=hawkCached();
+  if(hawk.total) bits.push('🦅 The Data Hawk has '+hawk.total+' finding'+(hawk.total===1?'':'s')+' ('+hawk.parts.join(', ')+') — Admin tab → 🦅 Data Hawk, or ask me "show discrepancies".');
   return bits;
 }
+// The Data Hawk's perch: a header chip showing what it currently sees.
+// Findings are cached for 30s so the sweep doesn't run on every repaint.
+let HAWK_CACHE={at:0,c:null};
+function hawkCached(force){
+  if(force || !HAWK_CACHE.c || Date.now()-HAWK_CACHE.at>30000)
+    HAWK_CACHE={at:Date.now(), c:hawkCounts()};
+  return HAWK_CACHE.c;
+}
+function renderHawkChip(){
+  let el=document.getElementById('hawkChip');
+  if(!el){
+    const bar=document.querySelector('header .hbtns');
+    if(!bar) return;
+    el=document.createElement('button'); el.id='hawkChip'; el.className='hawkchip';
+    el.onclick=function(){ setTab('admin'); setTimeout(jumpToChecks,120); };
+    bar.insertBefore(el, bar.firstChild);
+  }
+  const c=hawkCached();
+  el.className='hawkchip '+(c.total?'alert':'ok');
+  el.textContent='🦅 '+(c.total ? c.total+' finding'+(c.total===1?'':'s') : 'all clear');
+  el.title=c.total
+    ? 'Data Hawk: '+c.parts.join(' · ')+' — click to review'
+    : 'Data Hawk — sweeping every record. Nothing to flag right now.';
+}
+
 // What the hawk currently has its eye on, as counts per kind.
 function hawkCounts(){
   const HAWK_IDS={cross:'same job in both systems',dupes:'possible duplicates',hawkRep:'rep mismatches',
@@ -6633,9 +6666,9 @@ async function aiAsk(){
   AICHAT.push({who:'you',text:q}); renderAskLog();
   // "show discrepancies" — the hawk answers directly, no API needed
   if(/discrepan|hawk|double.?count|mismatch|drift|what.*(wrong|off|errors)/i.test(q) && !jobMatches(q).length){
-    const hawk=hawkCounts();
+    const hawk=hawkCached(true);
     if(!hawk.total){
-      AICHAT.push({who:'bot',text:'🦅 Nothing on the board — no cross-system doubles, rep mismatches, value drift, or doubled invoice lines flagged right now.'});
+      AICHAT.push({who:'bot',text:'🦅 The Data Hawk has nothing on the board — no cross-system doubles, rep mismatches, value drift, or doubled invoice lines right now. It keeps watching.'});
     } else {
       const lines=[];
       Object.keys(hawk.items).forEach(id=>{
@@ -6645,8 +6678,8 @@ async function aiAsk(){
         if(c.items.length>4) lines.push('  …and '+(c.items.length-4)+' more');
       });
       lines.push('');
-      lines.push('Everything is actionable on the Admin tab → Data checks.');
-      AICHAT.push({who:'bot',text:'🦅 '+hawk.total+' discrepancies flagged:\n\n'+lines.join('\n')});
+      lines.push('Everything is actionable on the Admin tab → 🦅 Data Hawk.');
+      AICHAT.push({who:'bot',text:'🦅 The Data Hawk has '+hawk.total+' finding'+(hawk.total===1?'':'s')+':\n\n'+lines.join('\n')});
     }
     renderAskLog(); return;
   }
@@ -7350,8 +7383,8 @@ function renderChecks(){
 
   const box=document.getElementById('chkBody');
   if(!checks.length){
-    box.innerHTML='<div class="card"><div class="empty">Nothing to flag. Every sale has a value, the dates run in order, '+
-      'there are no duplicates, and each one matches a client on the roster.</div></div>';
+    box.innerHTML='<div class="card"><div class="empty">🦅 <b>All clear.</b> The Data Hawk swept every sale, invoice, payment and balance — '+
+      'no doubles, no drift, no dates out of order, nothing moving that shouldn’t. It keeps watching.</div></div>';
     return;
   }
   const order={bad:0,warn:1,info:2};
