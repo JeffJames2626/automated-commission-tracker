@@ -462,6 +462,136 @@
         results.push({name:'employee identity layer exists (resolveEmployee)', expected:true, actual:false, pass:false});
       }
 
+
+      /* ---------- EMPLOYEE HOME PAGE: routes, avatars, KPIs, reconciliation, permissions ---------- */
+      if(typeof openEmp==='function' && typeof empKpis==='function'){
+        var alertSnap2=window.alert, toastSnap=window.toast; window.alert=function(){}; window.toast=function(){};
+        var sessSnap2=localStorage.getItem('alp_session_v1');
+        var HZ=mkPerson({id:'HZ', name:'Zach Sullivan'}); HZ.first='Zach'; HZ.last='Sullivan'; HZ.roles=['sales']; HZ.aliases=[]; HZ.log=[]; HZ.start='2026-01-01'; HZ.commNew=10; HZ.commUp=5; HZ.email='zach@automatedlawnandpest.com';
+        var HJ=mkPerson({id:'HJ', name:'Josh Everard'}); HJ.first='Josh'; HJ.last='Everard'; HJ.roles=['sales']; HJ.aliases=[]; HJ.log=[]; HJ.start='2026-01-01'; HJ.commNew=10; HJ.commUp=5;
+        var HT=mkPerson({id:'HT', name:'Dustin Harris'}); HT.first='Dustin'; HT.last='Harris'; HT.roles=['tech']; HT.scored=false; HT.aliases=[]; HT.log=[];
+        PEOPLE=[HZ,HJ,HT]; CLIENTS=[]; INVOICES=[]; TAKEOVERS=[]; OSCS=[]; DISPUTES=[]; EMP_IDX=null; GLOBAL.payLag=30;
+        var today=todayISO(), ym=today.slice(0,7), yr=today.slice(0,4);
+        var lastMonth=(function(){ var y=+ym.slice(0,4), m=+ym.slice(5,7); return m===1?(y-1)+'-12':y+'-'+String(m-1).padStart(2,'0'); })();
+        ROWS=[ mkRow({rep:'HZ', type:'new',    value:1000, date:today, client:'A'}),
+               mkRow({rep:'HZ', type:'upsell', value:500,  date:ym+'-01', client:'B', invoiced:ym+'-02'}),
+               mkRow({rep:'HZ', type:'new',    value:2000, date:lastMonth+'-15', client:'C', invoiced:lastMonth+'-16', paid:ym+'-05', paidAmt:200}),
+               mkRow({rep:'HZ', type:'new',    value:800,  date:'2025-12-20', client:'D'}),          // pre-plan: earns $0, still theirs
+               mkRow({rep:'HJ', type:'new',    value:3000, date:today, client:'E'}) ];
+        // 1. roster record opens the right page (route is the id)
+        openEmp('HZ'); check('EPAGE roster → page opens by id', 'HZ', EP_ID); check('EPAGE route carries the employee id', '#emp/HZ', location.hash);
+        check('EPAGE title is the person', 'Zach Sullivan', document.getElementById('epTitle').textContent);
+        closeEmp();
+        // 19. broken id is safe
+        checkTrue('EPAGE unknown id returns false, no throw', openEmp('nope-123')===false, EP_ID);
+        // 2. avatar fallback
+        checkTrue('AVATAR initials when no photo', /ZS/.test(empAvatar(HZ,40)) && !/<img/.test(empAvatar(HZ,40)), empAvatar(HZ,40).replace(/<[^>]+>/g,''));
+        HZ.photoUrl='https://example.invalid/nope.jpg';
+        checkTrue('AVATAR url photo renders an img with a fallback handler', /<img[^>]*onerror="empImgFail/.test(empAvatar(HZ,40)), 'ok');
+        HZ.photoUrl='javascript:alert(1)';
+        checkTrue('AVATAR rejects a non-http photo url', !/<img/.test(empAvatar(HZ,40)), 'ok');
+        delete HZ.photoUrl; HZ.photo='data:image/jpeg;base64,AAAA'; HZ.photoUrl='https://example.invalid/x.jpg';
+        checkTrue('AVATAR manual photo beats the sheet url', empPhotoSrc(HZ)===HZ.photo, empPhotoSrc(HZ).slice(0,20));
+        delete HZ.photo; delete HZ.photoUrl;
+        // 3. sheet row maps to the canonical employee (by email, by name, by suggestion only)
+        if(typeof empDirParse==='function'){
+          var D=empDirParse('Team Member,Role,Phone Number,Email\nZachariah Sullivan,Sales,509-1,zach@automatedlawnandpest.com\nJosh Everard,Tech,509-2,\nJon Smith,Tech,509-3,jon@automatedlawnandpest.com\nJohn Smith,Tech,509-4,john@automatedlawnandpest.com');
+          check('SHEET row matches by email even with a different spelling', 'HZ', D.rows[0].match);
+          check('SHEET row matches by exact name', 'HJ', D.rows[1].match);
+          checkTrue('SHEET unknown person is NEW, not guessed', !D.rows[2].match && !D.rows[2].suggest, D.rows[2].suggest);
+          var RR=empDirApplyRows(D.rows, function(i){ return D.rows[i].choice; });
+          check('SHEET apply: 2 updated, 2 created', '2/2', RR.upd+'/'+RR.made);
+          check('SHEET apply: Zach gained the sheet spelling as an alias', 'HZ', (resolveEmployee('Zachariah Sullivan','SA')||{}).id);
+          check('SHEET apply: phone landed on the existing record', '509-1', HZ.phone);
+          var jon=resolveEmployee('Jon Smith','*'), john=resolveEmployee('John Smith','*');
+          checkTrue('SHEET Jon Smith and John Smith stay two people', jon && john && jon.id!==john.id, (jon||{}).id+' / '+(john||{}).id);
+          check('SHEET "Jonathan Smith" suggests Jon (prefix), never John', jon.id, empSuggest('Jonathan Smith'));
+          var AX=mkPerson({id:'AX',name:'Alex Smith'}); AX.first='Alex'; AX.last='Smith'; var AXR=mkPerson({id:'AXR',name:'Alexander Smith'}); AXR.first='Alexander'; AXR.last='Smith';
+          PEOPLE=PEOPLE.concat([AX,AXR]); EMP_IDX=null;
+          check('SHEET ambiguous prefix (Alexa → Alex / Alexander) gets NO suggestion', null, empSuggest('Alexa Smith'));
+          PEOPLE=[HZ,HJ,HT]; EMP_IDX=null;
+        }
+        // 4. Google user maps to the canonical employee, never a duplicate
+        var nBefore=PEOPLE.length; empLinkLogin({email:'ZACH@automatedlawnandpest.com',sub:'s1',name:'Z'});
+        check('GOOGLE login linked to the existing record', 'zach@automatedlawnandpest.com', (HZ.google||{}).email);
+        check('GOOGLE login created nobody', nBefore, PEOPLE.length);
+        // 5/6. SA + Elevation aliases
+        empAddAlias('HZ','Zachariah Sullivan','SA'); empAddAlias('HZ','Z. Sullivan','EL');
+        check('ALIAS SA spelling resolves', 'HZ', (resolveEmployee('Sullivan, Zachariah','INV')||{}).id);
+        check('ALIAS Elevation spelling resolves', 'HZ', (resolveEmployee('Z. Sullivan','EL')||{}).id);
+        check('ALIAS manual "Zach" (import path) does not resolve', null, (resolveEmployee('Zach','MN')||{}).id||null);
+        // 7/8. only that employee's sales / commissions
+        var DZ=empData('HZ'), DJ=empData('HJ');
+        check('EPAGE Zach sees only his 4 sales', 4, DZ.rows.length);
+        check('EPAGE Josh sees only his 1 sale', 1, DJ.rows.length);
+        checkTrue('EPAGE no sale appears on both pages', !DZ.rows.some(function(r){ return DJ.rows.indexOf(r)>-1; }), 'ok');
+        // 9-11. KPI math
+        var KZ=empKpis(DZ);
+        check('KPI sales today (count)', 1, KZ.today.n); check('KPI sales today ($)', 1000, KZ.today.v);
+        check('KPI this month ($) = today new + upsell on the 1st', 1500, KZ.month.v);
+        check('KPI YTD ($) excludes last year', 3500, KZ.ytd.v);
+        check('KPI new vs upsell', '3/1', KZ.newN+'/'+KZ.upN);
+        check('KPI average sale', 4300/4, KZ.avg);
+        check('KPI since plan start excludes the pre-plan sale', 3500, KZ.plan.v);
+        check('KPI invoiced (sales with an invoice date)', 2500, KZ.invoicedV);
+        // 14. commission totals and reconciliation to the Commissions tab + Scoreboard
+        check('KPI commission earned = 100 + 25 + 200(paid)', 325, KZ.commEarned);
+        check('KPI commission paid', 200, KZ.commPaid);
+        check('KPI commission pending', 125, KZ.commPending);
+        var RC=empReconcile('HZ');
+        checkTrue('RECONCILE page = Scoreboard (booked since plan start)', RC && Math.abs(RC.page.planV-RC.scoreboard.planV)<0.01, RC?RC.page.planV+' vs '+RC.scoreboard.planV:'none');
+        checkTrue('RECONCILE page = Commissions tab (sold basis, all months)', RC && Math.abs(RC.page.commEarned-RC.commissionTab.earned)<0.01, RC?RC.page.commEarned+' vs '+RC.commissionTab.earned:'none');
+        check('RECONCILE last month due-basis commission = the paid sale', 200, commissionFor(HZ, (function(){ var d=dueDate(ROWS[2]); return d.slice(0,7); })(), 'due').commission);
+        // 12/13. invoice totals; collected is not derivable and must not be shown
+        INVOICES=[{c:'A',i:'1',d:today,s:'Mow',v:100,t:8,k:'x',r:'Sullivan, Zachariah'},{c:'E',i:'2',d:today,s:'Mow',v:50,t:4,k:'x',r:'Everard, Josh'}];
+        var KZ2=empKpis(empData('HZ'));
+        check('KPI invoice lines naming Zach', 1, KZ2.invLines); check('KPI invoice billed pre-tax', 100, KZ2.invBilled);
+        checkTrue('KPI no fabricated "collected" figure', KZ2.collected===undefined, 'ok');
+        INVOICES=[];
+        // 15. inactive keeps everything
+        HZ.active=false; HZ.ended=today;
+        check('INACTIVE sales still on the page', 4, empData('HZ').rows.length);
+        checkTrue('INACTIVE still opens a page', openEmp('HZ')===true, EP_ID); closeEmp();
+        checkTrue('INACTIVE not offered for new assignments', !/value="HZ"/.test(peopleOptions('')), 'ok');
+        checkTrue('INACTIVE still offered in report filters', /value="HZ"/.test(peopleOptions('','',true)), 'ok');
+        HZ.active=true; delete HZ.ended;
+        // 16. display-name change does not break links
+        HZ.name='Zachary Sullivan'; HZ.display='Zach S.'; EMP_IDX=null;
+        checkTrue('RENAME link still targets the id', /#emp\/HZ/.test(empLink('HZ')), empLink('HZ'));
+        check('RENAME page still finds 4 sales', 4, empData('HZ').rows.length);
+        HZ.name='Zach Sullivan'; delete HZ.display; EMP_IDX=null;
+        // 17/18. permissions: money only for admins or the person themselves
+        var adminSnap=ADMIN; ADMIN=false; localStorage.removeItem('alp_session_v1');
+        checkTrue('PERM logged-out viewer sees no money', !empCanSeeMoney(HZ), empCanSeeMoney(HZ));
+        localStorage.setItem('alp_session_v1', JSON.stringify({token:'t.x',email:'zach@automatedlawnandpest.com',role:'rep'}));
+        checkTrue('PERM employee sees their own money', empCanSeeMoney(HZ), empCanSeeMoney(HZ));
+        checkTrue('PERM employee does not see a colleague’s money', !empCanSeeMoney(HJ), empCanSeeMoney(HJ));
+        ADMIN=true; checkTrue('PERM admin sees everyone', empCanSeeMoney(HJ), empCanSeeMoney(HJ));
+        ADMIN=adminSnap;
+        // 20. no KPI relies on loose name matching: rename the person, KPIs unchanged
+        HZ.name='Somebody Else'; HZ.first='Somebody'; HZ.last='Else'; EMP_IDX=null;
+        check('NO-NAME-MATCH KPIs unchanged after a rename', 325, empKpis(empData('HZ')).commEarned);
+        HZ.name='Zach Sullivan'; HZ.first='Zach'; HZ.last='Sullivan'; EMP_IDX=null;
+        // non-sales employee: no sales figures
+        checkTrue('NON-SALES employee has no sales role', !empIsSales(HT), empIsSales(HT));
+        check('NON-SALES employee page still opens', true, openEmp('HT')); closeEmp();
+        // date boundaries: year boundary sale is last year's, not YTD
+        ROWS=[mkRow({rep:'HZ',type:'new',value:100,date:(+yr-1)+'-12-31',client:'Y'}), mkRow({rep:'HZ',type:'new',value:200,date:yr+'-01-01',client:'Z'})];
+        var KB=empKpis(empData('HZ'));
+        check('DATE year boundary: YTD only counts this year', 200, KB.ytd.v);
+        check('DATE month boundary: this month excludes Jan 1 unless it is this month', ym===yr+'-01'?200:0, KB.month.v);
+        // roster health: duplicate-looking pair is reported, never merged
+        var HZ2=mkPerson({id:'HZ2', name:'Zachariah Sullivan'}); HZ2.first='Zachariah'; HZ2.last='Sullivan'; HZ2.aliases=[]; HZ2.log=[]; HZ2.roles=['sales'];
+        PEOPLE=[HZ,HJ,HT,HZ2]; EMP_IDX=null; HZ.aliases=[];
+        var AU=empRosterAudit();
+        checkTrue('HEALTH flags Zach / Zachariah as duplicate-looking', AU.dups.some(function(d){ return (d.a==='HZ'&&d.b==='HZ2')||(d.a==='HZ2'&&d.b==='HZ'); }), JSON.stringify(AU.dups));
+        check('HEALTH still 4 records (nothing merged)', 4, PEOPLE.length);
+        if(sessSnap2!=null) localStorage.setItem('alp_session_v1',sessSnap2); else localStorage.removeItem('alp_session_v1');
+        window.alert=alertSnap2; window.toast=toastSnap; EP_ID=null;
+      } else {
+        results.push({name:'employee home page exists (openEmp/empKpis)', expected:true, actual:false, pass:false});
+      }
+
       /* ---------- C2: tombstones stop deleted records resurrecting ---------- */
       if(typeof addTombstone==='function' && typeof isTombstoned==='function'){
         TOMBSTONES=[];

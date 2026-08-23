@@ -808,6 +808,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
       <div id="rosterAddBtn"></div>
     </div>
     <div class="note" id="rosterSyncNote" style="margin-bottom:10px"></div>
+    <div id="rosterHealth" style="margin-bottom:14px"></div>
     <div id="rosterAddForm" style="display:none" class="card pad"></div>
     <div id="rosterDir" style="display:none" class="card pad"></div>
     <div class="roster" id="rosterBox"></div>
@@ -2422,7 +2423,7 @@ function empCreate(o){
   const p=newPerson(name); p.id=empId(first||name,last);
   p.first=first||empFirst(p); p.last=last||empLast(p);
   if(o.title!=null) p.title=o.title; if(o.dept) p.dept=o.dept; if(em) p.email=em;
-  if(o.phone) p.phone=o.phone; if(o.truck) p.truck=o.truck; if(o.ext) p.ext=o.ext; if(o.altEmails&&o.altEmails.length) p.altEmails=o.altEmails.slice();
+  if(o.phone) p.phone=o.phone; if(o.truck) p.truck=o.truck; if(o.ext) p.ext=o.ext; if(o.altEmails&&o.altEmails.length) p.altEmails=o.altEmails.slice(); if(o.photoUrl) p.photoUrl=o.photoUrl;
   p.roles=o.roles||['sales']; p.active=o.active!==false; if(o.ended) p.ended=o.ended;
   if(o.active===false){ p.scored=false; p.salesPct=0; p.commNew=0; p.commUp=0; p.commRenew=0; p.commOv=0; p.hrsIn=0; p.hrsOff=0; }
   if(o.note) p.note=o.note; p.created={at:new Date().toISOString(),by:empWho()};
@@ -3232,7 +3233,7 @@ function selPerson(id){ SEL=id; planToForm(); renderPlanList(); renderScenarios(
 // A person-picker keeps whatever was chosen. Rebuilding options on every render used to
 // snap these back to WHO, so an import's fallback quietly followed whoever was last
 // opened on the Scoreboard.
-function fillPeople(id,fallback,blank){
+function fillPeople(id,fallback,blank,all){
   const el=document.getElementById(id);
   if(!el) return;
   const started = el.dataset.init==='1';
@@ -3243,16 +3244,23 @@ function fillPeople(id,fallback,blank){
   } else {
     if(!started || !PEOPLE.some(p=>p.id===cur)) cur=fallback;
   }
-  el.innerHTML=(blank?'<option value="">'+esc(blank)+'</option>':'')+peopleOptions(cur);
+  el.innerHTML=(blank?'<option value="">'+esc(blank)+'</option>':'')+peopleOptions(cur,'',all);
   el.value=cur;
   el.dataset.init='1';
 }
 
-function peopleOptions(sel,blank){
+// `all` = include former team members (report filters). Assignment pickers leave
+// them out so nothing new gets credited to somebody who has left.
+function peopleOptions(sel,blank,all){
   let h = blank ? '<option value="">'+blank+'</option>' : '';
-  PEOPLE.forEach(p=>{ if(p.id===EMP_UNASSIGNED && p.id!==sel) return; h+='<option value="'+p.id+'"'+(p.id===sel?' selected':'')+'>'+esc(empName(p))+(p.active?'':' (former)')+'</option>'; });
+  PEOPLE.forEach(p=>{
+    if(p.id===EMP_UNASSIGNED && p.id!==sel) return;
+    if(!all && !p.active && p.id!==sel) return;
+    h+='<option value="'+p.id+'"'+(p.id===sel?' selected':'')+'>'+esc(empName(p))+(p.active?'':' (former)')+'</option>';
+  });
   return h;
 }
+function firstActiveId(){ const p=PEOPLE.find(x=>x.active&&x.id!==EMP_UNASSIGNED)||PEOPLE.find(x=>x.id!==EMP_UNASSIGNED)||PEOPLE[0]; return p?p.id:''; }
 
 function render(){
   const visible=TABS.filter(t=>t[2]!==true||ADMIN);
@@ -3276,19 +3284,19 @@ function render(){
   // 'who' follows WHO deliberately; every other picker keeps what was chosen.
   document.getElementById('who').innerHTML=
     '<option value="all"'+(WHO==='all'?' selected':'')+'>All salespeople — combined</option>'+
-    peopleOptions(WHO);
-  const firstP=PEOPLE.length?PEOPLE[0].id:'';
+    peopleOptions(WHO,'',true);
+  const firstP=firstActiveId();
   fillPeople('impRep',firstP);
   fillPeople('bulkRep',firstP);
   fillPeople('hRep',firstP);
   fillPeople('hImpRep',firstP);
-  fillPeople('cWho',firstP,'Everyone');
-  fillPeople('pRep',firstP,'All salespeople');
+  fillPeople('cWho',firstP,'Everyone',true);
+  fillPeople('pRep',firstP,'All salespeople',true);
   fillPeople('dRep',firstP);
-  fillPeople('cliRep',firstP,'All salespeople');
+  fillPeople('cliRep',firstP,'All salespeople',true);
   fillPeople('oRep',firstP);
-  fillPeople('fRep',firstP,'All salespeople');
-  document.getElementById('hWho').innerHTML='<option value="">Everyone</option>'+peopleOptions(HWHO);
+  fillPeople('fRep',firstP,'All salespeople',true);
+  document.getElementById('hWho').innerHTML='<option value="">Everyone</option>'+peopleOptions(HWHO,'',true);
 
   renderTeam(); renderScore(); renderPlanList(); planToForm(); renderScenarios(); renderHours();
   renderData(); renderSeason(); renderHoursTab(); renderPipe(); renderOSC(); renderAdj(); renderComm();
@@ -3937,7 +3945,7 @@ function renderCombinedChart(C){
     pts.forEach(q=>s+='<circle cx="'+q[0]+'" cy="'+q[1]+'" r="2.8" fill="#fff" stroke="var(--ink)" stroke-width="1.6"/>');
   }
   s+='</svg><div class="note" style="margin-top:9px;display:flex;gap:15px;flex-wrap:wrap">'+
-    C.ppl.map(p=>'<span><span class="dot" style="background:'+pColor(p.id)+'"></span>'+esc(p.name)+'</span>').join('')+
+    C.ppl.map(p=>'<span><span class="dot" style="background:'+pColor(p.id)+'"></span>'+empLink(p.id)+'</span>').join('')+
     '<span><b style="color:var(--ink)">—</b> combined rolling '+C.N+'-week average</span></div>';
   box.innerHTML=s;
 }
@@ -5250,7 +5258,7 @@ function renderClientPage(){
       const p=person(r.rep);
       x+='<div class="svcrow"><span class="g"><b>'+esc(r.service||'—')+'</b> '+
         '<span class="typepill '+esc(r.type)+'">'+esc(TYPE_LABEL[r.type]||r.type)+'</span>'+
-        '<div class="note">'+fmtY(r.date)+' · '+esc(p?p.name.split(' ')[0]:'?')+
+        '<div class="note">'+fmtY(r.date)+' · '+(p?empLink(p.id,empShort(p)):'?')+
         ' · '+esc(STAGE_LABEL[stageOf(r)])+'</div></span>'+
         '<span class="mono">'+money(bookedValue(r))+'</span></div>';
     });
@@ -5468,7 +5476,7 @@ function openQuick(){
   // Options rebuilt here so the modal works before any tab has been opened.
   const sel=document.getElementById('qRep');
   const keep=sel.value && PEOPLE.some(p=>p.id===sel.value) ? sel.value
-           : (GLOBAL.lastRep && PEOPLE.some(p=>p.id===GLOBAL.lastRep) ? GLOBAL.lastRep : PEOPLE[0].id);
+           : (GLOBAL.lastRep && PEOPLE.some(p=>p.id===GLOBAL.lastRep) ? GLOBAL.lastRep : firstActiveId());
   sel.innerHTML=peopleOptions(keep); sel.value=keep;
   if(!document.getElementById('qDate').value) document.getElementById('qDate').value=todayISO();
   if(GLOBAL.lastSrc) segSet('qSrc',GLOBAL.lastSrc);
@@ -5603,7 +5611,7 @@ function renderQRecent(){
     h+='<div class="r"><span class="dot" style="background:'+pColor(r.rep)+'"></span>'+
       '<span class="g"><b>'+esc(r.client)+'</b>'+(r.service?' · '+esc(r.service):'')+
       ' · '+valueLabel(r)+(basisOf(r)!=='contract'?' = '+money(bookedValue(r)):'')+' · '+(r.type==='new'?'new':'upsell')+
-      '<div class="note">'+fmt(r.date)+' · '+esc(p?p.name.split(' ')[0]:'')+'</div></span>'+
+      '<div class="note">'+fmt(r.date)+' · '+(p?empLink(p.id,empShort(p)):'')+'</div></span>'+
       '<button class="sm danger" onclick="undoQuick(\''+id+'\')">Undo</button></div>';
   });
   if(QADDED.length>8) h+='<div class="note" style="margin-top:5px">…and '+(QADDED.length-8)+' more</div>';
@@ -8419,7 +8427,7 @@ function renderAdj(){
       const late=d.status==='open'&&respondBy(d)<today;
       x+='<tr><td class="mono">'+fmtY(d.raised)+
           (d.status==='open'?'<div class="note'+(late?' neg':'')+'">'+disputeAge(d)+' days old · respond by '+fmt(respondBy(d))+'</div>':'')+'</td>'+
-        '<td><span class="dot" style="background:'+pColor(d.rep)+'"></span>'+esc(p?p.name.split(' ')[0]:'—')+'</td>'+
+        '<td><span class="dot" style="background:'+pColor(d.rep)+'"></span>'+(p?empLink(p.id,empShort(p)):'—')+'</td>'+
         '<td>'+(row?'<b>'+esc(row.client)+'</b><div class="note">'+fmt(row.date)+' · '+money(bookedValue(row))+'</div>':'<span class="note">whole period</span>')+'</td>'+
         '<td style="max-width:260px">'+esc(d.claim)+
           (d.resolution?'<div class="note"><b>Outcome:</b> '+esc(d.resolution)+
@@ -8695,7 +8703,7 @@ function renderOSC(){
     h+='<tr><td class="mono">'+fmtY(day)+'<div class="note">'+esc(o.when.slice(11,16))+
         ' · '+o.mins+' min'+(past&&o.outcome==='booked'?' · <span style="color:var(--red)">needs an outcome</span>':'')+'</div></td>'+
       '<td><b>'+esc(o.client)+'</b>'+(o.addr?'<div class="note">'+esc(o.addr)+'</div>':'')+'</td>'+
-      '<td><span class="dot" style="background:'+pColor(o.rep)+'"></span>'+esc(p?p.name.split(' ')[0]:'—')+'</td>'+
+      '<td><span class="dot" style="background:'+pColor(o.rep)+'"></span>'+(p?empLink(p.id,empShort(p)):'—')+'</td>'+
       '<td class="note">'+esc(o.want||'—')+'</td>'+
       '<td><select style="max-width:130px;font-size:12.5px;padding:4px 6px" onchange="setOSC(&quot;'+o.id+'&quot;,&quot;outcome&quot;,this.value)">'+
         OSC_OUTCOMES.map(x=>'<option value="'+x[0]+'"'+(o.outcome===x[0]?' selected':'')+'>'+x[1]+'</option>').join('')+
@@ -10582,12 +10590,36 @@ function restore(e){
    Everything about one person, reached from anywhere their name
    appears. All of it keys on the employee id — never the name.
    ============================================================ */
-let EP_ID=null, EP_SEC='overview', ROSTER_Q='', ROSTER_INACTIVE=false;
-function empAvatar(p,size){
-  size=size||36;
-  const st='width:'+size+'px;height:'+size+'px;font-size:'+Math.round(size*.38)+'px;background:'+(p.photo?'#e6e9e2':pColor(p.id));
-  return '<span class="av" style="'+st+'">'+(p.photo?'<img src="'+p.photo+'" alt="">':esc(empInitials(p)))+'</span>';
+let EP_ID=null, EP_SEC='overview', ROSTER_Q='', ROSTER_INACTIVE=false, EP_F={from:'',to:'',service:'',type:'',src:'',status:''};
+function epFilter(k,v){ EP_F[k]=v; renderEmp(); }
+function epFilterReset(){ EP_F={from:'',to:'',service:'',type:'',src:'',status:''}; renderEmp(); }
+// commission state of one sale for one person
+function empCommState(r){
+  if(r.voidType && !r.paid) return 'reversed';
+  if(splitPending(r)) return 'held';
+  if(r.paid) return r.voidType?'paid · reversed':'paid';
+  if(r.invoiced) return dueDate(r)<=todayISO()?'due':'pending';
+  return 'not invoiced';
 }
+function empCommAmt(r,pid){ return (splitPending(r)?0:(r.paid?paidOut(r):rowComm(r)))*shareFor(r,pid); }
+// KPI figures that must agree with the Scoreboard / Commissions tab
+function empReconcile(id){
+  const p=person(id); if(!p) return null;
+  const K=empKpis(empData(id)), A=analyzeFor(id);
+  let soldSum=0, m=String(p.start||'2000-01').slice(0,7); const end=todayISO().slice(0,7); let guard=0;
+  while(m<=end && guard++<240){ const C=commissionFor(p,m,'sold'); soldSum+=C.newC+C.upC; const y=+m.slice(0,4), mm=+m.slice(5,7); m=(mm===12?(y+1)+'-01':y+'-'+String(mm+1).padStart(2,'0')); }
+  return {page:{planV:K.plan.v, planN:K.plan.n, commEarned:K.commEarned}, scoreboard:{planV:A?A.totalV:null, planN:A?A.newCount:null}, commissionTab:{earned:soldSum},
+    ok: (!A || (Math.abs(K.plan.v-A.totalV)<0.01 && K.plan.n===A.newCount)) && Math.abs(K.commEarned-soldSum)<0.01};
+}
+// Manually uploaded photo wins; else a photo URL from the roster sheet; else initials.
+// A broken image swaps itself for the initials so the layout never shows a hole.
+function empPhotoSrc(p){ if(p.photo) return p.photo; const u=String(p.photoUrl||'').trim(); return /^https?:\/\//i.test(u)?u:''; }
+function empAvatar(p,size){
+  size=size||36; const src=empPhotoSrc(p);
+  const st='width:'+size+'px;height:'+size+'px;font-size:'+Math.round(size*.38)+'px;background:'+pColor(p.id);
+  return '<span class="av" style="'+st+'" data-ini="'+esc(empInitials(p))+'">'+(src?'<img src="'+esc(src)+'" alt="" loading="lazy" onerror="empImgFail(this)">':esc(empInitials(p)))+'</span>';
+}
+function empImgFail(img){ const w=img.parentNode; if(!w) return; w.textContent=w.getAttribute('data-ini')||'?'; }
 function empLink(id,label){
   const p=person(id); if(!p) return esc(label||'—');
   return '<a class="emplink" href="#emp/'+esc(p.id)+'" onclick="openEmp(\''+esc(p.id)+'\');return false" title="Open '+esc(empName(p))+'’s page">'+esc(label!=null?label:empName(p))+'</a>';
@@ -10627,18 +10659,67 @@ function renderRoster(){
   const rb=document.getElementById('rosterSyncNote');
   if(rb){ const g=GLOBAL.gsheet||{}; rb.innerHTML=g.rosterAt?'Roster synced from the sheet '+esc(String(g.rosterAt).replace('T',' ').slice(0,16))+(g.rosterPending?' · <b style="color:var(--red)">'+g.rosterPending+' row'+(g.rosterPending===1?'':'s')+' need a decision</b> — <a href="#" onclick="rosterSync(false);return false">review</a>':'') : (ADMIN?'Roster not synced from the sheet yet — ⟳ Sync roster (needs the sheet shared as “anyone with the link”).':''); }
   if(!ADMIN){ ['rosterAddForm','rosterDir'].forEach(id=>{ const f=document.getElementById(id); if(f) f.style.display='none'; }); }
+  const rh=document.getElementById('rosterHealth'); if(rh){ if(ADMIN) renderRosterHealth(); else rh.innerHTML=''; }
   if(!list.length){ box.innerHTML='<div class="empty">Nobody matches.</div>'; return; }
   box.innerHTML=list.map(p=>{
     const a=empAccountStatus(p);
     return '<div class="rcard'+(p.active?'':' off')+'" onclick="openEmp(\''+p.id+'\')">'+empAvatar(p,46)+
       '<div style="min-width:0;flex:1"><div class="nm">'+esc(empName(p))+'</div>'+
       '<div class="meta">'+esc(p.title||'—')+(p.dept?' · '+esc(p.dept):'')+'</div>'+
-      ((p.phone||p.truck)?'<div class="meta">'+esc(p.phone||'')+(p.phone&&p.truck?' · ':'')+esc(p.truck||'')+'</div>':'')+
+      '<div class="meta">'+(p.email?esc(p.email):'<span style="color:var(--red)">no company email</span>')+((p.phone||p.truck)?' · '+esc(p.phone||'')+(p.phone&&p.truck?' · ':'')+esc(p.truck||''):'')+'</div>'+
       '<div class="pills">'+(p.active?'<span class="pill ok">ACTIVE</span>':'<span class="pill n">FORMER</span>')+
       (empIsSales(p)?'<span class="pill sa">SALES</span>':'')+
       ((p.roles||[]).indexOf('estimator')>-1?'<span class="pill el">ESTIMATOR</span>':'')+
-      '<span class="pill '+a.cls+'" title="'+esc(a.detail)+'">'+a.label+'</span></div></div></div>';
+      '<span class="pill '+a.cls+'" title="'+esc(a.detail)+'">'+a.label+'</span>'+
+      ((p.google&&p.google.email)?'<span class="pill ok" title="Google account linked: '+esc(p.google.email)+'">GOOGLE ✓</span>':'')+
+      '</div></div></div>';
   }).join('');
+}
+
+/* ---- ROSTER HEALTH: the numbers an admin needs after a sync ---- */
+function empRosterAudit(){
+  const L=PEOPLE.filter(p=>p.id!==EMP_UNASSIGNED), T=window.__TEAMLOGINS||null;
+  const emailOf=p=>String(p.email||'').toLowerCase();
+  const has=(p,f)=>f(p);
+  const dups=[]; const seen={};
+  const flag=(a,b,why)=>{ const k=[a.id,b.id].sort().join('|')+'|'+why; if(seen[k]) return; seen[k]=1; dups.push({a:a.id,b:b.id,why}); };
+  L.forEach(a=>L.forEach(b=>{
+    if(a.id>=b.id) return;
+    if(empKey(a.name)===empKey(b.name)) flag(a,b,'same name');
+    const ea=[emailOf(a)].concat(a.altEmails||[]).filter(Boolean), eb=[emailOf(b)].concat(b.altEmails||[]).filter(Boolean);
+    if(ea.some(e=>eb.indexOf(e)>-1)) flag(a,b,'same email');
+    if(a.phone && b.phone && a.phone.replace(/\D/g,'')===b.phone.replace(/\D/g,'')) flag(a,b,'same phone');
+    if((a.aliases||[]).some(x=>(x.key||empKey(x.name))===empKey(b.name)) || (b.aliases||[]).some(x=>(x.key||empKey(x.name))===empKey(a.name))) flag(a,b,'one is the other’s alias');
+    const la=nameTokens(empLast(a)).pop(), lb=nameTokens(empLast(b)).pop(), fa=nameTokens(empFirst(a))[0]||'', fb=nameTokens(empFirst(b))[0]||'';
+    if(la && la===lb && fa && fb && fa!==fb && fa.length>=3 && fb.length>=3 && (fa.indexOf(fb)===0||fb.indexOf(fa)===0)) flag(a,b,'same last name, first name is a prefix (Zach / Zachariah)');
+  }));
+  const rowsOf=id=>ROWS.filter(r=>shareFor(r,id)>0);
+  const per=L.map(p=>{
+    const em=emailOf(p), u=T?T.find(x=>String(x.email).toLowerCase()===em):null;
+    const rows=rowsOf(p.id), inv=INVOICES.filter(x=>invoiceRepId(x)===p.id).length;
+    return {id:p.id, name:empName(p), active:!!p.active, email:em, photo:!!(p.photo||p.photoUrl), login:!!u, role:u?u.role:'', google:!!(p.google&&p.google.email),
+      sa:(p.aliases||[]).filter(a=>a.sys==='SA'||a.sys==='INV'||a.sys==='*').length, el:(p.aliases||[]).filter(a=>a.sys==='EL').length,
+      sales:rows.length, invoices:inv, comm:rows.some(r=>r.paid||rowComm(r)>0)};
+  });
+  const n=f=>per.filter(f).length;
+  return {total:L.length, active:n(x=>x.active), inactive:n(x=>!x.active), withEmail:n(x=>!!x.email), noEmail:n(x=>!x.email),
+    withPhoto:n(x=>x.photo), noPhoto:n(x=>!x.photo), linked:n(x=>x.login), notLinked:n(x=>!x.login), loginsKnown:!!T,
+    google:n(x=>x.google), saAliases:n(x=>x.sa>0), elAliases:n(x=>x.el>0), withSales:n(x=>x.sales>0), withInvoices:n(x=>x.invoices>0), withComm:n(x=>x.comm),
+    admins:per.filter(x=>x.role==='admin').map(x=>x.email), dups, per,
+    orphans:empOrphanRows().length, unresolved:empMatchQueue().length};
+}
+function renderRosterHealth(){
+  const box=document.getElementById('rosterHealth'); if(!box) return;
+  const A=empRosterAudit();
+  const t=(l,v,sub)=>tile(l,v,sub);
+  let h='<div class="tiles small">'+t('Employees',A.total,A.active+' active · '+A.inactive+' former')+t('Company email',A.withEmail,A.noEmail+' without')+
+    t('Logins',A.loginsKnown?A.linked:'—',A.loginsKnown?(A.notLinked+' without · admins: '+(A.admins.join(', ')||'none')):'team-login list loads with ☁')+
+    t('Google linked',A.google,'signed in at least once')+t('Photos',A.withPhoto,A.noPhoto+' on initials')+t('Aliases',A.saAliases+' / '+A.elAliases,'SA / Elevation')+
+    t('With history',A.withSales+' / '+A.withInvoices+' / '+A.withComm,'sales / invoice lines / commission')+t('Needs attention',A.dups.length+' / '+A.unresolved+' / '+A.orphans,'look-alikes / unmatched names / orphan sales')+'</div>';
+  if(A.dups.length) h+='<div class="warnbox" style="margin-top:12px"><b>Duplicate-looking records — not merged, your call:</b><ul style="margin:6px 0 0 18px">'+
+    A.dups.map(d=>'<li>'+empLink(d.a)+' ↔ '+empLink(d.b)+' <span class="note">('+esc(d.why)+')</span></li>').join('')+'</ul></div>';
+  else h+='<div class="note" style="margin-top:10px">No duplicate-looking records.</div>';
+  box.innerHTML=h;
 }
 function empAddToggle(){
   const f=document.getElementById('rosterAddForm'); if(!f) return;
@@ -10694,7 +10775,8 @@ function empDirParse(text){
   const head=rows[0].map(h=>norm(h));
   const col=(...names)=>{ for(const n of names){ const i=head.findIndex(h=>h===norm(n)); if(i>-1) return i; } for(const n of names){ const i=head.findIndex(h=>h.indexOf(norm(n))>-1); if(i>-1) return i; } return -1; };
   const cName=col('team member','name','employee','full name'), cRole=col('role','title','position'), cPhone=col('phone number','phone','cell'),
-        cEmail=col('email'), cTruck=col('truck','vehicle'), cExt=col('ring central ext','ext','extension'), cDept=col('department','dept','division');
+        cEmail=col('email'), cTruck=col('truck','vehicle'), cExt=col('ring central ext','ext','extension'), cDept=col('department','dept','division'),
+        cPhoto=col('photo url','photo','picture','image');
   if(cName<0) return {error:'No name column found (looking for "Team Member" or "Name").'};
   const clean=v=>{ v=String(v==null?'':v).trim(); return /^(n\/a|na|none|-)$/i.test(v)?'':v; };
   const out=[];
@@ -10705,7 +10787,8 @@ function empDirParse(text){
     const alt=emails.filter(x=>x!==company);
     const x=empSplitName(name);
     const d={name:name, first:x.first, last:x.last, title:clean(cRole>-1?r[cRole]:''), phone:clean(cPhone>-1?r[cPhone]:''), email:company, altEmails:alt,
-      truck:clean(cTruck>-1?r[cTruck]:''), ext:clean(cExt>-1?r[cExt]:'').replace(/^#/,''), dept:clean(cDept>-1?r[cDept]:''), roles:empDirRoles(cRole>-1?r[cRole]:'')};
+      truck:clean(cTruck>-1?r[cTruck]:''), ext:clean(cExt>-1?r[cExt]:'').replace(/^#/,''), dept:clean(cDept>-1?r[cDept]:''), roles:empDirRoles(cRole>-1?r[cRole]:''),
+      photoUrl:(function(v){ v=clean(cPhoto>-1?r[cPhoto]:''); return /^https?:\/\/\S+$/i.test(v)?v:''; })(clean(cPhoto>-1?r[cPhoto]:''))};
     // decision: email → name → suggestion → create
     let hit=null, how='';
     for(const e of emails){ const rr=resolveEmployee('','*',{email:e}); if(rr){ hit=rr.id; how='email'; break; } }
@@ -10749,7 +10832,7 @@ function empDirApplyRows(rows, choiceOf){
     const choice=choiceOf(i);
     if(choice==='skip'){ skipped++; return; }
     if(choice==='new'){
-      const r=empCreate({first:d.first,last:d.last,title:d.title,dept:d.dept,email:d.email,altEmails:d.altEmails,phone:d.phone,truck:d.truck,ext:d.ext,roles:d.roles.length?d.roles:['tech'],active:true,from:'directory'});
+      const r=empCreate({first:d.first,last:d.last,title:d.title,dept:d.dept,email:d.email,altEmails:d.altEmails,phone:d.phone,truck:d.truck,ext:d.ext,photoUrl:d.photoUrl,roles:d.roles.length?d.roles:['tech'],active:true,from:'directory'});
       if(r.error){ errs.push(d.name+': '+r.error); return; } made++; return;
     }
     const p=person(choice); if(!p){ errs.push(d.name+': record not found'); return; }
@@ -10761,6 +10844,7 @@ function empDirApplyRows(rows, choiceOf){
     if(d.phone && d.phone!==(p.phone||'')){ p.phone=d.phone; changed.phone=1; }
     if(d.truck && d.truck!==(p.truck||'')){ p.truck=d.truck; changed.truck=1; }
     if(d.ext && d.ext!==(p.ext||'')){ p.ext=d.ext; changed.ext=1; }
+    if(d.photoUrl && d.photoUrl!==(p.photoUrl||'')){ p.photoUrl=d.photoUrl; changed.photoUrl=1; }   // p.photo (manual upload) is never touched
     if(d.dept && !p.dept){ p.dept=d.dept; changed.dept=1; }
     if(!p.first && d.first){ p.first=d.first; } if(!p.last && d.last){ p.last=d.last; }
     const roles=(p.roles||[]).slice(); d.roles.forEach(r=>{ if(roles.indexOf(r)<0) roles.push(r); });
@@ -10904,11 +10988,12 @@ function renderServices(){
 }
 
 function openEmp(id){
-  const p=person(id); if(!p) return;
-  EP_ID=id; EP_SEC='overview';
+  const p=person(id);
+  if(!p){ toast('No team member with id '+String(id||'').slice(0,40)); if(location.hash.indexOf('#emp/')===0){ try{ history.replaceState(null,'',location.pathname+location.search); }catch(e){} } return false; }
+  EP_ID=id; EP_SEC='overview'; EP_F={from:'',to:'',service:'',type:'',src:'',status:''};
   document.getElementById('empModal').classList.add('on');
   try{ history.replaceState(null,'','#emp/'+id); }catch(e){}
-  renderEmp();
+  renderEmp(); return true;
 }
 function closeEmp(){
   document.getElementById('empModal').classList.remove('on'); EP_ID=null;
@@ -10949,6 +11034,15 @@ function empKpis(D){
   K.outstanding=OPENINV.filter(v=>mine.has(norm(v.c))).reduce((a,v)=>a+(+v.t||0),0);
   K.accts=D.accts.filter(c=>c.ct!=='Lead').length; K.leads=D.accts.filter(c=>c.ct==='Lead').length;
   K.goal=+p.goal||0; K.std=+p.std||0;
+  // Since the comp plan started — the window the Scoreboard and Commissions tab use.
+  const pl=D.rows.filter(r=>!r.voidType && r.date>=(p.start||'0000'));
+  K.plan={n:pl.filter(r=>r.type==='new'&&r.rep===p.id).length, v:D.rows.filter(r=>r.date>=(p.start||'0000')).reduce((a,r)=>a+netValue(r)*sh(r),0)};
+  // commission figures only count sales on/after the plan start (pre-plan sales earn $0, as on the Commissions tab)
+  const cr=D.rows.filter(r=>r.date>=(p.start||'0000'));
+  K.commEarned=cr.reduce((a,r)=>a+comm(r),0);
+  K.commPaid=cr.reduce((a,r)=>a+(r.paid?paidOut(r)*sh(r):0),0);
+  K.commPending=cr.reduce((a,r)=>a+((!r.paid&&!splitPending(r))?rowComm(r)*sh(r):0),0);
+  K.held=cr.reduce((a,r)=>a+(splitPending(r)?rowComm(r)*sh(r):0),0);
   K.A=(empIsSales(p)&&p.active)?analyzeFor(p.id):null;
   return K;
 }
@@ -10960,10 +11054,10 @@ function empTimeline(D){
     const d=l.det||{};
     const txt={created:'Employee record created'+(d.from?' ('+esc(d.from)+')':''),renamed:'Name changed from <b>'+esc(d.from||'')+'</b> to <b>'+esc(d.to||'')+'</b>',
       'alias-added':'Mapping confirmed: “'+esc(d.name||'')+'” ('+esc(EMP_SYS[d.sys]||d.sys||'')+') is this person',
-      'alias-removed':'Mapping removed: “'+esc(d.name||'')+'”','account-linked':'Google login linked: '+esc(d.email||''),
+      'alias-removed':'Mapping removed: “'+esc(d.name||'')+'”','account-linked':'Google login linked: '+esc(d.email||''),'account-unlinked':'Google login disconnected: '+esc(d.email||''),
       'active':'Marked '+(d.to?'active':'former team member')+(d.ended?' as of '+fmtY(d.ended):''),
       'profile':'Profile updated: '+esc(Object.keys(d).join(', ')),'photo':'Profile photo '+(d.removed?'removed':'updated'),
-      'roles':'Roles set to '+esc((d.to||[]).join(', ')||'none'),'email':'Company email set to '+esc(d.to||''),
+      'roles':'Roles set to '+esc((Array.isArray(d.to)?d.to:[]).join(', ')||'none'),'email':'Company email set to '+esc(d.to||''),
       'admin':'Admin access '+(d.to?'granted':'removed'),
       'takeover':'Took over '+(d.moved||0)+' accounts from '+esc(d.from||''),'handed-over':'Accounts handed to '+esc(d.to||'')+' ('+(d.moved||0)+')'}[l.what]||esc(l.what);
     ev(l.at,'id',txt+' <span class="note">· by '+esc(l.by||'')+'</span>');
@@ -10977,7 +11071,8 @@ function empTimeline(D){
     if(r.voidType) ev(r.voidDate||r.date,'bad','Sale '+esc(r.voidType)+' · '+c+(voidAmount(r)?' · '+money(voidAmount(r)):'')+(clawback(r)?' · clawback '+money(clawback(r)*shareFor(r,p.id)):''),rowLink(r));
     (r.edits||[]).forEach(e=>{
       if(e.f==='splitOk') ev(e.at||e.on,'id','Split approval · '+c+' · '+esc(e.to),rowLink(r));
-      else ev(e.at||e.on,'','Sale modified · '+c+' · '+esc(e.f)+': '+esc(e.from||'—')+' → '+esc(e.to||'—')+' <span class="note">· '+esc(e.by||'user')+'</span>',rowLink(r));
+      else if(e.f==='rep') ev(e.at||e.on,'bad','Sale reassigned · '+c+' · '+esc(empName(person(e.from))||e.from)+' → '+esc(empName(person(e.to))||e.to)+' <span class="note">· '+esc(e.by||'user')+'</span>',rowLink(r));
+      else if(e.f==='voidType'||e.f==='value'||e.f==='type'||e.f==='paid'||e.f==='invoiced'||e.f==='paidAmt'||e.f==='split') ev(e.at||e.on,'','Sale modified · '+c+' · '+esc(e.f)+': '+esc(e.from||'—')+' → '+esc(e.to||'—')+' <span class="note">· '+esc(e.by||'user')+'</span>',rowLink(r));
     });
   });
   D.disputes.forEach(d=>ev(d.raised,'bad','Dispute raised · '+esc(d.claim||'')+(d.status?' · '+esc(d.status):'')));
@@ -11014,8 +11109,10 @@ function renderEmp(){
     ((p.phone||p.truck||p.ext)?'<div class="meta">'+[p.phone,p.truck,p.ext?'ext '+p.ext:''].filter(Boolean).map(esc).join(' · ')+'</div>':'')+
     '<div class="pills">'+(p.active?'<span class="pill ok">ACTIVE</span>':'<span class="pill n">FORMER'+(p.ended?' · since '+esc(p.ended):'')+'</span>')+
     (p.roles||[]).map(r=>'<span class="pill '+(r==='sales'?'sa':r==='estimator'?'el':'n')+'">'+esc((EMP_ROLES.find(x=>x[0]===r)||[r,r])[1].toUpperCase())+'</span>').join('')+
-    (p.admin?'<span class="pill mid">ADMIN</span>':'')+'<span class="pill '+a.cls+'" title="'+esc(a.detail)+'">'+a.label+'</span>'+
-    '<span class="pill n mono" title="internal employee id">'+esc(p.id)+'</span></div></div></div>';
+    '<span class="pill '+a.cls+'" title="'+esc(a.detail)+'">'+a.label+'</span>'+
+    ((p.google&&p.google.email)?'<span class="pill ok" title="'+esc(p.google.email)+'">GOOGLE CONNECTED</span>':'<span class="pill n">GOOGLE NOT CONNECTED</span>')+
+    (ADMIN?((a.u&&a.u.role==='admin')?'<span class="pill mid">APP ADMIN</span>':'')+(p.admin?'<span class="pill mid" title="local PIN gate">PIN ADMIN</span>':''):'')+
+    (ADMIN?'<span class="pill n mono" title="internal employee id">'+esc(p.id)+'</span>':'')+'</div></div></div>';
   h+='<div class="epsecs">'+secs.map(x=>'<button class="sm'+(EP_SEC===x[0]?' on':'')+'" onclick="epSec(\''+x[0]+'\')">'+esc(x[1])+'</button>').join('')+'</div>';
 
   if(EP_SEC==='overview'){
@@ -11024,67 +11121,112 @@ function renderEmp(){
       h+='<div class="tiles small">'+
         epTile('Sales today',K.today.n,money(K.today.v))+epTile('This week',K.week.n,money(K.week.v)+(K.std?' · standard '+K.std+' '+u+'/wk':''))+
         epTile('This month',K.month.n,money(K.month.v))+epTile('Year to date',K.ytd.n,money(K.ytd.v))+
+        epTile('Since plan start',money(K.plan.v),K.plan.n+' new '+u+' · same window as the Scoreboard')+
         epTile('Total contract value',money(K.all.v),K.all.n+' sale'+(K.all.n===1?'':'s')+' · avg '+money(K.avg))+
         epTile('Mix',K.newN+' / '+K.upN+' / '+K.renN,'new / upsell / renewal'+(K.cancelled?' · '+K.cancelled+' cancelled':''))+
-        epTile('Invoiced',money(K.invoicedV),K.invoicedN+' of '+K.all.n+' sales invoiced')+
+        epTile('Invoiced (sales)',money(K.invoicedV),K.invoicedN+' of '+K.all.n+' sales have an invoice date')+
         (K.goal&&K.A&&K.A.scored?epTile('% to annual goal',Math.round(K.ytd.n/K.goal*100)+'%',K.ytd.n+' of '+K.goal+' '+u+' this year'):'')+
         (K.A&&K.A.rate!=null?epTile('Standard hit rate',Math.round(K.A.rate)+'%','rolling windows passed'):'')+
         '</div>';
       if(money$) h+='<div class="tiles small" style="margin-top:12px">'+
-        epTile('Commission earned',money(K.commEarned),'net of reversals')+epTile('Commission pending',money(K.commPending),'earned, not yet paid')+
+        epTile('Commission earned',money(K.commEarned),'since plan start · net of reversals')+epTile('Commission pending',money(K.commPending),'earned, not yet paid')+
         epTile('Commission paid',money(K.commPaid),'paid out to date')+(K.held?epTile('Held on splits',money(K.held),'waiting for approvals'):'')+
         epTile('Chargebacks',money(K.clawback),'overpaid commission to recover')+'</div>';
     }
-    h+='<div class="tiles small" style="margin-top:12px">'+
+    if(K.accts||K.leads||K.invLines||K.outstanding) h+='<div class="tiles small" style="margin-top:12px">'+
       epTile('Accounts owned',K.accts.toLocaleString(),K.leads+' open leads · from the SA salesperson field')+
       epTile('Invoice lines',K.invLines.toLocaleString(),money(K.invBilled)+' billed pre-tax · '+money(K.invYr)+' this year')+
       epTile('Outstanding',money(K.outstanding),'past-due balances on accounts they own')+'</div>';
+    const prePlan=D.rows.filter(r=>!r.voidType && r.date<(p.start||'0000'));
+    if(prePlan.length) h+='<div class="warnbox" style="margin-top:10px"><b>'+prePlan.length+' sale'+(prePlan.length===1?'':'s')+' ('+money(prePlan.reduce((a,r)=>a+netValue(r)*shareFor(r,p.id),0))+') predate this comp plan</b>, which starts '+fmtY(p.start)+'. They earn $0 commission and do not count toward the standard — on this page, the Scoreboard and the Commissions tab alike. If that start date is wrong, fix it on '+(ADMIN?'<a href="#" onclick="closeEmp();setTab(&quot;plans&quot;);selPerson(&quot;'+p.id+'&quot;);return false">the comp plan</a>':'the comp plan')+'.</div>';
+    if(money$ && empIsSales(p) && D.rows.length){ const R=empReconcile(p.id); if(R) h+='<div class="note" style="margin-top:8px">'+(R.ok?'✓ These figures reconcile with the Scoreboard and the Commissions tab.':'<b style="color:var(--red)">⚠ Does not reconcile</b> — page '+money(R.page.planV)+' / '+R.page.planN+' vs Scoreboard '+money(R.scoreboard.planV)+' / '+R.scoreboard.planN+'; commission page '+money(R.page.commEarned)+' vs Commissions tab '+money(R.commissionTab.earned))+'</div>'; }
+    if(!empIsSales(p) && !D.rows.length) h+='<div class="note" style="margin-top:4px">'+esc(empShort(p))+' is not in a sales role, so there are no sales figures here.</div>';
     if(!D.rows.length && !D.inv.length && !D.accts.length) h+='<div class="note" style="margin-top:12px">Nothing in the data points at this person yet.</div>';
     const T=empTimeline(D).slice(0,8);
     if(T.length) h+='<h3 style="margin:18px 0 6px">Recent activity</h3><div class="tl">'+T.map(t=>'<div class="ev '+t.cls+'"><div class="when">'+esc(String(t.at).replace('T',' ').slice(0,16))+'</div><div class="what">'+t.what+(t.link?' '+t.link:'')+'</div></div>').join('')+'</div>'+
       '<button class="sm" onclick="epSec(\'history\')">Full history →</button>';
   }
   else if(EP_SEC==='sales'){
-    h+='<div class="scroll"><table><thead><tr><th>Date</th><th>Client</th><th>Service</th><th>Type</th><th class="num">Value</th><th>Stage</th>'+(money$?'<th class="num">Commission</th>':'')+'<th></th></tr></thead><tbody>';
-    D.rows.forEach(r=>{
-      const sh=shareFor(r,p.id), st=stageOf(r);
+    const addrOf={}; CLIENTS.forEach(c=>{ const k=norm(c.n); if(!addrOf[k]) addrOf[k]=[c.addr,c.city].filter(Boolean).join(', '); });
+    const services=[...new Set(D.rows.map(r=>r.service).filter(Boolean))].sort();
+    const F=EP_F;
+    let list=D.rows.filter(r=>(!F.from||r.date>=F.from)&&(!F.to||r.date<=F.to)&&(!F.service||r.service===F.service)&&(!F.type||r.type===F.type)&&(!F.src||r.src===F.src)&&(!F.status||stageOf(r)===F.status));
+    const tot=list.reduce((a,r)=>a+netValue(r)*shareFor(r,p.id),0);
+    h+='<div class="frow tight" style="margin-bottom:10px">'+
+      '<div><label>From</label><input type="date" value="'+esc(F.from)+'" onchange="epFilter(\'from\',this.value)"></div><div><label>To</label><input type="date" value="'+esc(F.to)+'" onchange="epFilter(\'to\',this.value)"></div>'+
+      '<div><label>Service</label><select onchange="epFilter(\'service\',this.value)"><option value="">all</option>'+services.map(x=>'<option'+(F.service===x?' selected':'')+'>'+esc(x)+'</option>').join('')+'</select></div>'+
+      '<div><label>Type</label><select onchange="epFilter(\'type\',this.value)"><option value="">all</option>'+SALE_TYPES.map(t=>'<option value="'+t[0]+'"'+(F.type===t[0]?' selected':'')+'>'+esc(t[1])+'</option>').join('')+'</select></div>'+
+      '<div><label>Source</label><select onchange="epFilter(\'src\',this.value)"><option value="">all</option>'+Object.keys(SRC_LABEL).map(k=>'<option value="'+k+'"'+(F.src===k?' selected':'')+'>'+esc(SRC_LABEL[k])+'</option>').join('')+'</select></div>'+
+      '<div><label>Status</label><select onchange="epFilter(\'status\',this.value)"><option value="">all</option>'+['sold','completed','invoiced','due','paid','reversed'].map(x=>'<option'+(F.status===x?' selected':'')+'>'+x+'</option>').join('')+'</select></div>'+
+      '<div><label>&nbsp;</label><button class="sm" onclick="epFilterReset()">Clear</button></div></div>';
+    h+='<div class="note" style="margin-bottom:6px">'+list.length+' of '+D.rows.length+' sales · '+money(tot)+' (their share)</div>';
+    h+='<div class="scroll tallscroll"><table><thead><tr><th>Date</th><th>Client</th><th>Service</th><th>Type</th><th class="num">Value</th><th>Source</th><th>Status</th><th>Invoice</th>'+(money$?'<th>Commission</th>':'')+'<th></th></tr></thead><tbody>';
+    list.forEach(r=>{
+      const sh=shareFor(r,p.id), st=stageOf(r), cs=empCommState(r), addr=addrOf[norm(r.client)]||'';
       h+='<tr'+(r.voidType?' style="opacity:.55"':'')+'><td class="mono">'+fmtY(r.date)+'</td>'+
-        '<td><a href="#" onclick="openClient('+JSON.stringify(r.client).replace(/"/g,'&quot;')+');return false"><b>'+esc(r.client)+'</b></a>'+(isSplit(r)?' <span class="pill n">split '+Math.round(sh*100)+'%</span>':'')+
+        '<td><a href="#" onclick="openClient('+JSON.stringify(r.client).replace(/"/g,'&quot;')+');return false"><b>'+esc(r.client)+'</b></a>'+(addr?'<div class="note">'+esc(addr)+'</div>':'')+(isSplit(r)?' <span class="pill n">split '+Math.round(sh*100)+'%</span>':'')+
         ((r.repHow==='unmatched-default'||r.repHow==='orphan')?' <span class="pill no" title="source said: '+esc(r.repRaw||r.repOrphan||'')+'">NEEDS REVIEW</span>':'')+'</td>'+
         '<td class="note">'+esc(r.service||'')+'</td><td>'+esc(TYPE_LABEL[r.type]||r.type)+'</td>'+
-        '<td class="num mono">'+money(netValue(r)*sh)+'</td><td><span class="pill '+(st==='paid'?'ok':st==='reversed'?'no':'n')+'">'+esc(st)+'</span></td>'+
-        (money$?'<td class="num mono">'+money((splitPending(r)?0:(r.paid?paidOut(r):rowComm(r)))*sh)+'</td>':'')+
+        '<td class="num mono">'+money(netValue(r)*sh)+(r.voidType?'<div class="note">'+esc(r.voidType)+'</div>':'')+'</td>'+
+        '<td><span class="pill '+(String(r.src||'mn').toLowerCase())+'">'+esc(SRC_LABEL[r.src]||r.src||'manual')+'</span></td>'+
+        '<td><span class="pill '+(st==='paid'?'ok':st==='reversed'?'no':'n')+'">'+esc(st)+'</span></td>'+
+        '<td class="note">'+(r.invoiced?fmtY(r.invoiced)+(r.invNo?' · #'+esc(r.invNo):'')+(hasInvoiceEvidence(r)?'':' <span class="pill no" title="no invoice PDF/number on file">no evidence</span>'):'—')+'</td>'+
+        (money$?'<td><span class="pill '+(cs==='paid'?'ok':cs==='held'||cs==='reversed'?'no':cs==='due'?'mid':'n')+'">'+esc(cs)+'</span> <span class="mono">'+money(empCommAmt(r,p.id))+'</span>'+(r.paid?'<div class="note">paid '+fmtY(r.paid)+'</div>':'')+'</td>':'')+
         '<td class="num"><button class="sm" onclick="rowInfo(\''+r.id+'\')">Info</button>'+(ADMIN?' <button class="sm" onclick="openEdit(\''+r.id+'\')">Edit</button>':'')+'</td></tr>';
     });
     h+='</tbody></table></div>';
   }
   else if(EP_SEC==='invoices'){
-    const byC={}; D.inv.forEach(x=>{ const k=norm(x.c); (byC[k]=byC[k]||{name:x.c,n:0,v:0}); byC[k].n++; byC[k].v+=(+x.v||0); });
-    h+='<div class="note" style="margin-bottom:8px">Lines from the Service Autopilot invoice export whose <b>Sales Rep</b> field resolves to this person. Amounts are pre-tax. This never changes who a sale is credited to — the Data Hawk flags disagreements.</div>';
-    h+='<div class="scroll tallscroll"><table><thead><tr><th>Date</th><th>Invoice</th><th>Client</th><th>Service</th><th class="num">Amount</th><th class="num">Tax</th></tr></thead><tbody>';
+    const openBy={}; OPENINV.forEach(v=>{ openBy[String(v.i)]=v; });
+    const addrOf={}; CLIENTS.forEach(c=>{ const k=norm(c.n); if(!addrOf[k]) addrOf[k]=[c.addr,c.city].filter(Boolean).join(', '); });
+    const byC={}; D.inv.forEach(x=>{ const k=norm(x.c); (byC[k]=byC[k]||{n:0,v:0}); byC[k].n++; byC[k].v+=(+x.v||0); });
+    const openTot=D.inv.filter(x=>openBy[String(x.i)]).reduce((a,x)=>a+(+x.v||0),0);
+    h+='<div class="note" style="margin-bottom:8px">Lines from the Service Autopilot invoice export whose <b>Sales Rep</b> field resolves to this person. Amounts are pre-tax. This never changes who a sale is credited to: where a line names this person but the matching sale is credited to someone else, it is marked.</div>';
+    h+='<div class="tiles small" style="margin-bottom:10px">'+epTile('Invoice lines',D.inv.length.toLocaleString(),Object.keys(byC).length+' clients')+epTile('Billed (pre-tax)',money(K.invBilled),money(K.invYr)+' this year')+epTile('Still open',money(openTot),'lines on invoices in the balances snapshot')+'</div>';
+    h+='<div class="scroll tallscroll"><table><thead><tr><th>Date</th><th>Invoice</th><th>Client</th><th>Service</th><th class="num">Amount</th><th>Status</th><th>Related sale</th></tr></thead><tbody>';
     D.inv.slice().sort((a,b)=>a.d<b.d?1:a.d>b.d?-1:0).slice(0,400).forEach(x=>{
-      h+='<tr><td class="mono">'+fmtY(x.d)+'</td><td class="mono">'+esc(x.i||'')+'</td><td><a href="#" onclick="openClient('+JSON.stringify(x.c).replace(/"/g,'&quot;')+');return false">'+esc(x.c)+'</a></td>'+
-        '<td class="note">'+esc(x.s||'')+'</td><td class="num mono">'+money2(+x.v||0)+'</td><td class="num mono note">'+money2(+x.t||0)+'</td></tr>';
+      const ob=openBy[String(x.i)]; const addr=addrOf[norm(x.c)]||'';
+      const sale=ROWS.find(r=>norm(r.client)===norm(x.c) && ((r.invNo&&String(r.invNo)===String(x.i)) || Math.abs((dObj(x.d)-dObj(r.date))/86400000)<=60));
+      const other=sale && shareFor(sale,p.id)===0;
+      h+='<tr><td class="mono">'+fmtY(x.d)+'</td><td class="mono">'+esc(x.i||'')+'</td><td><a href="#" onclick="openClient('+JSON.stringify(x.c).replace(/"/g,'&quot;')+');return false">'+esc(x.c)+'</a>'+(addr?'<div class="note">'+esc(addr)+'</div>':'')+'</td>'+
+        '<td class="note">'+esc(x.s||'')+'</td><td class="num mono">'+money2(+x.v||0)+(+x.t?'<div class="note">+'+money2(+x.t)+' tax</div>':'')+'</td>'+
+        '<td>'+(ob?'<span class="pill '+(/past/i.test(ob.s)?'no':'mid')+'">'+esc(ob.s)+'</span>':'<span class="pill ok" title="not in the open-balances snapshot">cleared</span>')+'</td>'+
+        '<td>'+(sale?'<button class="sm" onclick="rowInfo(\''+sale.id+'\')">'+esc(TYPE_LABEL[sale.type]||sale.type)+' · '+money(netValue(sale))+'</button>'+(other?' <span class="pill no" title="this invoice line names '+esc(empShort(p))+' but the sale is credited to '+esc(empName(person(sale.rep)))+'">credited to '+esc(empShort(person(sale.rep)))+'</span>':''):'<span class="note">no logged sale</span>')+'</td></tr>';
     });
     h+='</tbody></table></div>'+(D.inv.length>400?'<div class="note">Showing the latest 400 of '+D.inv.length.toLocaleString()+'.</div>':'');
   }
   else if(EP_SEC==='comm'){
+    const R=empReconcile(p.id);
+    const led=D.rows.slice().sort((a,b)=>{ const da=dueDate(a)||a.date, db=dueDate(b)||b.date; return da<db?1:da>db?-1:0; });
+    h+='<div class="note" style="margin-bottom:8px">Every sale this person earns on, with the rate that applies and what happened to the money. Period = the month commission came due (invoice date + payment lag), exactly as the Commissions tab computes it. '+
+      (R?(R.ok?'<b>✓ Reconciles with the Commissions tab ('+money(R.commissionTab.earned)+').</b>':'<b style="color:var(--red)">⚠ Ledger '+money(R.page.commEarned)+' vs Commissions tab '+money(R.commissionTab.earned)+'</b>'):'')+
+      ' <button class="sm" onclick="closeEmp();setTab(\'comm\');const w=document.getElementById(\'cWho\');if(w){w.value=\''+p.id+'\';renderComm();}">Open in Commissions</button></div>';
+    h+='<div class="tiles small" style="margin-bottom:10px">'+epTile('Earned',money(K.commEarned),'since plan start')+epTile('Paid out',money(K.commPaid),'')+epTile('Pending',money(K.commPending),'')+(K.held?epTile('Held',money(K.held),'splits awaiting approval'):'')+epTile('Chargebacks',money(K.clawback),'')+'</div>';
+    h+='<div class="scroll tallscroll"><table><thead><tr><th>Period</th><th>Sale</th><th class="num">Commissionable</th><th class="num">Rate</th><th class="num">Commission</th><th>Status</th><th>Paid</th><th>Chargeback / adj.</th><th></th></tr></thead><tbody>';
+    led.forEach(r=>{
+      const sh=shareFor(r,p.id), pre=r.date<(p.start||'0000'), cs=pre?'pre-plan':empCommState(r), cb=clawback(r)*sh, due=dueDate(r);
+      h+='<tr'+((r.voidType||pre)?' style="opacity:.6"':'')+'><td class="mono">'+(pre?'<span class="note">before plan</span>':due?due.slice(0,7):'<span class="note">not invoiced</span>')+'</td>'+
+        '<td><b>'+esc(r.client)+'</b><div class="note">'+fmtY(r.date)+' · '+esc(r.service||'')+' · '+esc(TYPE_LABEL[r.type]||r.type)+(isSplit(r)?' · split '+Math.round(sh*100)+'%':'')+'</div></td>'+
+        '<td class="num mono">'+money(netValue(r)*sh)+'</td><td class="num mono">'+num(rowRate(r),1)+'%'+(r.commRate!=null&&r.commRate!==''?' <span class="pill n" title="rate frozen on the sale">locked</span>':'')+'</td>'+
+        '<td class="num mono"><b>'+money(empCommAmt(r,p.id))+'</b></td>'+
+        '<td><span class="pill '+(cs==='paid'?'ok':cs==='held'||cs==='reversed'?'no':cs==='due'?'mid':'n')+'">'+esc(cs)+'</span></td>'+
+        '<td class="mono">'+(r.paid?fmtY(r.paid)+(r.paidAmt!=null?'<div class="note">'+money(+r.paidAmt*sh)+' handed over</div>':''):'—')+'</td>'+
+        '<td class="mono">'+(cb?'<span style="color:var(--red)">−'+money(cb)+'</span><div class="note">'+esc(r.voidType)+' '+(r.voidDate?fmtY(r.voidDate):'')+'</div>':'—')+'</td>'+
+        '<td class="num"><button class="sm" onclick="rowInfo(\''+r.id+'\')">Info</button></td></tr>';
+    });
+    h+='</tbody></table></div>';
     const months=[]; let ym=String(p.start||todayISO()).slice(0,7); const end=todayISO().slice(0,7);
     let guard=0; while(ym<=end && guard++<120){ months.push(ym); const y=+ym.slice(0,4), m=+ym.slice(5,7); ym=(m===12?(y+1)+'-01':y+'-'+String(m+1).padStart(2,'0')); }
-    h+='<div class="note" style="margin-bottom:8px">By the month commission came due (invoice date + payment lag), exactly as the Commissions tab computes it.</div>';
-    h+='<div class="scroll"><table><thead><tr><th>Month</th><th class="num">Sales</th><th class="num">Commission</th><th class="num">Chargebacks</th><th class="num">Adjustments</th><th class="num">Payable</th></tr></thead><tbody>';
-    let tot={c:0,cb:0,adj:0,pay:0};
+    h+='<h3 style="margin:16px 0 6px">By month due</h3><div class="scroll"><table><thead><tr><th>Month</th><th class="num">Sales</th><th class="num">Commission</th><th class="num">Override</th><th class="num">Chargebacks</th><th class="num">Adjustments</th><th class="num">Payable</th></tr></thead><tbody>';
+    let tot={c:0,ov:0,cb:0,adj:0,pay:0};
     months.reverse().forEach(m=>{
-      const C=commissionFor(p,m,'due'); if(!C.rows||(!C.rows.length&&!C.cbTotal&&!C.adjTotal)) return;
-      tot.c+=C.commission; tot.cb+=C.cbTotal; tot.adj+=C.adjTotal; tot.pay+=C.payable;
-      h+='<tr><td><b>'+esc(m)+'</b></td><td class="num">'+C.rows.length+'</td><td class="num mono">'+money(C.commission)+'</td><td class="num mono">'+(C.cbTotal?'−'+money(C.cbTotal):'—')+'</td>'+
+      const C=commissionFor(p,m,'due'); if(!C.rows.length&&!C.cbTotal&&!C.adjTotal&&!C.ovC) return;
+      tot.c+=C.newC+C.upC; tot.ov+=C.ovC; tot.cb+=C.cbTotal; tot.adj+=C.adjTotal; tot.pay+=C.payable;
+      h+='<tr><td><b>'+esc(m)+'</b></td><td class="num">'+C.rows.length+'</td><td class="num mono">'+money(C.newC+C.upC)+'</td><td class="num mono">'+(C.ovC?money(C.ovC):'—')+'</td><td class="num mono">'+(C.cbTotal?'−'+money(C.cbTotal):'—')+'</td>'+
         '<td class="num mono">'+(C.adjTotal?money(C.adjTotal):'—')+'</td><td class="num mono"><b>'+money(C.payable)+'</b></td></tr>';
     });
-    h+='<tr><td><b>Total</b></td><td></td><td class="num mono"><b>'+money(tot.c)+'</b></td><td class="num mono">'+(tot.cb?'−'+money(tot.cb):'—')+'</td><td class="num mono">'+(tot.adj?money(tot.adj):'—')+'</td><td class="num mono"><b>'+money(tot.pay)+'</b></td></tr>';
-    h+='</tbody></table></div>';
-    const paid=D.rows.filter(r=>r.paid);
-    if(paid.length){ h+='<h3 style="margin:16px 0 6px">Paid out</h3><div class="scroll"><table><thead><tr><th>Paid</th><th>Client</th><th class="num">Amount</th><th></th></tr></thead><tbody>'+
-      paid.sort((a,b)=>a.paid<b.paid?1:-1).map(r=>'<tr><td class="mono">'+fmtY(r.paid)+'</td><td>'+esc(r.client)+'</td><td class="num mono">'+money(paidOut(r)*shareFor(r,p.id))+'</td><td class="num"><button class="sm" onclick="rowInfo(\''+r.id+'\')">Info</button></td></tr>').join('')+'</tbody></table></div>'; }
+    h+='<tr><td><b>Total</b></td><td></td><td class="num mono"><b>'+money(tot.c)+'</b></td><td class="num mono">'+(tot.ov?money(tot.ov):'—')+'</td><td class="num mono">'+(tot.cb?'−'+money(tot.cb):'—')+'</td><td class="num mono">'+(tot.adj?money(tot.adj):'—')+'</td><td class="num mono"><b>'+money(tot.pay)+'</b></td></tr>';
+    h+='</tbody></table></div><div class="note" style="margin-top:6px">Sales not yet invoiced have no due month and appear only in the ledger above.</div>';
   }
   else if(EP_SEC==='accounts'){
     h+='<div class="note" style="margin-bottom:8px">Accounts whose Service Autopilot salesperson resolves to this person (through a confirmed mapping or a takeover rule).</div>';
@@ -11105,7 +11247,8 @@ function renderEmp(){
       epTile('Company email',p.email?'<span style="font-size:15px">'+esc(p.email)+'</span>':'<span class="note">none</span>','identity for login + imports')+
       epTile('Google login','<span style="font-size:15px">'+a.label+'</span>',a.detail)+
       epTile('Linked Google account',g.email?'<span style="font-size:15px">'+esc(g.email)+'</span>':'<span class="note">not yet</span>',g.lastLogin?'last login '+esc(String(g.lastLogin).replace('T',' ').slice(0,16)):(g.linkedAt?'linked '+esc(String(g.linkedAt).slice(0,10)):'links on first sign-in'))+
-      epTile('Admin (PIN gate)',p.admin?'yes':'no',p.admin?(p.pin?'PIN set':'no PIN'):'set under Admin › Access')+'</div>';
+      (ADMIN?epTile('Permissions',(a.u?(a.u.role==='admin'?'App admin':'Rep login'):'No app login'),(p.admin?'PIN admin on this device':'no PIN admin')):'')+'</div>';
+    if(ADMIN && p.google && p.google.email) h+='<div style="margin-top:8px"><button class="sm danger" onclick="empGoogleUnlink()">Disconnect Google account</button> <span class="note">Keeps the company email; the next sign-in from '+esc(p.google.email)+' links again through the match queue only if it is still a company address on the team-login list.</span></div>';
     h+='<h3 style="margin:16px 0 6px">Known as, in other systems</h3>';
     const al=p.aliases||[];
     h+='<div class="note" style="margin-bottom:6px">Names that resolve to this record. Exact full names (either order) match on their own; everything else had to be confirmed once by an admin.</div>';
@@ -11183,6 +11326,7 @@ function empPhotoPicked(ev){
   };
   rd.readAsDataURL(f);
 }
+function empGoogleUnlink(){ const p=person(EP_ID); if(!p||!ADMIN||!p.google) return; if(!confirm('Disconnect '+p.google.email+' from '+empName(p)+'?')) return; const em=p.google.email; delete p.google; empLog(p,'account-unlinked',{email:em}); save(K_PEOPLE,PEOPLE); EMP_IDX=null; auditRecord('emp-edit',{emp:p.id,googleUnlinked:em}); render(); renderEmp(); }
 function empPhotoRemove(){ const p=person(EP_ID); if(!p||!ADMIN) return; delete p.photo; empLog(p,'photo',{removed:true}); save(K_PEOPLE,PEOPLE); render(); renderEmp(); }
 
 /* ============================================================
