@@ -2308,6 +2308,11 @@ const K_ADMIN='alp_admin_v1';
 const K_REV='alp_roster_rev_v2';
 const K_ADMINREV='alp_admin_user_v1';
 const K_OSC='alp_osc_v1';
+// The holding record for sales whose rep id no longer exists. Declared here, with the
+// storage keys, because empParkOrphans() runs during boot - far above the employee
+// block - and a `const` referenced before its declaration throws, which used to leave
+// the whole app blank the moment a single orphan sale existed.
+const EMP_UNASSIGNED='emp_unassigned';
 // Corrections to values seeded by an earlier build. Applied once, and only where the
 // value is still exactly what was seeded — anything hand-edited is left alone.
 const ROSTER_REVISIONS=[
@@ -2516,7 +2521,7 @@ const K_PAYOUTS='alp_payouts_v1';
 let PAYOUTS=load(K_PAYOUTS,[]);
 const PAYOUT_KINDS={rep:'Rep commission',override:'Manager override',adjustment:'Correction','override-adjustment':'Override correction','rep-chargeback':'Rep chargeback','manager-chargeback':'Manager chargeback'};
 const OV_KINDS=['override','override-adjustment'];
-function round2(n){ return Math.round((+n||0)*100)/100; }
+function round2(n){ const v=Math.round((+n||0)*100)/100; return v===0?0:v; }
 function payoutsFor(rowId,emp,kinds){
   return PAYOUTS.filter(x=>x.rowId===rowId && x.status==='paid' && (!emp||x.emp===emp) && (!kinds||kinds.indexOf(x.kind)>-1));
 }
@@ -2543,6 +2548,10 @@ function voidPayout(id,reason){
 // row and writes one ledger entry per share (plus the manager override, if any).
 function journalPaid(r,paidOn){
   paidOn=paidOn||r.paid||todayISO();
+  // One sale is paid once. setStage and bulkStamp both refuse a second marking, but the
+  // rule belongs here too: a migration, a backfill or a restore that calls this twice
+  // must not write the commission a second time.
+  if(PAYOUTS.some(x=>x.rowId===r.id && x.status==='paid' && (x.kind==='rep'||x.kind==='override'))) return;
   const basis=netValue(r), rate=rowRate(r), period=String(dueDate(r)||r.date).slice(0,7);
   if(r.commRate==null||r.commRate===''||!isFinite(+r.commRate)) r.commRate=rate;   // rate frozen on the row from here on
   const shares=rowShares(r);
@@ -2731,7 +2740,7 @@ function payoutConfirm(rowId){
    ============================================================ */
 const EMP_SYS={SA:'Service Autopilot',EL:'Elevation Advisor',GV:'Grovely',INV:'Invoice export',MN:'Manual entry',GOOGLE:'Google login','*':'Any system'};
 const EMP_ROLES=[['sales','Sales'],['estimator','Estimator'],['tech','Technician'],['office','Office'],['manager','Manager']];
-const EMP_UNASSIGNED='emp_unassigned';
+// (declared with the storage keys above - empParkOrphans() runs during boot and needs it)
 function empKey(s){ s=String(s||'').trim(); if(s.indexOf('@')>-1) return s.toLowerCase(); return nameTokens(s).sort().join(' '); }   // order-free: "James, Jeff" = "Jeff James"; emails kept whole
 function empFirst(p){ if(p.first!=null&&p.first!=='') return p.first; return String(p.name||'').trim().split(/\s+/)[0]||''; }
 function empLast(p){ if(p.last!=null) return p.last; const t=String(p.name||'').trim().split(/\s+/); return t.length>1?t.slice(1).join(' '):''; }
@@ -2905,9 +2914,18 @@ empMigrate();
    HELPERS
    ============================================================ */
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function money(n){return '$'+Math.round(n).toLocaleString('en-US');}
-function money2(n){return '$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
-function num(n,d){d=d==null?1:d;return Number(n).toFixed(d).replace(/\.0+$/,'');}
+// A missing number is not zero. It renders as an em dash so nobody reads a gap in
+// the data as a real $0 — and so a malformed import can never paint "$NaN" on a tile.
+// -0 is folded into 0: "$-0" is not a number anybody should ever be shown.
+function fin(n){ const v=+n; return isFinite(v) ? (v===0?0:v) : null; }
+function money(n){ const v=fin(n); if(v===null) return '\u2014';
+  const w=Math.round(v)||0;                    // Math.round(-0.004) is -0, which prints as "$-0"
+  return '$'+w.toLocaleString('en-US'); }
+function money2(n){ const v=fin(n); if(v===null) return '\u2014';
+  const w=(Math.round(v*100)/100)||0;          // folds -0 and -0.0001 into a clean 0.00
+  return '$'+w.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function num(n,d){ d=d==null?1:d; const v=fin(n); if(v===null) return '\u2014';
+  return v.toFixed(d).replace(/\.0+$/,''); }
 function pct(n){return (n*100).toFixed(1)+'%';}
 
 function iso(y,mo,d){ if(mo<1||mo>12||d<1||d>31)return null; return y+'-'+String(mo).padStart(2,'0')+'-'+String(d).padStart(2,'0'); }
@@ -2920,8 +2938,8 @@ function pDate(s){
   return null;
 }
 function dObj(s){const p=String(s).split('-');return new Date(+p[0],+p[1]-1,+p[2]);}
-function fmt(s){const d=dObj(s);return MON[d.getMonth()]+' '+d.getDate();}
-function fmtY(s){const d=dObj(s);return MON[d.getMonth()]+' '+d.getDate()+', '+d.getFullYear();}
+function fmt(s){const d=dObj(s);if(!d||isNaN(d))return '\u2014';return MON[d.getMonth()]+' '+d.getDate();}
+function fmtY(s){const d=dObj(s);if(!d||isNaN(d))return '\u2014';return MON[d.getMonth()]+' '+d.getDate()+', '+d.getFullYear();}
 function pNum(s){
   if(s==null)return 0; if(typeof s==='number')return s;
   let t=String(s).trim(); const neg=/^\(.*\)$/.test(t);
@@ -8421,20 +8439,44 @@ function runChecks(){
   /* --- THE DATA HAWK: sale credited to one rep, invoice naming another --- */
   // Commission follows the sale's rep; the Revenue tab follows the invoice line.
   // When those disagree, two reports name two different people for the same job.
+  //
+  // The hard part is knowing WHICH invoice belongs to WHICH sale. Nothing links them
+  // by id, so this used to match on client name inside a 60-day window — and a
+  // recurring client with two sales in that window matched BOTH invoices, so each of
+  // those sales was reported as a rep mismatch against the OTHER sale's invoice. On a
+  // maintenance book, where recurring clients are the whole business, that made the
+  // check fire on nearly every sale and mean nothing.
+  //
+  // It now only speaks when the link is unambiguous:
+  //   1. the sale carries a real invoice number — match that number exactly, or
+  //   2. the client has exactly ONE sale in the window, so the invoices can only be its.
+  // Anything ambiguous is left alone rather than guessed at.
   const repMismatch=[];
+  const invByNo={};
+  INVOICES.forEach(x=>{ const k=norm(x.i); if(k){ (invByNo[k]=invByNo[k]||[]).push(x); } });
+  const salesInWindow=(client,date)=>ROWS.filter(q=>!q.voidType &&
+    norm(q.client)===norm(client) && Math.abs((dObj(q.date)-dObj(date))/86400000)<=60).length;
   ROWS.filter(r=>!r.voidType).forEach(r=>{
     const shareIds=rowShares(r).map(s=>s.rep);
-    const lines=INVOICES.filter(x=>norm(x.c)===norm(r.client) && x.r &&
-      Math.abs((dObj(x.d)-dObj(r.date))/86400000)<=60);
+    let lines=null, linkedBy='';
+    const no=norm(r.invNo);
+    if(no && invByNo[no]){ lines=invByNo[no]; linkedBy='invoice #'+r.invNo; }
+    else {
+      if(salesInWindow(r.client,r.date)!==1) return;      // ambiguous — cannot say
+      lines=INVOICES.filter(x=>norm(x.c)===norm(r.client) && x.r &&
+        Math.abs((dObj(x.d)-dObj(r.date))/86400000)<=60);
+      linkedBy='client name within 60 days';
+    }
     const others={};
     lines.forEach(x=>{ const id=invoiceRepId(x); if(id && shareIds.indexOf(id)<0) others[x.r]=1; });
-    if(Object.keys(others).length) repMismatch.push({r, others:Object.keys(others)});
+    if(Object.keys(others).length) repMismatch.push({r, others:Object.keys(others), linkedBy});
   });
   add('hawkRep','warn','🦅 Sale and invoice name different reps',
-    'The sale pays commission to one person while the invoice lines carry another name. One of them is wrong — or it should be a split.',
+    'The sale pays commission to one person while the invoice lines carry another name. One of them is wrong — or it should be a split. Only unambiguous matches are listed: a sale carrying a real invoice number, or a client with a single sale in the window.',
     repMismatch.slice(0,30).map(d=>({
       text:'<b>'+esc(d.r.client)+'</b> · '+money(bookedValue(d.r)),
-      sub:'sale: '+esc(person(d.r.rep)?person(d.r.rep).name:'?')+' · invoice lines: '+esc(d.others.join(', ')),
+      sub:'sale: '+esc(person(d.r.rep)?person(d.r.rep).name:'?')+' · invoice lines: '+esc(d.others.join(', '))+
+          ' · matched by '+esc(d.linkedBy),
       act:'<button class="sm" onclick="rowInfo(\''+d.r.id+'\')">Info</button> '+
           '<button class="sm" onclick="editSplit(\''+d.r.id+'\')">Split it</button>'
     })));
@@ -11245,6 +11287,14 @@ function updatePreview(){
   document.getElementById('impPreview').innerHTML=h;
 }
 
+// How a re-imported row is recognised when the export carries no record ID of its own.
+// It deliberately leaves the SALESPERSON out: a name the roster cannot resolve lands on
+// whoever is picked as the import default, so keying on the rep meant re-importing the
+// same file with a different default logged the sale a SECOND time under the second name
+// - one job, two sales, two commissions. Source, date, client and value identify the job.
+function importDupKey(r){
+  return r.src+'|'+r.date+'|'+String(r.client||'').toLowerCase()+'|'+bookedValue(r).toFixed(2);
+}
 function doImport(){
   if(!PARSED)return;
   const {out,m}=buildRows();
@@ -11258,9 +11308,10 @@ function doImport(){
   //   1. the source system's own ID — exact, survives edits on either side
   //   2. failing that, the old composite guess: rep + source + date + client + value
   const byId={}; ROWS.forEach(r=>{ if(r.src&&r.srcId) byId[r.src+'|'+r.srcId]=r; });
-  const key=r=>r.rep+'|'+r.src+'|'+r.date+'|'+r.client.toLowerCase()+'|'+bookedValue(r).toFixed(2);
+  const key=importDupKey;
   const seen=new Set(ROWS.map(key));
-  let added=0,dupes=0,updated=0,tombed=0; const frozen=[], stale=[];
+  const byKey={}; ROWS.forEach(r=>{ byKey[key(r)]=r; });
+  let added=0,dupes=0,updated=0,tombed=0; const frozen=[], stale=[], reCredited=[];
   out.forEach(r=>{
     r.srcAt=stamp; r.batch=batch;
     // A record an admin deliberately deleted must not silently come back.
@@ -11298,8 +11349,14 @@ function doImport(){
       }
       byId[r.src+'|'+r.srcId]=r;
     }
-    const k=key(r); if(seen.has(k)){dupes++;return;}
-    seen.add(k); ROWS.push(r); added++;
+    const k=key(r);
+    if(seen.has(k)){
+      const ex=byKey[k];
+      if(ex && ex.rep!==r.rep) reCredited.push(r.client+' \u2014 already logged to '+
+        (person(ex.rep)?empName(person(ex.rep)):'?')+', this file says '+(person(r.rep)?empName(person(r.rep)):'?'));
+      dupes++; return;
+    }
+    seen.add(k); byKey[k]=r; ROWS.push(r); added++;
   });
   save(K_ROWS,ROWS);
   auditRecord('import',{src:src, batch:batch, rows:out.length, added:added, updated:updated,
@@ -11315,6 +11372,9 @@ function doImport(){
   if(added) msg+='\n\n🚨 THE LAW: each sale still needs its real invoice number and uploaded invoice PDF before it can be marked invoiced or paid. The 🦅 Data Hawk lists every sale missing them.';
   if(updated) msg+='\n\nUpdated '+updated+' already here — the source changed them. The originals are kept on each sale.';
   if(dupes) msg+='\n\nSkipped '+dupes+' already logged and unchanged.';
+  if(reCredited.length) msg+='\n\n\u26a0\ufe0f '+reCredited.length+' of those name a DIFFERENT salesperson than the sale already here '+
+    '\u2014 they were not logged twice, but somebody is credited wrongly on one side:\n'+
+    reCredited.slice(0,5).join('\n')+(reCredited.length>5?'\n\u2026and '+(reCredited.length-5)+' more':'');
   if(tombed) msg+='\n\nHeld out '+tombed+' record'+(tombed===1?'':'s')+' you had deleted — they will not come back until restored on the Admin tab.';
   if(stale.length) msg+='\n\nIgnored '+stale.length+' STALE record'+(stale.length===1?'':'s')+' — this file is older than what is already here:\n'+
     stale.slice(0,5).join('\n')+(stale.length>5?'\n…and '+(stale.length-5)+' more':'');

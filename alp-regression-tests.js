@@ -1217,6 +1217,124 @@
         results.push({name:'capability model exists (can/scopeOf)', expected:true, actual:false, pass:false});
       }
 
+
+      /* ---------- DATA INTEGRITY: a missing number is not zero ---------- */
+      // money/money2/num/fmt used to paint "$NaN", "$-0" and "undefined NaN" straight onto
+      // dashboard tiles, so a malformed import looked like a real figure of zero.
+      check('FMT money(undefined) is a dash, not $NaN', '\u2014', money(undefined));
+      check('FMT money("abc") is a dash', '\u2014', money('abc'));
+      check('FMT money2(undefined) is a dash', '\u2014', money2(undefined));
+      // this harness defines its own num() helper, so reach the app's through window
+      check('FMT num(undefined) is a dash', '\u2014', window.num(undefined,0));
+      check('FMT fmt("") is a dash, not "undefined NaN"', '\u2014', fmt(''));
+      check('FMT fmtY("") is a dash', '\u2014', fmtY(''));
+      check('FMT a rounding artefact never prints as $-0', '$0', money(-0.004));
+      check('FMT money2 folds -0 into 0.00', '$0.00', money2(-0.0001));
+      check('FMT round2 never returns negative zero', 'false', String(Object.is(round2(-0.004),-0)));
+      check('FMT a real number is untouched', '$1,235', money(1234.56));
+      check('FMT a real number keeps its cents', '$1,234.57', money2(1234.567));
+      check('FMT a real negative is still negative', '$-1,234.57', money2(-1234.567));
+      check('FMT zero is still zero, not a dash', '$0', money(0));
+
+      /* ---------- DATA INTEGRITY: re-import must not duplicate a sale ---------- */
+      // An export with no record ID of its own is recognised by source+date+client+value.
+      // The salesperson is deliberately NOT part of that key: an unresolvable name lands on
+      // the import default, so keying on it duplicated the job under a second name.
+      if(typeof importDupKey==='function'){
+        var ik=function(o){ return importDupKey(Object.assign({src:'SA',date:'2026-06-03',
+          client:'Harborview HOA',value:1240,basis:'contract',qty:1,rep:'A'},o||{})); };
+        check('IMPORT dedupe key ignores the salesperson', ik({rep:'A'}), ik({rep:'B'}));
+        checkTrue('IMPORT dedupe key still separates different values', ik({value:1240})!==ik({value:1250}), 'ok');
+        checkTrue('IMPORT dedupe key still separates different dates', ik({date:'2026-06-03'})!==ik({date:'2026-06-04'}), 'ok');
+        checkTrue('IMPORT dedupe key still separates different clients', ik({client:'A Co'})!==ik({client:'B Co'}), 'ok');
+        checkTrue('IMPORT dedupe key still separates different sources', ik({src:'SA'})!==ik({src:'EL'}), 'ok');
+        check('IMPORT dedupe key is case-insensitive on the client', ik({client:'HARBORVIEW HOA'}), ik({client:'harborview hoa'}));
+      } else {
+        results.push({name:'importDupKey exists', expected:true, actual:false, pass:false});
+      }
+
+      /* ---------- DATA INTEGRITY: one sale is paid once ---------- */
+      if(typeof journalPaid==='function'){
+        var alertJ=window.alert, toastJ=window.toast; window.alert=function(){}; window.toast=function(){};
+        var JA=mkPerson({id:'JA',name:'Jay Rep'}); JA.first='Jay'; JA.last='Rep'; JA.roles=['sales'];
+        JA.start='2026-01-01'; JA.commNew=10; JA.mgr='JM'; JA.aliases=[]; JA.log=[];
+        var JM=mkPerson({id:'JM',name:'Jem Mgr'}); JM.first='Jem'; JM.last='Mgr'; JM.roles=['manager'];
+        JM.start='2026-01-01'; JM.commOv=5; JM.commNew=0; JM.commUp=0; JM.aliases=[]; JM.log=[];
+        PEOPLE=[JA,JM]; PAYOUTS=[]; EMP_IDX=null; GLOBAL.payLag=30;
+        var jr=mkRow({rep:'JA',value:4000,type:'new',date:'2026-06-05',invoiced:'2026-06-10',client:'Idem Co'});
+        ROWS=[jr]; freezeDueLag(jr); jr.commRate=rowRate(jr); jr.paid='2026-07-10';
+        var live=function(emp){ return round2(PAYOUTS.filter(function(x){return x.rowId===jr.id&&x.emp===emp&&x.status!=='void';})
+          .reduce(function(a,x){return a+x.amount;},0)); };
+        journalPaid(jr,'2026-07-10');
+        check('LEDGER first journalPaid pays the rep once', 400, live('JA'));
+        check('LEDGER first journalPaid pays the override once', 200, live('JM'));
+        var entriesOnce=PAYOUTS.length;
+        journalPaid(jr,'2026-07-10'); journalPaid(jr,'2026-07-12');
+        check('LEDGER journalPaid called again does not pay the rep twice', 400, live('JA'));
+        check('LEDGER journalPaid called again does not pay the override twice', 200, live('JM'));
+        check('LEDGER no extra entries are written', entriesOnce, PAYOUTS.length);
+        // un-pay then re-pay is still allowed - that is a real correction, not a double
+        unjournalPaid(jr,'test'); jr.paid='';
+        check('LEDGER un-pay clears the live balance', 0, live('JA'));
+        jr.paid='2026-07-20'; journalPaid(jr,'2026-07-20');
+        check('LEDGER re-pay after un-pay works exactly once', 400, live('JA'));
+        window.alert=alertJ; window.toast=toastJ; PAYOUTS=[];
+      }
+
+      /* ---------- DATA INTEGRITY: an orphan sale must not blank the app ---------- */
+      // A sale whose rep id no longer exists is parked on the Unassigned holding record.
+      // EMP_UNASSIGNED must be readable when empParkOrphans() runs during boot - it used to
+      // be declared 283 lines later, so the first orphan threw and the whole page rendered
+      // nothing at all.
+      if(typeof empParkOrphans==='function'){
+        checkTrue('ORPHAN EMP_UNASSIGNED is defined', typeof EMP_UNASSIGNED==='string' && !!EMP_UNASSIGNED, typeof EMP_UNASSIGNED);
+        var OP=mkPerson({id:'OP',name:'Op Rep'}); OP.first='Op'; OP.last='Rep'; OP.roles=['sales'];
+        OP.start='2026-01-01'; OP.aliases=[]; OP.log=[];
+        PEOPLE=[OP]; EMP_IDX=null;
+        var ghost=mkRow({rep:'NO_SUCH_EMPLOYEE',value:1000,client:'Orphan Co'});
+        ROWS=[ghost];
+        var threw='';
+        try{ empParkOrphans(); }catch(e){ threw=e.message; }
+        check('ORPHAN parking an orphan does not throw', '', threw);
+        check('ORPHAN the sale is parked on Unassigned', EMP_UNASSIGNED, ghost.rep);
+        check('ORPHAN the original id is kept for review', 'NO_SUCH_EMPLOYEE', ghost.repOrphan);
+        check('ORPHAN the sale is marked as an orphan', 'orphan', ghost.repHow);
+        checkTrue('ORPHAN the money is not re-credited to a real person',
+          PEOPLE.filter(function(p){return p.id!==EMP_UNASSIGNED;}).every(function(p){return p.id!==ghost.rep;}), 'ok');
+        check('ORPHAN the holding record is inactive and unscored', 'false/false',
+          (function(){ var u=PEOPLE.find(function(p){return p.id===EMP_UNASSIGNED;})||{};
+            return String(!!u.active)+'/'+String(!!u.scored); })());
+      }
+
+      /* ---------- DATA INTEGRITY: the rep-mismatch check must not cry wolf ---------- */
+      // Sale and invoice used to be matched on client name inside a 60-day window, so a
+      // recurring client with two sales in that window matched BOTH invoices and every one
+      // of those sales was reported as a rep mismatch against the other sale's invoice.
+      if(typeof runChecks==='function'){
+        var alertH=window.alert, toastH=window.toast; window.alert=function(){}; window.toast=function(){};
+        var HA=mkPerson({id:'HA',name:'Hana Rep'}); HA.first='Hana'; HA.last='Rep'; HA.roles=['sales'];
+        HA.start='2026-01-01'; HA.commNew=10; HA.aliases=[]; HA.log=[];
+        var HB=mkPerson({id:'HB',name:'Hugo Rep'}); HB.first='Hugo'; HB.last='Rep'; HB.roles=['sales'];
+        HB.start='2026-01-01'; HB.commNew=10; HB.aliases=[]; HB.log=[];
+        PEOPLE=[HA,HB]; EMP_IDX=null; PAYOUTS=[]; DISPUTES=[];
+        // one recurring client, two sales three weeks apart, each correctly invoiced
+        var s1=mkRow({id:'hr1',rep:'HA',date:'2026-06-01',client:'Recurring Co',value:1000,invoiced:'2026-06-05'});
+        var s2=mkRow({id:'hr2',rep:'HB',date:'2026-06-22',client:'Recurring Co',value:1000,invoiced:'2026-06-26'});
+        ROWS=[s1,s2];
+        INVOICES=[{c:'Recurring Co',a:'',r:'Hana Rep',i:'INV-1',d:'2026-06-05',s:'S',v:1000,k:'x',t:0},
+                  {c:'Recurring Co',a:'',r:'Hugo Rep',i:'INV-2',d:'2026-06-26',s:'S',v:1000,k:'x',t:0}];
+        var repCheck=function(){ var c=runChecks().find(function(x){return x.id==='hawkRep';}); return c?c.items.length:0; };
+        check('HAWK a recurring client with two correctly-invoiced sales raises nothing', 0, repCheck());
+        // now a genuine mismatch, linked by a real invoice number
+        s1.invNo='INV-2';
+        check('HAWK a real mismatch linked by invoice number is caught', 1, repCheck());
+        s1.invNo='';
+        // and a genuine mismatch on a client with a single sale in the window
+        ROWS=[s1]; INVOICES=[{c:'Recurring Co',a:'',r:'Hugo Rep',i:'INV-9',d:'2026-06-05',s:'S',v:1000,k:'x',t:0}];
+        check('HAWK a real mismatch on an unambiguous client is caught', 1, repCheck());
+        window.alert=alertH; window.toast=toastH;
+      }
+
       /* ---------- C2: tombstones stop deleted records resurrecting ---------- */
       if(typeof addTombstone==='function' && typeof isTombstoned==='function'){
         TOMBSTONES=[];
