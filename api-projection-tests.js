@@ -194,6 +194,30 @@
     check('WRITE a rep cannot wipe company billing','i1',ids(back(function(d){ d.invoices=[]; }).invoices));
     check('WRITE a rep cannot invent an invoice','i1',
       ids(back(function(d){ d.invoices.push({id:'i9',client:'Acme',total:-900}); }).invoices));
+    /* ---- id-less collections must not multiply on every save ---- */
+    // Invoice lines, payments, open balances and the sync logs carry no id: an invoice
+    // line is identified by its content. Pairing them by id matched nothing and appended
+    // the incoming copy beside the stored one, so every save by a manager or billing user
+    // DOUBLED the whole invoice audit.
+    var idless=function(email,rounds){
+      var cur=stored;
+      for(var i=0;i<rounds;i++){
+        var sent=SRV.projectState(cur,email);
+        cur=SRV.mergeProtected(sent,cur,email);
+      }
+      var d=JSON.parse(cur);
+      return {inv:(d.invoices||[]).length, pay:(d.payments||[]).length,
+              open:(d.openinv||[]).length, syn:(d.invsyncs||[]).length,
+              total:(d.invoices||[]).reduce(function(a,x){return a+(+x.total||+x.v||0);},0)};
+    };
+    check('IDLESS billing saving three times does not multiply the invoice audit','1/1/1/1',
+      (function(){ var r=idless(EM.bil,3); return [r.inv,r.pay,r.open,r.syn].join('/'); })());
+    check('IDLESS a manager saving three times does not multiply it either','1/1/1/1',
+      (function(){ var r=idless(EM.mgr,3); return [r.inv,r.pay,r.open,r.syn].join('/'); })());
+    check('IDLESS a rep saving three times leaves it exactly as stored','1/1/1/1',
+      (function(){ var r=idless(EM.rep,3); return [r.inv,r.pay,r.open,r.syn].join('/'); })());
+    check('IDLESS the billed total is unchanged after three saves',900,idless(EM.bil,3).total);
+
     check('WRITE billing CAN add an invoice','i1,i9',
       ids(back(function(d){ d.invoices.push({id:'i9',client:'Acme',total:120}); }, EM.bil).invoices));
     check('WRITE a rep cannot change a colleague’s hours',50,

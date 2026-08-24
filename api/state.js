@@ -270,8 +270,16 @@ function mergeProtected(incomingRaw, storedRaw, email) {
     visible: x => ownedVisible(ctx, x, 'rep'),
     allowNew: x => ownedVisible(ctx, x, 'rep')
   });
+  // The invoice audit, the payments feed, the open balances and the three sync logs
+  // carry NO id — an invoice line is identified by its content, not a key. Pairing them
+  // with mergeById therefore matched nothing and appended the incoming copy alongside
+  // the stored one, so every save by a manager or billing user DOUBLED the whole audit:
+  // $1,300 -> $2,600 -> $5,200. They are whole-collection documents, replaced wholesale
+  // by their importers, so they are taken wholesale here too: from the caller if they
+  // were sent them, from storage if they were not.
   ['invoices', 'payments', 'openinv', 'invsyncs', 'paysyncs', 'balsyncs'].forEach(k => {
-    inc[k] = mergeById(inc[k], stored[k], { visible: () => ctx.financial, allowNew: () => ctx.financial });
+    inc[k] = ctx.financial ? (Array.isArray(inc[k]) ? inc[k] : (stored[k] || []))
+                           : (stored[k] || []);
   });
   return JSON.stringify(inc);
 }
