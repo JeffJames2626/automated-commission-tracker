@@ -2627,6 +2627,51 @@ function ledgerOverridePaid(r,emp){
   return PAYOUTS.filter(x=>x.rowId===r.id && x.emp===emp && x.status!=='void' &&
     (OV_KINDS.indexOf(x.kind)>-1 || (x.kind==='manager-chargeback' && x.status==='applied'))).reduce((a,x)=>a+x.amount,0);
 }
+// ============================================================
+// A one-shot scan for the conditions the August 2026 data audit found and fixed.
+// The fixes stop these happening again; this says whether any of them already
+// touched the book. Nothing here changes a record - it only reports.
+// Run it from the browser console:  ALP_dataRepairScan()
+// ============================================================
+function ALP_dataRepairScan(){
+  const out={};
+  // 1. Sales marked invoiced through the BULK button before it froze anything. Their
+  //    rate and payment lag are still floating, so a plan change can still reprice them.
+  const unfrozen=ROWS.filter(r=>r.invoiced && (r.dueLag===undefined || r.commRate==null || r.commRate===''));
+  out.invoicedButNotFrozen={count:unfrozen.length, value:round2(unfrozen.reduce((a,r)=>a+netValue(r),0)),
+    alreadyPaid:unfrozen.filter(r=>r.paid).length,
+    ids:unfrozen.slice(0,20).map(r=>r.id)};
+  // 2. Paid splits whose ledger parts do not add back to the figure frozen on the sale.
+  const pennyOff=ROWS.filter(r=>{
+    if(!r.paid||!Array.isArray(r.split)||!r.split.length) return false;
+    const parts=round2(PAYOUTS.filter(x=>x.rowId===r.id&&x.kind==='rep'&&x.status!=='void').reduce((a,x)=>a+x.amount,0));
+    return Math.abs(parts-round2(+r.paidAmt||0))>=0.005;
+  });
+  out.paidSplitsThatDoNotAddUp={count:pennyOff.length, ids:pennyOff.map(r=>r.id)};
+  // 3. Anyone left owing money for a payment that was later un-marked.
+  const phantom={};
+  PAYOUTS.filter(x=>x.status!=='void').forEach(x=>{
+    const r=ROWS.find(q=>q.id===x.rowId);
+    if(r && !r.paid && /chargeback/.test(x.kind)) phantom[x.emp]=round2((phantom[x.emp]||0)+x.amount);
+  });
+  out.phantomDebtFromClearedPayments=phantom;
+  // 4. One job logged twice under two different people - the old import key included the
+  //    salesperson, so re-importing with a different default duplicated unmatched rows.
+  const seen={}, dupes=[];
+  ROWS.forEach(r=>{
+    const k=(r.src||'')+'|'+r.date+'|'+String(r.client||'').toLowerCase()+'|'+bookedValue(r).toFixed(2);
+    if(seen[k] && seen[k].rep!==r.rep) dupes.push({a:seen[k].id,b:r.id,client:r.client,date:r.date,
+      value:bookedValue(r), repA:empName(person(seen[k].rep))||'?', repB:empName(person(r.rep))||'?'});
+    seen[k]=r;
+  });
+  out.sameJobLoggedToTwoPeople={count:dupes.length, detail:dupes.slice(0,20)};
+  // 5. Ledger entries whose sale no longer exists.
+  out.payoutsWithNoSale=PAYOUTS.filter(x=>x.status!=='void'&&x.rowId&&!ROWS.some(r=>r.id===x.rowId)).length;
+  // 6. Sales parked on the Unassigned holding record, waiting to be reassigned.
+  out.salesParkedOnUnassigned=ROWS.filter(r=>r.rep===EMP_UNASSIGNED).length;
+  try{ console.table(Object.keys(out).map(k=>({check:k, result:JSON.stringify(out[k]).slice(0,90)}))); }catch(e){}
+  return out;
+}
 function payoutVariance(r){
   if(!r.paid || !rowHasLedger(r)) return [];
   const out=[]; const ids=new Set(rowShares(r).map(x=>x.rep).concat(payoutsFor(r.id,null,['rep','adjustment']).map(x=>x.emp)));
@@ -8499,20 +8544,44 @@ function runChecks(){
   //   1. the sale carries a real invoice number — match that number exactly, or
   //   2. the client has exactly ONE sale in the window, so the invoices can only be its.
   // Anything ambiguous is left alone rather than guessed at.
+  // Everything is indexed once. Scanning INVOICES per sale, and ROWS per sale to test
+  // for ambiguity, is O(sales x invoices) with a Date allocation on every comparison:
+  // at three years of book (1,080 sales, 20,000 invoice lines) that is ~45 million Date
+  // objects and the tab stops responding. Bucketing by client name and pre-converting
+  // each date to a number once turns it into a handful of short lists per sale.
   const repMismatch=[];
-  const invByNo={};
-  INVOICES.forEach(x=>{ const k=norm(x.i); if(k){ (invByNo[k]=invByNo[k]||[]).push(x); } });
-  const salesInWindow=(client,date)=>ROWS.filter(q=>!q.voidType &&
-    norm(q.client)===norm(client) && Math.abs((dObj(q.date)-dObj(date))/86400000)<=60).length;
-  ROWS.filter(r=>!r.voidType).forEach(r=>{
+  const DAY=86400000, WINDOW=60*DAY;
+  const invByNo=new Map(), invByClient=new Map(), salesByClient=new Map();
+  INVOICES.forEach(x=>{
+    const no=norm(x.i);
+    if(no){ let L=invByNo.get(no); if(!L){ L=[]; invByNo.set(no,L); } L.push(x); }
+    if(!x.r) return;
+    const ck=norm(x.c); if(!ck) return;
+    let L=invByClient.get(ck); if(!L){ L=[]; invByClient.set(ck,L); }
+    L.push({x:x, ms:+dObj(x.d)});
+  });
+  const repRows=ROWS.filter(r=>!r.voidType);
+  repRows.forEach(r=>{
+    const ck=norm(r.client); if(!ck) return;
+    let L=salesByClient.get(ck); if(!L){ L=[]; salesByClient.set(ck,L); }
+    L.push(+dObj(r.date));
+  });
+  repRows.forEach(r=>{
     const shareIds=rowShares(r).map(s=>s.rep);
+    const ms=+dObj(r.date), ck=norm(r.client);
     let lines=null, linkedBy='';
     const no=norm(r.invNo);
-    if(no && invByNo[no]){ lines=invByNo[no]; linkedBy='invoice #'+r.invNo; }
+    if(no && invByNo.has(no)){ lines=invByNo.get(no); linkedBy='invoice #'+r.invNo; }
     else {
-      if(salesInWindow(r.client,r.date)!==1) return;      // ambiguous — cannot say
-      lines=INVOICES.filter(x=>norm(x.c)===norm(r.client) && x.r &&
-        Math.abs((dObj(x.d)-dObj(r.date))/86400000)<=60);
+      // ambiguous: this client has more than one sale inside the window, so there is no
+      // way to say which invoice belongs to which sale. Say nothing rather than guess.
+      const sibs=salesByClient.get(ck)||[];
+      let near=0;
+      for(let i=0;i<sibs.length;i++){ if(Math.abs(sibs[i]-ms)<=WINDOW){ near++; if(near>1) break; } }
+      if(near!==1) return;
+      const cand=invByClient.get(ck)||[];
+      lines=[];
+      for(let i=0;i<cand.length;i++) if(Math.abs(cand[i].ms-ms)<=WINDOW) lines.push(cand[i].x);
       linkedBy='client name within 60 days';
     }
     const others={};
