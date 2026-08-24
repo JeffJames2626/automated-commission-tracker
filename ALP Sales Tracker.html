@@ -331,6 +331,12 @@ nav button.moreBtn{opacity:.85}
 #subnav button{background:var(--paper);border:1px solid var(--line);border-radius:16px;
   padding:5px 13px;font-size:12.5px;font-weight:650;color:var(--muted);cursor:pointer}
 #subnav button:hover{border-color:#b9c2b2;color:var(--ink)}
+/* On a phone the section strip is the only way to reach a sibling page without
+   opening the hamburger, so its chips get a real touch target. */
+@media(max-width:640px){
+  #subnav{gap:8px;margin:12px 0 -6px}
+  #subnav button{min-height:44px;padding:5px 15px;font-size:13.5px}
+}
 #subnav button.on{background:var(--ink);border-color:var(--ink);color:#f3f5f0}
 .homesw{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
 .homesw .note{margin-right:2px}
@@ -846,7 +852,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
   .vh{position:static;width:auto;height:auto;margin:0;overflow:visible;
     clip:auto;clip-path:none;flex-basis:100%;white-space:normal;
     font-size:11px;line-height:1.4;color:var(--muted)}
-  .strip,#masterBtn,#hamBtn,.hbtns,.pop,.deck-lo,nav,details:not(.fold),footer,#tab-import,#tab-plans{display:none!important}
+  .strip,#masterBtn,#hamBtn,.hbtns,.pop,.deck-lo,nav,#subnav,details:not(.fold),footer,#tab-import,#tab-plans{display:none!important}
   /* A folded admin section still prints its summary line, so the printout accounts for
      every section instead of silently dropping it. Open one before printing and its
      detail comes with it. */
@@ -4397,7 +4403,10 @@ function render(){
   let nav=prim.map(t=>btn(t, paused && PAUSE_ALLOWED.indexOf(t[0])<0)).join('');
   const rest=moreHomes.concat(more);
   if(rest.length){
-    const mbtn=t=>'<button onclick="setTab(&quot;'+t[0]+'&quot;);closeMore()">'+esc(t[1])+'</button>';
+    // class="on" so the phone drawer can mark the row you are on: the flattened
+    // More rows are ordinary drawer rows, and .moreBtn (which carries the state on
+    // desktop) is hidden inside the drawer.
+    const mbtn=t=>'<button class="'+(t[0]===TAB?'on':'')+'" onclick="setTab(&quot;'+t[0]+'&quot;);closeMore()">'+esc(t[1])+'</button>';
     const used={}; let menu='';
     NAV_MORE.forEach(g=>{
       const members=g[1].map(id=>rest.find(t=>t[0]===id)).filter(Boolean);
