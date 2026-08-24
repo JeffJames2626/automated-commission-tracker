@@ -963,6 +963,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
             <option value="billed">Billed only</option><option value="conflict">Paid AND owed</option></select></div>
           <div><label>Link health</label><select id="invFHealth" onchange="renderInvoices()">
             <option value="">All</option><option value="clean">Clean</option><option value="issues">Needs review</option>
+            <option value="no-salesperson">No salesperson</option>
             <option value="client-match-needed">Client match needed</option><option value="value-conflict">Money conflict</option>
             <option value="nosale">No sale linked</option><option value="linked">Sale linked</option></select></div>
           <div><label>Salesperson</label><select id="invFRep" onchange="renderInvoices()"></select></div>
@@ -985,6 +986,18 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
       <div class="scroll"><table id="invRegReviewTable"></table></div>
     </div></section>
   </div>
+  <section id="claimCard" style="display:none"><div class="card"><div class="pad">
+    <div class="sechead"><h3>Claim history to a salesperson</h3>
+      <span class="hint">turns attributed, sale-less invoices into sales on the normal commission pipeline — payable, never auto-paid; re-running can never duplicate</span></div>
+    <div class="frow" style="margin-top:6px">
+      <div><label>Salesperson</label><select id="claimRep" onchange="renderClaimPrev()"></select></div>
+      <div><label>Sale type for the batch</label><select id="claimType" onchange="renderClaimPrev()">
+        <option value="renewal">Renewal (recurring billing)</option>
+        <option value="new">New client</option>
+        <option value="upsell">Upsell</option></select></div>
+    </div>
+    <div id="claimPrev"></div>
+  </div></div></section>
 </div>
 
 <div class="tab" id="tab-hawk">
@@ -2697,6 +2710,7 @@ const K_PDI='alp_paidinv_v1';
 const K_PDISYNC='alp_pdisync_v1';
 const K_INVLINK='alp_invlinks_v1';
 const K_INVCLI='alp_invclimap_v1';
+const K_INVASSIGN='alp_invassign_v1';
 // People who have left. Accounts still carrying their name get flagged for takeover.
 const FORMER_DEFAULT=['Russanne','Malisa','Jaron','Alina','Erbie','Crystal','Michael'];
 const K_ADMIN='alp_admin_v1';
@@ -2751,6 +2765,7 @@ let PAIDINV  = load(K_PDI,[]);       // settled invoices — SA's Paid Invoices 
 let PDISYNC  = load(K_PDISYNC,[]);   // one entry per paid-invoices import, newest last
 let INVLINKS = load(K_INVLINK,[]);   // admin-made sale↔invoice links, on top of the automatic invNo joins
 let INVCLIMAP= load(K_INVCLI,[]);    // admin-approved invoice-name → roster-client mappings; never guessed
+let INVASSIGN= load(K_INVASSIGN,[]); // admin-assigned salesperson per invoice — accountability for rep-less billing
 let OSCS     = load(K_OSC,[]);       // on-site estimates and consultations
 const POLICY_DEFAULT={
   raiseDays:30,       // rep has this long to dispute a figure
@@ -3843,7 +3858,17 @@ const STAGE_LABEL={}; STAGES.forEach(x=>STAGE_LABEL[x[0]]=x[1]);
    carries the actual invoice number AND the uploaded invoice PDF in the
    evidence vault. No paper, no money. */
 function hasInvoiceEvidence(r){
-  return !!(r.invNo && String(r.invNo).trim() && r.files && r.files.length);
+  if(!(r.invNo && String(r.invNo).trim())) return false;
+  if(r.files && r.files.length) return true;
+  // The invoice register is documentary evidence too: the number resolves to a
+  // real invoice assembled from SA's own exports — stronger than a pasted PDF.
+  if(typeof invoiceOf==='function'){
+    const h=invoiceOf(r.invNo);
+    // audit and paid feeds only: the balances snapshot is transient (an invoice
+    // drops off it the day it settles), and evidence must not expire.
+    if(h && (h.feeds.audit||h.feeds.paid)) return true;
+  }
+  return false;
 }
 
 function payLag(){ const v=+GLOBAL.payLag; return isNaN(v)?30:v; }
@@ -4403,7 +4428,13 @@ function render(){
   renderClients(); renderTakeover(); renderProperty(); renderMap(); renderRevenue(); renderPayments(); renderPaidInv(); renderBalances(); renderAlerts(); renderAIStatus();
   renderRoster(); renderServices(); renderHdrTools();
   if(TAB==='view') renderView(); if(TAB==='hawk') renderChecks();
-  if(TAB==='invoices'){ fillPeople('invFRep','','Any salesperson',true); renderInvoices(); }
+  if(TAB==='invoices'){
+    fillPeople('invFRep','','Any salesperson',true);
+    const cc=document.getElementById('claimCard');
+    if(cc){ cc.style.display=can('admin_security')?'':'none';
+      if(can('admin_security')){ fillPeople('claimRep','','Pick a salesperson'); renderClaimPrev(); } }
+    renderInvoices();
+  }
   if(TAB==='me') renderMeHome(); if(TAB==='mgr') renderMgrHome(); if(TAB==='cx') renderCxHome();
   if(TAB==='bill') renderBillHome(); if(TAB==='mine') renderMineHome();
   if(EP_ID) renderEmp();
@@ -8462,6 +8493,7 @@ function invoiceRegistry(){
   CLIENTS.forEach(c=>{ const k=norm(c.n); if(!k) return;
     if(c.gone) goneByName[k]=1; else (cliByName[k]=cliByName[k]||[]).push(c); });
   const mapByKey={}; INVCLIMAP.forEach(m=>{ mapByKey[m.key]=m; });
+  const assignByNo={}; INVASSIGN.forEach(a=>{ if(a&&a.no) assignByNo[String(a.no).trim()]=a; });
   order.forEach(h=>{
     const lineSum=Math.round(h.lines.reduce((a,x)=>a+(+x.v||0),0)*100)/100;
     h.linePre=lineSum;
@@ -8493,12 +8525,23 @@ function invoiceRegistry(){
     h.cli=cli||null; h.cliHow=cli?how:'';
     if(!nk) h.health.push('no-client');
     else if(!cli && h.health.indexOf('client-ambiguous')<0) h.health.push('client-match-needed');
-    // employee attribution: header rep (sold-by, paid feed) and line reps are
-    // different roles from different reports — kept apart, never merged.
-    h.repId = h.repHdr ? (paidInvRepId({r:h.repHdr})||'') : '';
+    // employee attribution: an admin ASSIGNMENT wins outright; then the header
+    // rep (sold-by, paid feed). Line reps are a different role from a different
+    // report — kept apart, never merged. This is all about commission at the end
+    // of the day, so an invoice nobody answers for is a health finding, not a ✓.
+    const asg=assignByNo[h.no];
     const lineIds={}; h.lines.forEach(x=>{ const id=invoiceRepId(x); if(id) lineIds[id]=1; });
     h.lineRepIds=Object.keys(lineIds);
-    if(h.repId && h.lineRepIds.length && h.lineRepIds.indexOf(h.repId)<0) h.health.push('employee-mismatch');
+    if(asg && asg.emp && person(asg.emp)){ h.repId=asg.emp; h.repHow='assigned'; }
+    else if(asg && asg.emp===''){ h.repId=''; h.repHow=''; }   // an explicit clear beats everything below
+    else if(h.repHdr && paidInvRepId({r:h.repHdr})){ h.repId=paidInvRepId({r:h.repHdr}); h.repHow='sold-by'; }
+    else if(h.lineRepIds.length===1){ h.repId=h.lineRepIds[0]; h.repHow='line-rep'; }   // SA's own line attribution, when it is unanimous
+    else { h.repId=''; h.repHow=''; }
+    if(h.repHow==='sold-by' && h.lineRepIds.length && h.lineRepIds.indexOf(h.repId)<0) h.health.push('employee-mismatch');
+    if(!h.repId) h.health.push('no-salesperson');
+    // an open-only invoice knows its balance and nothing else — the money
+    // columns must say "unknown", never claim $0.00
+    h.noMoney = !h.feeds.paid && !h.lines.length && !h.pre && !h.total;
     // money health: the paid feed and the audit lines must tell one story.
     // The tolerance is for rounding noise only — capped so a large invoice
     // cannot hide a large disagreement inside a percentage band.
@@ -8514,6 +8557,7 @@ function invoiceRegistry(){
 function invoiceOf(no){ return invoiceRegistry().byNo[invId(no)]||null; }
 const INV_HEALTH_LABEL={'client-match-needed':'CLIENT MATCH NEEDED','client-ambiguous':'client name is ambiguous',
   'no-client':'no client on the record','employee-mismatch':'sold-by and line rep disagree',
+  'no-salesperson':'NO SALESPERSON — nobody is accountable for this billing',
   'value-conflict':'paid feed and audit lines disagree on the money','paid-and-owed':'both PAID and STILL OWED',
   'no-date':'no invoice date','negative-amount':'negative amount'};
 
@@ -8570,6 +8614,180 @@ function invApproveClient(no,u,name){
   toast('“'+h.client+'” now maps to '+ (name||u) +' — everywhere, until unmapped');
   if(typeof INV_ID!=='undefined'&&INV_ID) renderInv(); else render();
 }
+// Accountability: an admin puts a name on rep-less billing. Assignment is what
+// lets an invoice move toward a payable commission — and what clears the Hawk.
+function invAssignRep(no,emp){
+  if(!can('edit_sales')){ toast('That is not part of your access'); return; }
+  no=String(no).trim();
+  const old=INVASSIGN.find(a=>String(a.no).trim()===no);
+  if(!emp){
+    // A clear is a RECORD (emp:''), not a deletion — an absent entry would be
+    // resurrected by the add-only cloud merge from any device still holding it.
+    if(old && old.emp!==''){
+      INVASSIGN=INVASSIGN.filter(a=>a!==old);
+      INVASSIGN.push({id:uid('ia'), no, emp:'', by:empWho()||'', on:todayISO(), was:old.emp});
+      save(K_INVASSIGN,INVASSIGN); invDirty();
+      auditRecord('inv-assign',{no, emp:'', was:old.emp}); toast('Assignment cleared');
+    }
+  } else {
+    const p=person(emp); if(!p){ toast('No team member with that id'); return; }
+    if(old && old.emp===emp) return;
+    INVASSIGN=INVASSIGN.filter(a=>a!==old);
+    INVASSIGN.push({id:uid('ia'), no, emp, by:empWho()||'', on:todayISO()});
+    save(K_INVASSIGN,INVASSIGN); invDirty();
+    auditRecord('inv-assign',{no, emp, name:empName(p)});
+    toast('Invoice #'+no+' assigned to '+empName(p));
+  }
+  if(typeof INV_ID!=='undefined'&&INV_ID) renderInv(); else render();
+}
+
+/* ---- claiming: history becomes commissionable sales, deliberately ---- */
+// The invoices one person could claim: attributed to THEM, no sale behind them
+// yet, not deliberately deleted before. Lists only — nothing here executes.
+function invClaimable(empId){
+  const map=salesByInvNo();
+  // Claimable means the money is REAL: the paid feed or audit lines back it.
+  // A balance-only invoice knows what is OWED, not what was billed — claiming
+  // that would book a guess, so it stays out until its audit weeks arrive.
+  return invoiceRegistry().list.filter(h=>h.repId===empId &&
+    !(map[h.no]||[]).length &&
+    !isTombstoned('SA|inv:'+h.no) &&
+    (h.date||h.paidOn) &&
+    (h.feeds.paid||h.lines.length) &&
+    h.pre>0 &&
+    h.health.indexOf('negative-amount')<0);
+}
+// A claimable invoice that LOOKS like it may already be a sale under another
+// door — same client, close in time, no invoice number on the sale. These are
+// excluded from batch claims by default: link them instead of double-booking.
+function invClaimDupRisk(h){
+  const nk=norm(h.client); if(!nk||!h.date) return null;
+  return ROWS.find(r=>!r.voidType && !String(r.invNo||'').trim() && norm(r.client)===nk &&
+    Math.abs((dObj(h.date)-dObj(r.date))/86400000)<=90)||null;
+}
+// Claimed invoices become SALES on the normal pipeline: pre-tax value, full
+// provenance (src SA, srcId 'inv:<no>' — its own id space, so a re-claim
+// updates in place and can never duplicate), invoiced-stage stamped with the
+// frozen rate and lag exactly like the bulk-invoice path. The commission PAID
+// stage stays EMPTY — claiming makes money payable, it never pretends payroll ran.
+function invClaimSales(empId,type,list){
+  if(!can('admin_security')){ toast('That is not part of your access'); return {added:0,updated:0,skipped:0,total:0}; }
+  const p=person(empId); if(!p) return {added:0,updated:0,skipped:0,total:0};
+  const batch=uid('b'), stamp=new Date().toISOString();
+  const bySrc={}; ROWS.forEach(r=>{ if(r.src==='SA'&&r.srcId) bySrc[String(r.srcId)]=r; });
+  let added=0, updated=0, total=0, skipped=0;
+  (list||invClaimable(empId)).forEach(h=>{
+    const srcId='inv:'+h.no;
+    if(isTombstoned('SA|'+srcId)) return;
+    // The value is the PRE-TAX figure or nothing: a balance is what remains
+    // owed, a total includes tax — booking either as a sale would be a guess.
+    const v=h.pre;
+    if(!(v>0)){ skipped++; return; }
+    const svc=h.lines.length?((h.lines[0].s||'Invoiced services')+(h.lines.length>1?' +'+(h.lines.length-1)+' more':'')):'Invoiced services';
+    const fields={rep:empId, date:h.date||h.paidOn, client:h.client, service:svc,
+      value:v, basis:'contract', qty:1, type:type||'renewal',
+      src:'SA', srcId, srcAt:stamp, batch, invNo:h.no, invoiced:h.date||h.paidOn,
+      repRaw:h.repHdr||'', repHow:'invoice-claim',
+      notes:'Claimed from invoice #'+h.no+' — year-history claim'};
+    let r=bySrc[srcId];
+    if(r){
+      // The sync rules apply to claims too: a row that has been PAID or
+      // reversed since it was claimed is history, and a row a person edited
+      // by hand belongs to that person — neither is ever touched again.
+      if(r.paid || r.voidType || (r.edits&&r.edits.some(e=>e&&e.by==='user'))){ skipped++; return; }
+      Object.assign(r,fields); updated++;
+      // a re-claim re-prices from the CURRENT plan — clear the old freeze first
+      r.commRate=null;
+    } else {
+      r=Object.assign({id:uid('r'), completed:'', paid:'', paidAmt:null,
+        voidType:'', voidDate:'', voidAmt:0, voidNote:''},fields);
+      ROWS.push(r); bySrc[srcId]=r; added++;
+    }
+    freezeDueLag(r); r.commRate=rowRate(r);
+    total+=v;
+  });
+  if(added||updated){
+    save(K_ROWS,ROWS); histDirty(); invDirty();
+    auditRecord('inv-claim',{emp:empId, name:empName(p), added, updated, skipped, batch, total:Math.round(total)});
+  }
+  return {added,updated,skipped,total,batch};
+}
+// The batch a wizard run would actually claim: claimable, minus anything that
+// looks like it may already be a sale logged without its invoice number.
+function invClaimBatch(empId){
+  const out={claim:[], dupRisk:[]};
+  invClaimable(empId).forEach(h=>{ (invClaimDupRisk(h)?out.dupRisk:out.claim).push(h); });
+  return out;
+}
+function renderClaimPrev(){
+  const box=document.getElementById('claimPrev'); if(!box) return;
+  const empId=document.getElementById('claimRep').value;
+  if(!empId){ box.innerHTML='<div class="note">Pick who this history belongs to. Only invoices attributed to that person, with no sale behind them and real billed money on record, are claimable — everyone else’s stay exactly as they are.</div>'; return; }
+  const p=person(empId); if(!p){ box.innerHTML=''; return; }
+  // an admin's unticked box must survive the re-render
+  const prevElig=document.getElementById('claimElig');
+  const eligChecked=prevElig?prevElig.checked:true;
+  const B=invClaimBatch(empId), L=B.claim;
+  const attributed=invoiceRegistry().list.filter(h=>h.repId===empId);
+  const noMoneyN=attributed.filter(h=>h.noMoney).length;
+  if(!L.length){
+    box.innerHTML='<div class="note">Nothing to claim for '+esc(empName(p))+' — every attributed invoice already has a sale behind it, lacks real billed money, or none are attributed yet.'+
+      (B.dupRisk.length?' <b>'+B.dupRisk.length+'</b> were held back because a same-client sale already exists nearby — open each invoice and link instead.':'')+
+      (noMoneyN?' '+noMoneyN+' are balance-only — import their audit weeks to make them claimable.':'')+'</div>';
+    return;
+  }
+  const total=L.reduce((a,h)=>a+h.pre,0);
+  const dates=L.map(h=>h.date||h.paidOn).sort();
+  const prePlan=p.start && dates[0]<p.start;
+  let x='<div class="found" style="margin-top:10px"><h5>What claiming does</h5>';
+  x+='<div class="li"><span class="g"><b>'+L.length.toLocaleString()+'</b> invoices · <b>'+money(total)+'</b> pre-tax · '+fmtY(dates[0])+' to '+fmtY(dates[dates.length-1])+'</span></div>';
+  x+='<div class="li"><span class="g">Each becomes a sale on <b>'+esc(empName(p))+'</b>’s account at the invoice’s pre-tax value — invoiced-stage, so commission turns <b>payable</b> through the normal pipeline. Nothing is marked paid.</span></div>';
+  if(B.dupRisk.length) x+='<div class="li"><span class="g" style="color:var(--red)"><b>'+B.dupRisk.length+'</b> held back — a same-client sale already exists within 90 days with no invoice number on it. Claiming those would double-count a job; open each invoice and <b>link</b> the sale instead.</span></div>';
+  if(noMoneyN) x+='<div class="li"><span class="g">'+noMoneyN+' balance-only invoice'+(noMoneyN===1?'':'s')+' excluded — only the amount owed is known. Import their audit weeks and they become claimable.</span></div>';
+  if(prePlan) x+='<div class="li"><span class="g" style="color:var(--red)"><b>'+esc(empName(p))+'’s comp plan starts '+fmtY(p.start)+'</b> — anything claimed before that earns $0 and would freeze at $0.</span></div>'+
+    '<label style="display:flex;gap:8px;align-items:center;margin:6px 0;font-size:13px"><input type="checkbox" id="claimElig" '+(eligChecked?'checked':'')+'> Make '+esc(empName(p))+' eligible from '+fmtY(dates[0])+' — moves the plan start (goes on the audit trail)</label>';
+  x+='<div style="margin-top:10px"><button class="p" onclick="invClaimRun()">Claim '+L.length.toLocaleString()+' invoice'+(L.length===1?'':'s')+'</button></div></div>';
+  box.innerHTML=x;
+}
+function invClaimRun(){
+  if(!can('admin_security')){ toast('That is not part of your access'); return; }
+  const empId=document.getElementById('claimRep').value; const p=person(empId); if(!p) return;
+  const type=document.getElementById('claimType').value||'renewal';
+  const elig=document.getElementById('claimElig');
+  const eligOn=elig?elig.checked:false;
+  const L=invClaimBatch(empId).claim; if(!L.length) return;
+  const dates=L.map(h=>h.date||h.paidOn).sort();
+  const total=L.reduce((a,h)=>a+h.pre,0);
+  if(!confirm('Claim '+L.length+' invoices ('+money(total)+' pre-tax) as '+(TYPE_LABEL[type]||type)+' sales for '+empName(p)+'?\n\nCommission becomes PAYABLE through the normal pipeline — nothing is marked paid, and re-running this can never duplicate.')) return;
+  // Eligibility first, so the frozen rate is the REAL rate, not a pre-plan $0.
+  if(eligOn && p.start && dates[0]<p.start){
+    const from=p.start; p.start=dates[0].slice(0,7)+'-01';
+    save(K_PEOPLE,PEOPLE); EMP_IDX=null;
+    if(typeof empLog==='function') empLog(p,'plan-start',{from, to:p.start, why:'invoice history claim'});
+    auditRecord('plan-start',{emp:empId, from, to:p.start, why:'invoice history claim'});
+  }
+  const res=invClaimSales(empId,type,invClaimBatch(empId).claim);
+  toast('Claimed '+res.added+' new, '+res.updated+' updated — '+money(res.total)+' now on '+empName(p)+'’s pipeline');
+  render();
+}
+// The invoice page's one-at-a-time claim — same guards as the wizard, spoken aloud.
+function invClaimOne(no){
+  if(!can('admin_security')){ toast('That is not part of your access'); return; }
+  const h=invoiceOf(no); if(!h||!h.repId) return;
+  const p=person(h.repId); if(!p) return;
+  if(!invClaimable(h.repId).some(x=>x.no===h.no)){
+    toast(h.pre>0?'Already has a sale behind it, or it was deliberately deleted':'Only the balance is known — import this invoice’s audit weeks first');
+    return;
+  }
+  const risk=invClaimDupRisk(h);
+  let msg='Claim invoice #'+h.no+' ('+money2(h.pre)+' pre-tax) as a renewal sale for '+empName(p)+'?\n\nCommission becomes payable, not paid.';
+  if(risk) msg='⚠️ A '+risk.date+' sale for this client already exists with no invoice number — claiming may DOUBLE-COUNT the job. Link that sale instead if it is the same work.\n\n'+msg;
+  if(p.start && (h.date||h.paidOn)<p.start) msg+='\n\n⚠️ Their comp plan starts '+fmtY(p.start)+' — this claim would freeze at $0. Fix the plan start on Comp plans first if that is wrong.';
+  if(!confirm(msg)) return;
+  invClaimSales(h.repId,'renewal',[h]);
+  render(); if(typeof INV_ID!=='undefined'&&INV_ID) renderInv();
+}
+
 // Roster candidates for an unmatched invoice client — shared words, best first.
 function invClientCandidates(h){
   const toks=nameTokens(h.client).filter(t=>t.length>2); if(!toks.length) return [];
@@ -8643,7 +8861,8 @@ function renderInvoices(){
         return '<tr><td>'+invLink(h.no)+'</td><td class="mono">'+fmt(h.date)+'</td>'+
           '<td title="'+esc(h.addr)+'"><a href="#" onclick="openClient('+JSON.stringify(h.cli?h.cli.n:h.client).replace(/"/g,'&quot;')+');return false">'+esc(h.cli?h.cli.n:h.client||'—')+'</a>'+
             (h.cli?'':' <span class="pill no" title="no approved roster match">?</span>')+'</td>'+
-          '<td class="num mono">'+money2(h.pre)+'</td><td class="num mono">'+money2(h.total)+'</td>'+
+          '<td class="num mono">'+(h.noMoney?'<span title="only the balance is known — import the audit weeks covering this invoice">—</span>':money2(h.pre))+'</td>'+
+          '<td class="num mono">'+(h.noMoney?'—':money2(h.total))+'</td>'+
           '<td>'+invStatusPill(h)+'</td>'+
           '<td>'+(p?empLink(p.id,empShort(p)):esc(h.repHdr||'—'))+'</td>'+
           '<td class="num">'+(h.lines.length||'—')+'</td>'+
@@ -8718,8 +8937,17 @@ function renderInv(){
     }
   }
   const pHdr=h.repId?person(h.repId):null;
-  x+='<div class="kv"><span class="k">Sold by <span title="from the Paid Invoices export">ⓘ</span></span><span class="v">'+(pHdr?empLink(pHdr.id):esc(h.repHdr||'—'))+'</span></div>';
+  x+='<div class="kv"><span class="k">'+(h.repHow==='assigned'?'Assigned to':'Sold by')+' <span title="'+(h.repHow==='assigned'?'assigned by an admin — accountability for rep-less billing':'from the Paid Invoices export')+'">ⓘ</span></span><span class="v">'+
+    (pHdr?empLink(pHdr.id):(h.repHdr?esc(h.repHdr):'<span style="color:var(--red);font-weight:700">NOBODY — assign below</span>'))+'</span></div>';
   if(h.lineRepIds.length) x+='<div class="kv"><span class="k">Rep on lines <span title="from the Invoice Audit — can legitimately differ from sold-by">ⓘ</span></span><span class="v">'+h.lineRepIds.map(id=>{const p=person(id);return p?empLink(p.id,empShort(p)):id;}).join(' · ')+'</span></div>';
+  if(can('edit_sales')){
+    const jsNo=JSON.stringify(String(h.no)).replace(/"/g,'&quot;');
+    x+='<div class="kv"><span class="k">Assign salesperson</span><span class="v"><select id="ivAssign" style="width:auto;max-width:180px">'+
+      peopleOptions(h.repHow==='assigned'?h.repId:'','— pick —',true)+'</select> '+
+      '<button class="sm" onclick="invAssignRep('+jsNo+',document.getElementById(\'ivAssign\').value)">Assign</button></span></div>';
+    if(h.repId && !sales.length && can('admin_security'))
+      x+='<div class="note" style="margin-top:5px"><button class="sm p" onclick="invClaimOne('+jsNo+')">Claim as sale — commission becomes payable</button></div>';
+  }
   x+='<div style="margin-top:9px"><b style="font-size:12px">Sales behind this invoice</b>';
   if(sales.length){ sales.forEach(e=>{ const p=person(e.r.rep);
     x+='<div class="svcrow"><span class="g"><b>'+esc(e.r.client)+'</b> · '+money2(bookedValue(e.r))+
@@ -9157,7 +9385,8 @@ function hawkCounts(){
     hawkFormer:'former team members still in the money', hawkInvNo:'invoice numbers matching nothing',
     hawkPaidOwed:'invoices both paid and still owed', hawkPaidDrift:'deposits vs settled drift',
     hawkSrcDup:'one source record, two sales', hawkCliDup:'one SA account, two roster records',
-    hawkInvConflict:'invoices whose money disagrees between feeds', hawkInvClient:'invoices needing a client match'};
+    hawkInvConflict:'invoices whose money disagrees between feeds', hawkInvClient:'invoices needing a client match',
+    hawkInvNoRep:'invoices with no salesperson', hawkClaimDup:'claimed invoices beside possible same-job sales'};
   const out={total:0,parts:[],items:{}};
   runChecks().forEach(c=>{
     if(HAWK_IDS[c.id] && c.items.length){
@@ -9958,7 +10187,7 @@ function runChecks(){
   lawless.sort((a,b)=>lawRk(a)-lawRk(b));
   const lawMoney=lawless.filter(r=>r.invoiced||r.paid).length;
   add('hawkNoInv','bad','🦅🚨 NO INVOICE ON FILE — the real invoice and invoice number is the law',
-    'Every approved sale must carry the actual invoice number AND the uploaded invoice PDF (evidence vault). '+
+    'Every approved sale must carry the actual invoice number, backed by evidence: the uploaded invoice PDF, or the number resolving to a real invoice on the register (assembled from SA’s own exports). '+
     (lawMoney?('<b>'+lawMoney+' of these are already at the money stage.</b> '):'')+
     'The pipeline now refuses to mark anything invoiced or paid without both. Fix each one: Edit → invoice # + 🦅 Read an invoice PDF.',
     lawless.slice(0,40).map(function(r){
@@ -10348,7 +10577,8 @@ function runChecks(){
 
   /* --- 10. invoice numbers that match nothing in the invoice audit --- */
   const invNos={}; INVOICES.forEach(x=>{ if(x.i) invNos[String(x.i).trim()]=1; });
-  const badNo=INVOICES.length?ROWS.filter(r=>r.invNo && String(r.invNo).trim() && !invNos[String(r.invNo).trim()] && !r.voidType):[];
+  PAIDINV.forEach(x=>{ if(x.i) invNos[String(x.i).trim()]=1; });   // the paid feed knows numbers the audit weeks may not cover yet
+  const badNo=(INVOICES.length||PAIDINV.length)?ROWS.filter(r=>r.invNo && String(r.invNo).trim() && !invNos[String(r.invNo).trim()] && !r.voidType):[];
   add('hawkInvNo','warn','🦅 Invoice number matches nothing in the invoice audit',
     'THE LAW says every paid sale carries its real invoice number — but these numbers do not exist in the imported invoice audit. A typo here quietly breaks the sale-to-billing link.',
     badNo.slice(0,25).map(r=>({
@@ -10439,6 +10669,45 @@ function runChecks(){
       sub:(h.date?fmtY(h.date)+' · ':'')+(h.health.indexOf('client-ambiguous')>-1?'more than one roster record has this exact name':'no exact roster match'),
       act:''
     })), cliNeed.reduce((a,h)=>a+h.total,0));
+
+  /* --- 17. invoices nobody answers for --- */
+  // This is all about commission at the end of the day: billing with no
+  // salesperson is money with no accountability. Assigning who it belongs to
+  // is what lets it move toward a payable commission — and what clears this.
+  const invNoRep=regList.filter(h=>h.health.indexOf('no-salesperson')>-1);
+  add('hawkInvNoRep','warn','🦅 Invoices with NO salesperson — nobody is accountable',
+    'No sold-by on the paid feed, no rep on any audit line, no assignment. Open each one and assign whose billing it is; once assigned it can be claimed into a payable commission. Invoices will keep arriving without reps on them — this check is the accountability loop.',
+    invNoRep.slice(0,25).map(h=>({
+      text:'<b>'+esc(h.client||'(no client)')+'</b> · '+invLink(h.no)+' · '+(h.noMoney?money2(h.bal)+' owed':money2(h.total)),
+      sub:(h.date?fmtY(h.date):h.paidOn?('paid '+fmtY(h.paidOn)):'no date')+' · '+h.status,
+      act:''
+    })), invNoRep.reduce((a,h)=>a+(h.pre||h.total||h.bal||0),0));
+
+  /* --- 18. a claimed invoice next to a sale that may be the same job --- */
+  // The importer and the claim engine come through different doors: a bulk
+  // SA sales import carries ticket ids and no invoice number, so neither the
+  // srcId dedupe nor the invoice link can see the collision. Same client,
+  // near money, close dates = one job earning commission twice.
+  const claimedRows=ROWS.filter(r=>r.repHow==='invoice-claim' && !r.voidType);
+  const plainByCli={};
+  ROWS.forEach(r=>{ if(r.repHow==='invoice-claim'||r.voidType||String(r.invNo||'').trim()) return;
+    const k=norm(r.client); if(k) (plainByCli[k]=plainByCli[k]||[]).push(r); });
+  const claimDup=[];
+  claimedRows.forEach(cr=>{
+    (plainByCli[norm(cr.client)]||[]).forEach(r=>{
+      const va=bookedValue(cr), vb=bookedValue(r);
+      if(Math.abs(va-vb)>Math.max(Math.max(va,vb)*0.05,25)) return;
+      if(Math.abs((dObj(cr.date)-dObj(r.date))/86400000)>60) return;
+      claimDup.push({cr,r});
+    });
+  });
+  add('hawkClaimDup','bad','🦅 A claimed invoice and a logged sale may be the SAME job',
+    'One came from the invoice claim, the other was logged or imported without an invoice number — the id systems cannot see each other, so both earn commission until a person decides. If they are the same work: link the sale to the invoice and delete the claimed copy, or the reverse.',
+    claimDup.slice(0,20).map(d=>({
+      text:'<b>'+esc(d.cr.client)+'</b> · claimed '+money2(bookedValue(d.cr))+' vs logged '+money2(bookedValue(d.r)),
+      sub:'claimed from '+invLink(d.cr.invNo)+' ('+fmt(d.cr.date)+') · logged sale '+fmt(d.r.date)+(person(d.r.rep)?' · '+esc(empShort(person(d.r.rep))):''),
+      act:'<button class="sm" onclick="rowInfo(\''+d.cr.id+'\')">Claimed</button> <button class="sm" onclick="rowInfo(\''+d.r.id+'\')">Logged</button>'
+    })), claimDup.reduce((a,d)=>a+Math.min(rowComm(d.cr),rowComm(d.r)),0));
 
   return out;
 }
@@ -13168,7 +13437,7 @@ function stateSnapshot(){   // v6: employee identity fields (first/last/photo/al
     clients:CLIENTS,syncs:SYNCLOG,conversions:CONVERSIONS,knocked:KNOCKED,invoices:INVOICES,
     invsyncs:INVSYNC,implog:IMPLOG,gear:GEAR,payments:PAYMENTS,paysyncs:PAYSYNC,
     takeovers:TAKEOVERS,openinv:OPENINV,balsyncs:BALSYNC,paidinv:PAIDINV,pdisyncs:PDISYNC,
-    invlinks:INVLINKS,invclimap:INVCLIMAP,
+    invlinks:INVLINKS,invclimap:INVCLIMAP,invassign:INVASSIGN,
     tombstones:TOMBSTONES,oscs:OSCS,global:GLOBAL};
 }
 function backup(){
@@ -13299,6 +13568,11 @@ function restore(e){
       const haveK=new Set(INVCLIMAP.map(x=>x.key));
       d.invclimap.forEach(x=>{ if(x&&x.key&&!haveK.has(x.key)){ INVCLIMAP.push(x); haveK.add(x.key); } });
       save(K_INVCLI,INVCLIMAP);
+    }
+    if(Array.isArray(d.invassign)){
+      const haveA=new Set(INVASSIGN.map(x=>String(x.no).trim()));
+      d.invassign.forEach(x=>{ if(x&&x.no&&!haveA.has(String(x.no).trim())){ INVASSIGN.push(x); haveA.add(String(x.no).trim()); } });
+      save(K_INVASSIGN,INVASSIGN);
     }
     // Tombstones merge (never overwrite) so restoring a backup can't resurrect deleted records.
     if(Array.isArray(d.tombstones)){
@@ -14964,6 +15238,11 @@ function cloudApply(d){
     d.invclimap.forEach(x=>{ if(x&&x.key&&!haveM.has(x.key)){ INVCLIMAP.push(x); haveM.add(x.key); } });
   }
   put(K_INVCLI,INVCLIMAP);
+  if(Array.isArray(d.invassign)){
+    const haveA=new Set(INVASSIGN.map(x=>x&&String(x.no).trim()));
+    d.invassign.forEach(x=>{ if(x&&x.no&&!haveA.has(String(x.no).trim())){ INVASSIGN.push(x); haveA.add(String(x.no).trim()); } });
+  }
+  put(K_INVASSIGN,INVASSIGN);
   TOMBSTONES=A(d.tombstones,TOMBSTONES); put(K_TOMB,TOMBSTONES);
   OSCS=A(d.oscs,OSCS); put(K_OSC,OSCS);
   if(d.global&&typeof d.global==='object'){ GLOBAL=d.global; if(!GLOBAL.policy)GLOBAL.policy=Object.assign({},POLICY_DEFAULT); put(K_GLOBAL,GLOBAL); }

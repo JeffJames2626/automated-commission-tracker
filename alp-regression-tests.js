@@ -66,7 +66,8 @@
                OPENINV:(typeof OPENINV!=='undefined'?OPENINV:undefined),
                PAYMENTS:(typeof PAYMENTS!=='undefined'?PAYMENTS:undefined),
                INVLINKS:(typeof INVLINKS!=='undefined'?INVLINKS:undefined),
-               INVCLIMAP:(typeof INVCLIMAP!=='undefined'?INVCLIMAP:undefined) };
+               INVCLIMAP:(typeof INVCLIMAP!=='undefined'?INVCLIMAP:undefined),
+               INVASSIGN:(typeof INVASSIGN!=='undefined'?INVASSIGN:undefined) };
     // Nothing a test run may COST localStorage. Stubbing save() is not enough:
     // cloudApply() writes through its own internal put() (raw localStorage.setItem),
     // and the cloud-merge test calls the real cloudApply — on a browser holding real
@@ -336,14 +337,32 @@
 
       /* ---------- THE LAW: no invoice number + PDF, no invoiced/paid ---------- */
       if(typeof hasInvoiceEvidence==='function'){
+        // the register must see the FIXTURE world here, not the browser's real data
+        var lawFeeds={I:(typeof INVOICES!=='undefined')?INVOICES:null,
+                      P:(typeof PAIDINV!=='undefined')?PAIDINV:null,
+                      O:(typeof OPENINV!=='undefined')?OPENINV:null};
+        if(lawFeeds.I) INVOICES=[]; if(lawFeeds.P) PAIDINV=[]; if(lawFeeds.O) OPENINV=[];
+        if(typeof invDirty==='function') invDirty();
         var law=mkRow({value:1000});
         checkTrue('LAW bare sale has no evidence', !hasInvoiceEvidence(law), hasInvoiceEvidence(law));
         law.invNo='12345';
-        checkTrue('LAW invoice # alone is NOT enough', !hasInvoiceEvidence(law), hasInvoiceEvidence(law));
+        checkTrue('LAW a number resolving to NOTHING is not enough', !hasInvoiceEvidence(law), hasInvoiceEvidence(law));
         law.invNo=''; law.files=[{id:1,name:'x.pdf',kb:10}];
         checkTrue('LAW PDF alone is NOT enough', !hasInvoiceEvidence(law), hasInvoiceEvidence(law));
         law.invNo='12345';
-        checkTrue('LAW both = evidence complete', hasInvoiceEvidence(law), hasInvoiceEvidence(law));
+        checkTrue('LAW number + PDF = evidence complete', hasInvoiceEvidence(law), hasInvoiceEvidence(law));
+        // the register itself is documentary evidence: a number resolving to a
+        // real invoice from SA's own exports stands in for the PDF
+        if(lawFeeds.P && typeof invDirty==='function'){
+          law.files=[];
+          checkTrue('LAW number without backing is still not enough', !hasInvoiceEvidence(law), hasInvoiceEvidence(law));
+          PAIDINV=[{i:'12345',c:'Law Co',p:'2026-06-10',v:109,d:'2026-06-01',a:'',s:100,x:9,m:'Check',f:'',pre:0,r:''}];
+          invDirty();
+          checkTrue('LAW number ON THE REGISTER is evidence', hasInvoiceEvidence(law), hasInvoiceEvidence(law));
+          PAIDINV=[]; invDirty();
+        }
+        if(lawFeeds.I) INVOICES=lawFeeds.I; if(lawFeeds.P) PAIDINV=lawFeeds.P; if(lawFeeds.O) OPENINV=lawFeeds.O;
+        if(typeof invDirty==='function') invDirty();
         // hawk lists lawless sales, money-stage ones counted
         ROWS=[ mkRow({client:'Lawless Sold Co', value:500}),
                Object.assign(mkRow({client:'Lawless Paid Co', value:800, invoiced:'2026-06-01', paid:'2026-06-10', paidAmt:80})),
@@ -1905,6 +1924,137 @@
         results.push({name:'INVREG invoice registry exists (invoiceRegistry)', expected:true, actual:false, pass:false});
       }
 
+      /* ---------- CLAIM: rep-less invoices → accountability → payable commission ---------- */
+      // Jeff's rule: this is all about commission at the end of the day. An invoice
+      // with no salesperson is a Hawk finding; assignment puts a name on it; an
+      // explicit CLAIM turns attributed history into sales on the normal pipeline —
+      // payable, never auto-paid, idempotent, and only for the person chosen.
+      if(typeof invClaimSales==='function' && typeof invAssignRep==='function'){
+        var CJ=mkPerson({id:'CJ',name:'Claim Jeff'}); CJ.first='Claim'; CJ.last='Jeff'; CJ.roles=['sales'];
+        CJ.start='2026-01-01'; CJ.commRenew=5; CJ.commNew=10; CJ.aliases=[]; CJ.log=[];
+        var CO=mkPerson({id:'CO',name:'Claim Other'}); CO.first='Claim'; CO.last='Other'; CO.roles=['sales'];
+        CO.start='2026-01-01'; CO.commRenew=5; CO.aliases=[]; CO.log=[];
+        PEOPLE=[CJ,CO]; EMP_IDX=null; ROWS=[]; PAYOUTS=[]; CLIENTS=[]; TOMBSTONES=[];
+        INVOICES=[]; PAIDINV=[]; OPENINV=[]; INVLINKS=[]; INVCLIMAP=[]; INVASSIGN=[]; invDirty();
+        var alertJ=window.alert, toastJ=window.toast, confJ=window.confirm;
+        window.alert=function(){}; window.toast=function(){}; window.confirm=function(){return true;};
+        GLOBAL.payLag=30;
+        var adminJ=ADMIN; ADMIN=true; capsInvalidate();   // the claim engine self-gates on admin
+
+        // an invoice with NO rep anywhere is a health finding and a Hawk item
+        PAIDINV=[{i:'801',c:'Acct One',p:'2026-05-10',v:218,d:'2026-05-01',a:'8 Ash St',s:200,x:18,m:'Check',f:'',pre:0,r:''},
+                 {i:'802',c:'Acct Two',p:'2026-06-10',v:109,d:'2026-06-01',a:'9 Ash St',s:100,x:9,m:'Check',f:'',pre:0,r:'Claim Jeff'},
+                 {i:'803',c:'Acct Three',p:'2026-06-12',v:327,d:'2026-06-02',a:'10 Ash St',s:300,x:27,m:'Check',f:'',pre:0,r:'Claim Other'}];
+        OPENINV=[{i:'804',d:'',c:'Acct Four',addr:'11 Ash St',city:'',t:150,s:'Open'}];
+        invDirty();
+        checkTrue('CLAIM a rep-less invoice is flagged', invoiceOf('801').health.indexOf('no-salesperson')>-1, invoiceOf('801').health.join(','));
+        checkTrue('CLAIM an attributed invoice is not', invoiceOf('802').health.indexOf('no-salesperson')<0, invoiceOf('802').health.join(','));
+        var nr=function(){ var c=runChecks().find(function(x){return x.id==='hawkInvNoRep';}); return c||{items:[],impact:0}; };
+        check('CLAIM the Hawk sees invoices nobody answers for', 2, nr().items.length);
+        checkTrue('CLAIM with the money at stake', nr().impact>=350, nr().impact);
+        // a balance-only invoice must say "unknown", never $0.00
+        checkTrue('CLAIM a balance-only invoice admits its money is unknown', invoiceOf('804').noMoney===true, invoiceOf('804').noMoney);
+
+        // assignment puts a name on it — and clears the Hawk
+        INVASSIGN=[{id:'iaT',no:'801',emp:'CJ',by:'test',on:'2026-08-24'}]; invDirty();
+        check('CLAIM assignment resolves attribution', 'CJ', invoiceOf('801').repId);
+        check('CLAIM and says how', 'assigned', invoiceOf('801').repHow);
+        checkTrue('CLAIM the flag clears once someone answers for it', invoiceOf('801').health.indexOf('no-salesperson')<0, invoiceOf('801').health.join(','));
+        check('CLAIM the Hawk item count drops', 1, nr().items.length);
+
+        // claimable = attributed to THAT person, sale-less, not tombstoned
+        check('CLAIM Jeff can claim his two', '801,802',
+          invClaimable('CJ').map(function(h){return h.no;}).sort().join(','));
+        check('CLAIM the others are left off', '803',
+          invClaimable('CO').map(function(h){return h.no;}).sort().join(','));
+
+        // the claim: sales appear on the normal pipeline, payable, never paid
+        var res=invClaimSales('CJ','renewal',invClaimable('CJ'));
+        check('CLAIM two sales created', 2, res.added);
+        check('CLAIM at pre-tax value', 300, round2(res.total));
+        var cr=ROWS.find(function(r){return r.srcId==='inv:802';});
+        check('CLAIM the sale carries the invoice number', '802', cr.invNo);
+        check('CLAIM invoiced-stage from the invoice date', '2026-06-01', cr.invoiced);
+        check('CLAIM the rate froze at the plan rate, not zero', 5, +cr.commRate);
+        check('CLAIM commission is PAYABLE (due), not paid', 'due', stageOf(cr,'2026-08-24'));
+        check('CLAIM nothing pretends payroll ran', '', cr.paid||'');
+        check('CLAIM the ledger is untouched', 0, PAYOUTS.length);
+        check('CLAIM the register now links the sale', 1, invSales(invoiceOf('802')).length);
+        checkTrue('CLAIM the register itself is the invoice evidence', hasInvoiceEvidence(cr), hasInvoiceEvidence(cr));
+        check('CLAIM commission math flows: 5% of $100', 5, round2(rowComm(cr)));
+        check('CLAIM the other rep’s invoices were not claimed', 0,
+          ROWS.filter(function(r){return r.rep==='CO';}).length);
+
+        // idempotence: claiming again duplicates nothing
+        var res2=invClaimSales('CJ','renewal',invClaimable('CJ'));
+        check('CLAIM re-running claims nothing new', 0, res2.added+res2.updated);
+        check('CLAIM the book still holds exactly two claimed sales', 2, ROWS.length);
+
+        // a paid claimed row is history — an explicit re-claim skips it
+        cr.paid='2026-08-01';
+        var res3=invClaimSales('CJ','renewal',[invoiceOf('802')]);
+        check('CLAIM a paid row is never touched again', 1, res3.skipped);
+        check('CLAIM its value did not move', 100, +cr.value);
+        cr.paid='';
+
+        // pre-plan: rate freezes at 0 — and eligibility fixes it on re-claim
+        CJ.start='2027-01-01'; EMP_IDX=null;
+        var res4=invClaimSales('CJ','renewal',[invoiceOf('802')]);
+        check('CLAIM pre-plan claims freeze at $0 (visible, not hidden)', 0, +ROWS.find(function(r){return r.srcId==='inv:802';}).commRate);
+        CJ.start='2026-01-01'; EMP_IDX=null;
+        invClaimSales('CJ','renewal',[invoiceOf('802')]);
+        check('CLAIM eligibility restored re-prices the re-claim', 5, +ROWS.find(function(r){return r.srcId==='inv:802';}).commRate);
+
+        // review fixes — each was a confirmed adversarial finding
+        // (a) guessed money can never be claimed: a balance-only invoice stays out
+        INVASSIGN.push({id:'iaO',no:'804',emp:'CJ',by:'t',on:'2026-08-24'}); invDirty();
+        check('CLAIM a balance-only invoice is not claimable even when assigned', '',
+          invClaimable('CJ').map(function(h){return h.no;}).join(','));
+        var forced=invClaimSales('CJ','renewal',[invoiceOf('804')]);
+        check('CLAIM even a forced list refuses to book a guess', 1, forced.skipped);
+        INVASSIGN=INVASSIGN.filter(function(a){return a.no!=='804';}); invDirty();
+        // (b) a hand-edited row belongs to the person who edited it
+        var ur=ROWS.find(function(r){return r.srcId==='inv:802';});
+        ur.edits=[{by:'user',on:'2026-08-24',f:'value',from:100,to:120}]; ur.value=120;
+        invClaimSales('CJ','renewal',[invoiceOf('802')]);
+        check('CLAIM a hand-edited row is never overwritten', 120, +ur.value);
+        delete ur.edits; ur.value=100;
+        // (c) an explicit clear is a record, and a stale pull cannot resurrect it
+        invAssignRep('801','');
+        check('CLAIM an explicit clear stands', '', invoiceOf('801').repId||'');
+        cloudApply({invassign:[{id:'iaOld',no:'801',emp:'CJ',by:'old-device',on:'2026-08-20'}]});
+        check('CLAIM a stale pull cannot resurrect a cleared assignment', '', invoiceOf('801').repId||'');
+        // (d) SA's own unanimous line rep attributes an invoice with no sold-by
+        INVOICES=[{c:'LineOnly Co',a:'',r:'Claim Jeff',i:'900',d:'2026-05-05',s:'Mow',v:50,k:'M',t:0}]; invDirty();
+        check('CLAIM a unanimous line rep attributes the invoice', 'CJ', invoiceOf('900').repId);
+        check('CLAIM and says how', 'line-rep', invoiceOf('900').repHow);
+        INVOICES=[]; invDirty();
+        // (e) a near same-client sale without a number holds the claim back
+        ROWS.push(mkRow({id:'plain2',rep:'CO',client:'Acct Three',value:300,date:'2026-06-05'}));
+        checkTrue('CLAIM a look-alike sale is flagged as dup-risk', !!invClaimDupRisk(invoiceOf('803')), 'risk');
+        check('CLAIM the wizard batch holds it back', 0, invClaimBatch('CO').claim.length);
+        check('CLAIM into its own list, visibly', 1, invClaimBatch('CO').dupRisk.length);
+        // (f) and the Hawk pairs a claimed invoice with a look-alike sale
+        ROWS.push(mkRow({id:'plain1',rep:'CO',client:'Acct Two',value:100,date:'2026-06-05'}));
+        var cdk=function(){ var c=runChecks().find(function(x){return x.id==='hawkClaimDup';}); return c||{items:[]}; };
+        check('CLAIM HAWK pairs claimed invoice and look-alike sale', 1, cdk().items.length);
+        ROWS=ROWS.filter(function(r){return r.id!=='plain1'&&r.id!=='plain2';});
+
+        // a deliberately deleted claim stays deleted
+        var dead=ROWS.find(function(r){return r.srcId==='inv:801';});
+        addTombstone(dead); ROWS=ROWS.filter(function(r){return r!==dead;}); invDirty();
+        INVASSIGN=[{id:'iaT2',no:'801',emp:'CJ',by:'t',on:'2026-08-24'}]; invDirty();
+        check('CLAIM a tombstoned invoice is not claimable again', '',
+          invClaimable('CJ').map(function(h){return h.no;}).join(','));
+
+        ADMIN=adminJ; capsInvalidate();
+        window.alert=alertJ; window.toast=toastJ; window.confirm=confJ;
+        PAYOUTS=[]; INVASSIGN=[]; INVLINKS=[]; INVCLIMAP=[]; TOMBSTONES=[];
+        INVOICES=[]; PAIDINV=[]; OPENINV=[]; ROWS=[]; invDirty();
+      } else {
+        results.push({name:'CLAIM engine exists (invClaimSales/invAssignRep)', expected:true, actual:false, pass:false});
+      }
+
       /* ---------- CHAIN OF CUSTODY: the audit's uncovered failure cases ---------- */
       // Jeff's integrity audit: identity is ids, names are display values. These
       // prove the cases the rest of the suite did not already pin down.
@@ -2138,6 +2288,7 @@
       if(typeof PAYMENTS!=='undefined' && snap.PAYMENTS!==undefined) PAYMENTS=snap.PAYMENTS;
       if(typeof INVLINKS!=='undefined' && snap.INVLINKS!==undefined) INVLINKS=snap.INVLINKS;
       if(typeof INVCLIMAP!=='undefined' && snap.INVCLIMAP!==undefined) INVCLIMAP=snap.INVCLIMAP;
+      if(typeof INVASSIGN!=='undefined' && snap.INVASSIGN!==undefined) INVASSIGN=snap.INVASSIGN;
       if(typeof invDirty==='function') invDirty();
     }
 
