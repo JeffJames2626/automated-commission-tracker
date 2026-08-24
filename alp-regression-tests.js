@@ -64,9 +64,19 @@
                PAIDINV:(typeof PAIDINV!=='undefined'?PAIDINV:undefined),
                PDISYNC:(typeof PDISYNC!=='undefined'?PDISYNC:undefined),
                OPENINV:(typeof OPENINV!=='undefined'?OPENINV:undefined),
-               PAYMENTS:(typeof PAYMENTS!=='undefined'?PAYMENTS:undefined) };
+               PAYMENTS:(typeof PAYMENTS!=='undefined'?PAYMENTS:undefined),
+               INVLINKS:(typeof INVLINKS!=='undefined'?INVLINKS:undefined),
+               INVCLIMAP:(typeof INVCLIMAP!=='undefined'?INVCLIMAP:undefined) };
+    // Nothing a test run may COST localStorage. Stubbing save() is not enough:
+    // cloudApply() writes through its own internal put() (raw localStorage.setItem),
+    // and the cloud-merge test calls the real cloudApply — on a browser holding real
+    // imported data, that quietly replaced the stored copies with tiny fixtures on
+    // every #selftest run. Some tests legitimately write (session tokens), so
+    // instead of blocking writes, every alp_* key is snapshotted here and put back
+    // in the finally — whatever the tests did to storage is undone wholesale.
+    var _lsSnap={};
+    try{ for(var _i=0;_i<localStorage.length;_i++){ var _k=localStorage.key(_i); if(/^alp_/.test(_k)) _lsSnap[_k]=localStorage.getItem(_k); } }catch(e){}
     try{
-      // Nothing a test does may reach localStorage: the app's save() is a no-op while tests run.
       if(typeof save==='function') save=function(){};
       var P = mkPerson();
       PEOPLE=[P]; DISPUTES=[]; if(typeof HOURS!=='undefined') HOURS=[];
@@ -458,7 +468,10 @@
         }
         check('EMP orphan earns nobody commission', 0, commissionFor(person(EMP_UNASSIGNED),'2026-06','sold').commission);
         // 9. match queue collapses spellings and honours "not an employee"
+        // Every queue SOURCE is pinned, or a browser holding real data fails these.
         PEOPLE=[EZ,EJ]; ROWS=[]; EMP_IDX=null;
+        if(typeof PAIDINV!=='undefined') PAIDINV=[];
+        if(typeof HOURS!=='undefined') HOURS=[];
         CLIENTS=[{n:'A',sp:'Donise Woodrich'},{n:'B',sp:'Donise Woodrich'}]; INVOICES=[{c:'A',r:'Woodrich, Donise',d:'2026-06-01',v:1,t:0}];
         var q=empMatchQueue();
         check('EMP queue: two spellings = one entry', 1, q.length);
@@ -1699,6 +1712,177 @@
         window.alert=alertB; window.toast=toastB; PAYOUTS=[];
       }
 
+      /* ---------- INVOICE REGISTRY: invoices as first-class records ---------- */
+      // One canonical record per source invoice (source system + number), assembled
+      // from the three feeds. Nothing is guessed, nothing is migrated, the payout
+      // ledger is untouchable, and a partial export can no longer delete history.
+      if(typeof invoiceRegistry==='function'){
+        var VA=mkPerson({id:'VA',name:'Reg Ann'}); VA.first='Reg'; VA.last='Ann'; VA.roles=['sales']; VA.aliases=[]; VA.log=[];
+        var VB=mkPerson({id:'VB',name:'Reg Bob'}); VB.first='Reg'; VB.last='Bob'; VB.roles=['sales']; VB.aliases=[]; VB.log=[];
+        PEOPLE=[VA,VB]; EMP_IDX=null; ROWS=[]; PAYOUTS=[]; CLIENTS=[]; INVOICES=[]; PAIDINV=[]; OPENINV=[];
+        INVLINKS=[]; INVCLIMAP=[]; invDirty();
+        var alertV=window.alert, toastV=window.toast, confV=window.confirm;
+        window.alert=function(){}; window.toast=function(){}; window.confirm=function(){return true;};
+
+        // identity + lines: five lines must never become five invoices
+        INVOICES=[
+          {c:'Alpha Co',a:'1 Elm St',r:'Reg Ann',i:'501',d:'2026-03-01',s:'Mowing',v:100,k:'M',t:18},
+          {c:'Alpha Co',a:'1 Elm St',r:'Reg Ann',i:'501',d:'2026-03-01',s:'Spray',v:80,k:'S',t:18},
+          {c:'Beta LLC',a:'2 Oak St',r:'Reg Bob',i:'502',d:'2026-03-05',s:'Cleanup',v:200,k:'M',t:0}
+        ]; invDirty();
+        check('INVREG two invoices, not five lines', 2, invoiceRegistry().list.length);
+        check('INVREG identity is source system + number', 'SA|501', invoiceOf('501').id);
+        check('INVREG the lines stay lines under their header', 2, invoiceOf('501').lines.length);
+        check('INVREG line sum is the invoice pre-tax', 180, round2(invoiceOf('501').pre));
+        check('INVREG a line with no number stays out of the register', 2, (function(){
+          INVOICES.push({c:'Gamma',a:'',r:'',i:'',d:'2026-03-06',s:'x',v:50,k:'M',t:0}); invDirty();
+          var n=invoiceRegistry().list.length; INVOICES.pop(); invDirty(); return n; })());
+
+        // paid status; a historical paid year counts by its PAID date
+        PAIDINV=[{i:'501',c:'Alpha Co',p:'2026-04-01',v:198,d:'2026-03-01',a:'1 Elm St',s:180,x:18,m:'Check',f:'',pre:0,r:'Reg Ann'},
+                 {i:'700',c:'Beta LLC',p:'2025-12-15',v:110,d:'2025-11-20',a:'2 Oak St',s:100,x:10,m:'Check',f:'',pre:0,r:'Reg Bob'}];
+        invDirty();
+        check('INVREG the paid feed settles the invoice', 'paid', invoiceOf('501').status);
+        check('INVREG pre-tax prefers the paid subtotal', 180, round2(invoiceOf('501').pre));
+        check('INVREG a paid-feed-only invoice still gets a record', 'SA|700', invoiceOf('700').id);
+        check('INVREG historical paid lands in its own year', 1,
+          invoiceRegistry().list.filter(function(h){return h.paidOn&&h.paidOn.slice(0,4)==='2025';}).length);
+
+        // money reconciliation: detected, never repaired
+        check('INVREG matching money raises no conflict', -1, invoiceOf('501').health.indexOf('value-conflict'));
+        PAIDINV[0]=Object.assign({},PAIDINV[0],{s:266,v:290.03,x:24.03}); invDirty();
+        checkTrue('INVREG disagreeing money is flagged', invoiceOf('501').health.indexOf('value-conflict')>-1, invoiceOf('501').health.join(','));
+        check('INVREG the flag repairs NOTHING — both figures survive', '180/266',
+          round2(invoiceOf('501').linePre)+'/'+round2(invoiceOf('501').pre));
+        PAIDINV[0]=Object.assign({},PAIDINV[0],{s:180,v:198,x:18}); invDirty();
+
+        // both paid and owed = a conflict on the record, not a silent pick
+        OPENINV=[{i:'501',d:'2026-03-01',c:'Alpha Co',addr:'1 Elm St',city:'',t:198,s:'Past Due'}]; invDirty();
+        check('INVREG paid AND owed becomes a conflict', 'conflict', invoiceOf('501').status);
+        OPENINV=[]; invDirty();
+
+        // client links: unique name resolves, ambiguity waits, approval decides
+        CLIENTS=[{n:'Alpha Co',u:'U-1',addr:'1 Elm St',ct:'Client'}]; invDirty();
+        check('INVREG a unique roster name resolves', 'U-1', (invoiceOf('501').cli||{}).u);
+        check('INVREG the address corroborates it', 'name+address', invoiceOf('501').cliHow);
+        checkTrue('INVREG an unknown client waits for review', invoiceOf('502').health.indexOf('client-match-needed')>-1, invoiceOf('502').health.join(','));
+        CLIENTS.push({n:'Beta LLC',u:'U-2',addr:'2 Oak St',ct:'Client'});
+        CLIENTS.push({n:'Beta LLC',u:'U-3',addr:'9 Pine St',ct:'Client'}); invDirty();
+        checkTrue('INVREG one name on two records = ambiguous, never picked', invoiceOf('502').health.indexOf('client-ambiguous')>-1, invoiceOf('502').health.join(','));
+        check('INVREG ambiguity resolves to nobody', 'null', String(invoiceOf('502').cli));
+        INVCLIMAP=[{id:'ic1',key:norm('Beta LLC'),u:'U-2',name:'Beta LLC',by:'test',on:'2026-08-24'}]; invDirty();
+        check('INVREG an approved mapping resolves it', 'U-2', (invoiceOf('502').cli||{}).u);
+        check('INVREG and says how', 'approved', invoiceOf('502').cliHow);
+
+        // property: the service address is preserved verbatim, never merged
+        check('INVREG the service address is preserved', '1 Elm St', invoiceOf('501').addr);
+
+        // sale links: every real shape, none forced
+        var s1=mkRow({id:'vs1',rep:'VA',value:180,client:'Alpha Co',date:'2026-02-25',invNo:'501'});
+        var s2=mkRow({id:'vs2',rep:'VB',value:200,client:'Beta LLC',date:'2026-03-01'});
+        var s3=mkRow({id:'vs3',rep:'VA',value:90,client:'Alpha Co',date:'2026-02-20',invNo:'501'});
+        ROWS=[s1,s2,s3];
+        var map=salesByInvNo();
+        check('INVREG the number on a sale links automatically', 2, (map['501']||[]).length);
+        check('INVREG an unnumbered sale links nothing', 0, (map['502']||[]).length);
+        checkTrue('INVREG suggestions are offered but never applied',
+          invSaleSuggestions(invoiceOf('502')).length>0 && (salesByInvNo()['502']||[]).length===0, 'suggested only');
+        INVLINKS=[{id:'il1',no:'502',rowId:'vs2',by:'test',on:'2026-08-24'},
+                  {id:'il2',no:'700',rowId:'vs2',by:'test',on:'2026-08-24'}];
+        map=salesByInvNo();
+        check('INVREG an admin link connects them', 'vs2', map['502'][0].r.id);
+        check('INVREG one sale can pay across several invoices', 2,
+          ['502','700'].filter(function(no){ return (map[no]||[]).some(function(e){return e.r.id==='vs2';}); }).length);
+
+        // reimports: zero dupes, updates land, partial files delete nothing
+        INVOICES=[
+          {c:'Alpha Co',a:'1 Elm St',r:'Reg Ann',i:'501',d:'2026-03-01',s:'Mowing',v:100,k:'M',t:18},
+          {c:'Beta LLC',a:'2 Oak St',r:'Reg Bob',i:'502',d:'2026-03-05',s:'Cleanup',v:200,k:'M',t:0}
+        ]; invDirty();
+        invMergeLines([{c:'Alpha Co',a:'1 Elm St',r:'Reg Ann',i:'501',d:'2026-03-01',s:'Mowing',v:100,k:'M',t:18}],false);
+        check('INVREG an exact reimport does not duplicate', 2, INVOICES.length);
+        invMergeLines([{c:'Alpha Co',a:'1 Elm St',r:'Reg Ann',i:'501',d:'2026-03-01',s:'Mowing',v:150,k:'M',t:18}],false);
+        invDirty();
+        check('INVREG a changed amount refreshes that invoice', 150, round2(invoiceOf('501').linePre));
+        check('INVREG the partial file touched nothing else', 200,
+          round2(INVOICES.filter(function(x){return x.i==='502';}).reduce(function(a,x){return a+x.v;},0)));
+        check('INVREG two invoices remain — nothing deleted', 2,
+          (function(){ var s={}; INVOICES.forEach(function(x){ if(x.i) s[x.i]=1; }); return Object.keys(s).length; })());
+        INVOICES.push({c:'Anon',a:'',r:'',i:'',d:'2026-03-10',s:'a',v:10,k:'M',t:0});
+        INVOICES.push({c:'Anon',a:'',r:'',i:'',d:'2026-03-11',s:'b',v:10,k:'M',t:0});
+        INVOICES.push({c:'Anon',a:'',r:'',i:'',d:'2026-03-12',s:'c',v:10,k:'M',t:0});
+        var g=invMergeLines([{c:'Anon',a:'',r:'',i:'',d:'2026-03-10',s:'x',v:10,k:'M',t:0},
+                             {c:'Anon',a:'',r:'',i:'',d:'2026-03-12',s:'y',v:10,k:'M',t:0}],false);
+        checkTrue('INVREG a destructive no-number swap asks first', !!g.needConfirm, JSON.stringify(g.needConfirm||{}));
+        check('INVREG and mutates NOTHING until answered', 5, INVOICES.length);
+        INVOICES=INVOICES.filter(function(x){return x.i;}); invDirty();
+
+        // invoices are NOT sales: sold, commission, and the ledger cannot move
+        var soldBefore=round2(ROWS.reduce(function(a,r){return a+netValue(r);},0));
+        var commBefore=round2(ROWS.reduce(function(a,r){return a+rowComm(r);},0));
+        PAYOUTS=[{id:'vp1',emp:'VA',rowId:'vs1',kind:'rep',amount:18,status:'paid',paidOn:'2026-04-05',period:'2026-04'}];
+        var ledgerBefore=JSON.stringify(PAYOUTS);
+        invMergeLines([{c:'Alpha Co',a:'1 Elm St',r:'Reg Ann',i:'901',d:'2026-04-01',s:'Big job',v:5000,k:'M',t:0}],false);
+        pdiMerge([{i:'901',c:'Alpha Co',p:'2026-05-01',v:5450,d:'2026-04-01',a:'1 Elm St',s:5000,x:450,m:'Check',f:'',pre:0,r:'Reg Ann'}]);
+        invDirty();
+        check('INVREG a year of invoices adds ZERO to sold', soldBefore, round2(ROWS.reduce(function(a,r){return a+netValue(r);},0)));
+        check('INVREG and ZERO to commission', commBefore, round2(ROWS.reduce(function(a,r){return a+rowComm(r);},0)));
+        check('INVREG and never touches the payout ledger', ledgerBefore, JSON.stringify(PAYOUTS));
+
+        // history surfaces: employee, client, property
+        check('INVREG employee attribution reaches the register', 'VA', invoiceOf('901').repId);
+        check('INVREG client history finds every Alpha invoice', 2,
+          invoiceRegistry().list.filter(function(h){return norm(h.client)===norm('Alpha Co');}).length);
+        check('INVREG property history finds every 1 Elm St invoice', 2,
+          invoiceRegistry().list.filter(function(h){return norm(h.addr)===norm('1 Elm St');}).length);
+
+        // malformed date is flagged, not fixed
+        checkTrue('INVREG an invoice with no date is flagged', (function(){
+          PAIDINV.push({i:'902',c:'Alpha Co',p:'2026-05-02',v:10,d:'',a:'',s:10,x:0,m:'',f:'',pre:0,r:''});
+          invDirty(); return invoiceOf('902').health.indexOf('no-date')>-1; })(), 'no-date');
+
+        // review fixes — each of these was a confirmed adversarial finding
+        // (1) a stale cloud copy can only ADD admin decisions, never erase them
+        INVLINKS=[{id:'ilA',no:'502',rowId:'vs2',by:'a',on:'2026-08-24'}];
+        INVCLIMAP=[{id:'icA',key:'kx',u:'U-2',name:'Beta LLC',by:'a',on:'2026-08-24'}];
+        cloudApply({invlinks:[{id:'ilB',no:'700',rowId:'vs2',by:'b',on:'2026-08-23'}], invclimap:[]});
+        check('INVREG a stale cloud pull ADDS links, never erases', 'ilA,ilB',
+          INVLINKS.map(function(x){return x.id;}).sort().join(','));
+        check('INVREG approved mappings survive a stale pull', 1, INVCLIMAP.length);
+        INVLINKS=[{id:'il1',no:'502',rowId:'vs2',by:'test',on:'2026-08-24'},
+                  {id:'il2',no:'700',rowId:'vs2',by:'test',on:'2026-08-24'}]; INVCLIMAP=[]; invDirty();
+        // (2) a same-name GONE client blocks silent linking to the active one
+        var cliSave=CLIENTS;
+        CLIENTS=[{n:'Alpha Co',u:'U-1',addr:'1 Elm St',ct:'Client'},
+                 {n:'Alpha Co',u:'U-9',addr:'9 Old Rd',ct:'Client',gone:true}]; invDirty();
+        checkTrue('INVREG a same-name gone client makes it ambiguous', invoiceOf('501').health.indexOf('client-ambiguous')>-1, invoiceOf('501').health.join(','));
+        check('INVREG and nothing auto-links', 'null', String(invoiceOf('501').cli));
+        CLIENTS=cliSave; invDirty();
+        // (3) an audit-only invoice keeps its tax (invoice-level, repeated per line — max, never summed)
+        invMergeLines([{c:'Alpha Co',a:'1 Elm St',r:'',i:'903',d:'2026-04-02',s:'Taxed A',v:60,k:'M',t:9},
+                       {c:'Alpha Co',a:'1 Elm St',r:'',i:'903',d:'2026-04-02',s:'Taxed B',v:40,k:'M',t:9}],false);
+        invDirty();
+        check('INVREG an audit-only invoice keeps its tax', 9, round2(invoiceOf('903').tax));
+        check('INVREG tax is invoice-level, never summed across lines', 109, round2(invoiceOf('903').total));
+        // (4) a mapping approved for one spelling does not capture another
+        INVCLIMAP=[{id:'icX',key:norm('Beta LLC'),from:'BETA-LLC!!',u:'U-2',name:'Beta LLC',by:'t',on:'2026-08-24'}]; invDirty();
+        check('INVREG a mapping bound to one spelling ignores others', 'null', String(invoiceOf('502').cli));
+        INVCLIMAP=[]; invDirty();
+
+        // search: a number known only to the paid feed now resolves end-to-end
+        var jm=jobMatches('has invoice 700 been paid');
+        check('INVREG the assistant finds a paid-feed-only number', 'Beta LLC', jm.length?jm[0].n:'(none)');
+        checkTrue('INVREG and carries the number for the canonical block', !!(jm.length&&jm[0].invNo==='700'), jm.length?String(jm[0].invNo):'');
+        checkTrue('INVREG invoiceFactsFor tells the whole story',
+          /PAID 2025-12-15/.test(invoiceFactsFor('700')) && /Linked sales/.test(invoiceFactsFor('700')),
+          invoiceFactsFor('700').slice(0,90));
+
+        window.alert=alertV; window.toast=toastV; window.confirm=confV;
+        PAYOUTS=[]; INVLINKS=[]; INVCLIMAP=[]; INVOICES=[]; PAIDINV=[]; OPENINV=[]; invDirty();
+      } else {
+        results.push({name:'INVREG invoice registry exists (invoiceRegistry)', expected:true, actual:false, pass:false});
+      }
+
       /* ---------- CHAIN OF CUSTODY: the audit's uncovered failure cases ---------- */
       // Jeff's integrity audit: identity is ids, names are display values. These
       // prove the cases the rest of the suite did not already pin down.
@@ -1762,7 +1946,7 @@
         // the chain audit itself: measures, never guesses
         ROWS=[mkRow({rep:'CA',value:100,client:'Known Co'}),
               Object.assign(mkRow({value:100,client:'Ghost Co'}),{rep:EMP_UNASSIGNED,repHow:'orphan'})];
-        CLIENTS=[{n:'Known Co',u:'U-1',at:'1 St',ct:'Client',sp:'Chain Ann'}];
+        CLIENTS=[{n:'Known Co',u:'U-1',addr:'1 St',ct:'Client',sp:'Chain Ann'}];
         PAYOUTS=[{id:'cp1',emp:'CA',rowId:'r_gone',kind:'rep',amount:50,status:'paid',paidOn:'2026-07-01'}];
         var CH={}; chainAudit().forEach(function(x){ CH[x.id]=x; });
         check('CHAIN audit counts the parked sale as broken', 1, CH.saleEmp.broken);
@@ -1905,7 +2089,15 @@
     } catch(e){
       results.push({name:'HARNESS ERROR', expected:'no throw', actual:String(e&&e.message||e), pass:false});
     } finally {
-      // restore every global, no matter what
+      // restore every global, no matter what — and every alp_* localStorage key.
+      // Removals run FIRST (freeing quota before the big feeds are written back),
+      // and each restore is individually guarded so one failure cannot strand
+      // the remaining keys as test fixtures.
+      try{
+        for(var _j=localStorage.length-1;_j>=0;_j--){ var _kk=localStorage.key(_j);
+          if(/^alp_/.test(_kk) && !(_kk in _lsSnap)){ try{ localStorage.removeItem(_kk); }catch(e){} } }
+        Object.keys(_lsSnap).forEach(function(k){ try{ localStorage.setItem(k,_lsSnap[k]); }catch(e){} });
+      }catch(e){}
       PEOPLE=snap.PEOPLE; ROWS=snap.ROWS; GLOBAL=snap.GLOBAL; DISPUTES=snap.DISPUTES;
       if(snap.save) save=snap.save;
       if(typeof CLIENTS!=='undefined' && snap.CLIENTS!==undefined) CLIENTS=snap.CLIENTS;
@@ -1922,6 +2114,9 @@
       if(typeof PDISYNC!=='undefined' && snap.PDISYNC!==undefined) PDISYNC=snap.PDISYNC;
       if(typeof OPENINV!=='undefined' && snap.OPENINV!==undefined) OPENINV=snap.OPENINV;
       if(typeof PAYMENTS!=='undefined' && snap.PAYMENTS!==undefined) PAYMENTS=snap.PAYMENTS;
+      if(typeof INVLINKS!=='undefined' && snap.INVLINKS!==undefined) INVLINKS=snap.INVLINKS;
+      if(typeof INVCLIMAP!=='undefined' && snap.INVCLIMAP!==undefined) INVCLIMAP=snap.INVCLIMAP;
+      if(typeof invDirty==='function') invDirty();
     }
 
     var pass=results.filter(function(r){return r.pass;}).length;

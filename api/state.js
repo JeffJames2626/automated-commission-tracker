@@ -182,7 +182,7 @@ function projectState(raw, email) {
   // Client billing: invoices, payments and open balances are money owed to the
   // company, not to a rep. Only billing, managers and the owner get them.
   if (!ctx.financial) {
-    ['invoices','payments','openinv','paidinv','invsyncs','paysyncs','balsyncs','pdisyncs'].forEach(k => {
+    ['invoices','payments','openinv','paidinv','invsyncs','paysyncs','balsyncs','pdisyncs','invlinks','invclimap'].forEach(k => {
       if (Array.isArray(doc[k])) doc[k] = [];
     });
   }
@@ -280,6 +280,15 @@ function mergeProtected(incomingRaw, storedRaw, email) {
   ['invoices', 'payments', 'openinv', 'paidinv', 'invsyncs', 'paysyncs', 'balsyncs', 'pdisyncs'].forEach(k => {
     inc[k] = ctx.financial ? (Array.isArray(inc[k]) ? inc[k] : (stored[k] || []))
                            : (stored[k] || []);
+  });
+  // Invoice-sale links and client mappings are admin DECISIONS, not feed
+  // documents: they are taken only from a caller whose job includes making
+  // them — financial WITH sales scope (the owner, managers). Billing reads
+  // them but can never rewrite or wipe them.
+  ['invlinks', 'invclimap'].forEach(k => {
+    inc[k] = (ctx.financial && ctx.sales !== 'none')
+      ? (Array.isArray(inc[k]) ? inc[k] : (stored[k] || []))
+      : (stored[k] || []);
   });
   return JSON.stringify(inc);
 }

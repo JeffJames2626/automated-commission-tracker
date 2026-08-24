@@ -57,6 +57,8 @@
       payments:[{id:'y1',inv:'i1',amt:900}],
       openinv:[{id:'o1',client:'Acme',t:400}],
       paidinv:[{i:'12328',c:'Acme',p:'2026-08-14',v:523.68,r:'Rep Person'}],
+      invlinks:[{id:'l1',no:'12328',rowId:'r1',by:'jeff',on:'2026-08-24'}],
+      invclimap:[{id:'m1',key:'acme',u:'U1',name:'Acme',by:'jeff',on:'2026-08-24'}],
       invsyncs:[{id:'s1'}], paysyncs:[{id:'s2'}], balsyncs:[{id:'s3'}], pdisyncs:[{id:'s4'}],
       tombstones:[], oscs:[], global:{payLag:30,policy:{clawbackDays:180}}};
   }
@@ -89,8 +91,9 @@
     check('READ ledger is their own only','p1',ids(asRep.payouts));
     check('READ disputes are their own only','d1',ids(asRep.disputes));
     check('READ hours are their own only','h1',ids(asRep.hours));
-    check('READ company billing is withheld from a rep','0/0/0/0',
-      [asRep.invoices.length,asRep.payments.length,asRep.openinv.length,asRep.paidinv.length].join('/'));
+    check('READ company billing is withheld from a rep','0/0/0/0/0/0',
+      [asRep.invoices.length,asRep.payments.length,asRep.openinv.length,asRep.paidinv.length,
+       asRep.invlinks.length,asRep.invclimap.length].join('/'));
     ok('READ the client roster still arrives (they need it to work)', asRep.clients.length===1, asRep.clients.length);
     ok('READ no manager override entry leaks to the rep it was earned on',
       !asRep.payouts.some(function(x){return x.kind==='override';}), ids(asRep.payouts));
@@ -195,6 +198,16 @@
     check('WRITE a rep cannot wipe company billing','i1',ids(back(function(d){ d.invoices=[]; }).invoices));
     check('WRITE a rep cannot wipe the paid-invoices feed',1,
       back(function(d){ d.paidinv=[]; }).paidinv.length);
+    check('WRITE a rep cannot forge an invoice-sale link','l1',
+      ids(back(function(d){ d.invlinks=[{id:'l9',no:'99999',rowId:'r1'}]; }).invlinks));
+    check('WRITE a rep cannot rewrite the client mappings','m1',
+      ids(back(function(d){ d.invclimap=[]; }).invclimap));
+    check('WRITE billing cannot wipe the invoice-sale links either','l1',
+      ids(back(function(d){ d.invlinks=[]; }, EM.bil).invlinks));
+    check('WRITE billing cannot forge a client mapping','m1',
+      ids(back(function(d){ d.invclimap=[{id:'m9',key:'evil',u:'U9',name:'Evil'}]; }, EM.bil).invclimap));
+    check('WRITE a manager CAN make an invoice-sale link','l1,l9',
+      ids(back(function(d){ d.invlinks.push({id:'l9',no:'777',rowId:'r1'}); }, EM.mgr).invlinks));
     check('WRITE a rep cannot invent an invoice','i1',
       ids(back(function(d){ d.invoices.push({id:'i9',client:'Acme',total:-900}); }).invoices));
     /* ---- id-less collections must not multiply on every save ---- */

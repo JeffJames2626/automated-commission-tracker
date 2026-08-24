@@ -318,8 +318,9 @@ nav button.moreBtn{opacity:.85}
 .homesw .note{margin-right:2px}
 .hverdict{background:var(--paper);border:1px solid var(--line);border-radius:11px;box-shadow:var(--shadow);padding:13px 15px;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
 .hverdict .hv1{font-size:15px}
-.hverdict .hv2{display:flex;gap:8px;align-items:center;flex:0 1 auto}
+.hverdict .hv2{display:flex;gap:8px;align-items:center;flex:0 1 auto;flex-wrap:wrap;min-width:0}
 .hverdict input{width:210px;max-width:45vw}
+@media(max-width:480px){.hverdict input{width:100%;max-width:none;flex:1 1 100%}}
 .hbriefcard{margin-bottom:14px;border-left:4px solid var(--gold)}
 .hbrief{font-size:13.5px;line-height:1.55;margin-top:6px;white-space:normal}
 .hgroup{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin:18px 0 8px}
@@ -934,6 +935,45 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
       <div class="card pad"><div class="sechead"><h3>Can the numbers be trusted right now?</h3><span class="hint">the Data Hawk’s live verdict</span></div><div class="tiles small" id="viewTrust"></div><div class="note" id="viewFeeds" style="margin-top:8px"></div></div>
     </div>
   </section>
+</div>
+
+<div class="tab" id="tab-invoices">
+  <section>
+    <div class="sechead"><h2>Invoices</h2><span class="hint" id="invRegHint"></span></div>
+    <div class="tiles" id="invRegTiles" style="margin-bottom:12px"></div>
+    <div class="card">
+      <div class="pad" style="padding-bottom:8px">
+        <div class="sechead"><h3>The register <span class="pill n" id="invRegCount">0</span></h3>
+          <span class="hint">one row per invoice, assembled from the audit, paid, and balances feeds — billed money is pre-tax, totals include tax</span></div>
+        <div class="frow" style="margin-top:6px">
+          <div><label>Search</label><input id="invFQ" placeholder="invoice #, client, address, service…" oninput="renderInvoices()"></div>
+          <div><label>Status</label><select id="invFStatus" onchange="renderInvoices()">
+            <option value="">All</option><option value="paid">Paid</option><option value="open">Open</option>
+            <option value="billed">Billed only</option><option value="conflict">Paid AND owed</option></select></div>
+          <div><label>Link health</label><select id="invFHealth" onchange="renderInvoices()">
+            <option value="">All</option><option value="clean">Clean</option><option value="issues">Needs review</option>
+            <option value="client-match-needed">Client match needed</option><option value="value-conflict">Money conflict</option>
+            <option value="nosale">No sale linked</option><option value="linked">Sale linked</option></select></div>
+          <div><label>Salesperson</label><select id="invFRep" onchange="renderInvoices()"></select></div>
+          <div><label>From</label><input type="date" id="invFFrom" onchange="renderInvoices()"></div>
+          <div><label>To</label><input type="date" id="invFTo" onchange="renderInvoices()"></div>
+        </div>
+      </div>
+      <div class="scroll tallscroll"><table id="invRegTable"></table></div>
+    </div>
+  </section>
+  <div class="grid2">
+    <section><div class="card">
+      <div class="pad" style="padding-bottom:6px"><div class="sechead"><h3>Billed by salesperson</h3>
+        <span class="hint">pre-tax, from the register’s attribution — production credit lives on the Sales tab, not here</span></div></div>
+      <div class="scroll"><table id="invRegRepTable"></table></div>
+    </div></section>
+    <section><div class="card">
+      <div class="pad" style="padding-bottom:6px"><div class="sechead"><h3>Needs a decision</h3>
+        <span class="hint">nothing here is guessed — each row waits for a person</span></div></div>
+      <div class="scroll"><table id="invRegReviewTable"></table></div>
+    </div></section>
+  </div>
 </div>
 
 <div class="tab" id="tab-hawk">
@@ -1560,8 +1600,9 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
           <span class="hint">Service Autopilot → Invoice Audit Summary, exported to CSV.</span></div>
         <div class="warnbox" style="margin-bottom:13px">
           Same as the client list: SA hands you an <b>.xls</b>, so open it in Excel once and <b>Save As → CSV</b>
-          before dropping it here. The importer replaces everything it holds for the dates covered by the file,
-          so re-importing an overlapping export will not double anything up.
+          before dropping it here. Lines merge by <b>invoice number</b>: an invoice named in the file gets its
+          lines refreshed, every invoice the file does not name is untouched — so overlapping, partial, or
+          filtered exports can neither double anything up nor delete history.
         </div>
         <div class="frow" style="margin-bottom:12px">
           <div><label>Choose the CSV</label><input type="file" id="invFile" accept=".csv,.txt" onchange="invRead(event)"></div>
@@ -2491,6 +2532,19 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
   </div>
 </div>
 
+<!-- one invoice, everything it connects to — deep link #inv/<number> -->
+<div class="modal" id="invModal" onclick="if(event.target===this)closeInv()">
+  <div class="sheet wide">
+    <div class="top">
+      <h3 id="ivTitle">Invoice</h3>
+      <span class="note" id="ivKind"></span>
+      <button class="x" onclick="closeInv()" title="Close (Esc)">&times;</button>
+    </div>
+    <div class="body" id="ivBody"></div>
+    <div class="foot" id="ivFoot"><span class="hspace"></span><button onclick="closeInv()">Close</button></div>
+  </div>
+</div>
+
 <div class="modal" id="quickModal" onclick="if(event.target===this)closeQuick()">
   <div class="sheet">
     <div class="top">
@@ -2630,6 +2684,8 @@ const K_BAL='alp_openinv_v1';
 const K_BALSYNC='alp_balsync_v1';
 const K_PDI='alp_paidinv_v1';
 const K_PDISYNC='alp_pdisync_v1';
+const K_INVLINK='alp_invlinks_v1';
+const K_INVCLI='alp_invclimap_v1';
 // People who have left. Accounts still carrying their name get flagged for takeover.
 const FORMER_DEFAULT=['Russanne','Malisa','Jaron','Alina','Erbie','Crystal','Michael'];
 const K_ADMIN='alp_admin_v1';
@@ -2682,6 +2738,8 @@ let OPENINV  = load(K_BAL,[]);       // snapshot of unpaid invoices — SA's Inv
 let BALSYNC  = load(K_BALSYNC,[]);   // one entry per balances import, newest last
 let PAIDINV  = load(K_PDI,[]);       // settled invoices — SA's Paid Invoices export, one record per invoice #
 let PDISYNC  = load(K_PDISYNC,[]);   // one entry per paid-invoices import, newest last
+let INVLINKS = load(K_INVLINK,[]);   // admin-made sale↔invoice links, on top of the automatic invNo joins
+let INVCLIMAP= load(K_INVCLI,[]);    // admin-approved invoice-name → roster-client mappings; never guessed
 let OSCS     = load(K_OSC,[]);       // on-site estimates and consultations
 const POLICY_DEFAULT={
   raiseDays:30,       // rep has this long to dispute a figure
@@ -3299,7 +3357,9 @@ function empAddAlias(pid, raw, sys){
     empLog(p,'alias-added',{sys:sys||'*',name:raw});
     if(typeof auditRecord==='function') auditRecord('emp-alias',{emp:pid,sys:sys||'*',name:raw});
   }
-  save(K_PEOPLE,PEOPLE); return true;
+  save(K_PEOPLE,PEOPLE);
+  if(typeof invDirty==='function') invDirty();   // registry rep attribution reads through the aliases
+  return true;
 }
 function empDropAlias(pid,key){ const p=person(pid); if(!p) return; const a=(p.aliases||[]).find(x=>(x.key||empKey(x.name))===key); p.aliases=(p.aliases||[]).filter(x=>(x.key||empKey(x.name))!==key); empLog(p,'alias-removed',{name:a?a.name:key}); save(K_PEOPLE,PEOPLE); render(); }
 function empIgnoreName(raw,sys){ const k=empKey(raw); if(!k) return; GLOBAL.empIgnore=empIgnoreList().filter(x=>x.key!==k); GLOBAL.empIgnore.push({key:k,name:String(raw).trim(),sys:sys||'*',by:empWho(),on:todayISO()}); save(K_GLOBAL,GLOBAL); if(typeof auditRecord==='function') auditRecord('emp-ignore',{sys:sys||'*',name:raw}); }
@@ -4155,6 +4215,7 @@ const TABS=[
   ['comm','Commissions','view_own_commission','Monthly commission reports and what is owed'],
   ['adj','Adjustments','view_all_commissions','Disputes, chargebacks and the process'],
   ['rev','Revenue','view_revenue','Invoices and payments — billed, collected, by rep and client'],
+  ['invoices','Invoices','view_revenue','Every invoice as one record — billed, open, paid, and what each connects to'],
   ['import','Import','manage_imports','Bulk CSV loading and shared settings'],
   ['admin','Admin','admin_security','Data checks, access and backups']
 ];
@@ -4221,11 +4282,11 @@ function render(){
   // Home first, then the tabs this person actually works in; everything else
   // they are allowed but rarely need goes under More.
   const home=homeTab();
-  const PRIMARY={view:['view','hawk','sales','clients','roster','comm'],
+  const PRIMARY={view:['view','hawk','sales','invoices','clients','roster','comm'],
                  mgr:['mgr','score','sales','pipe','clients','roster'],
                  me:['me','sales','pipe','clients','map'],
                  cx:['cx','clients','prop','svc','map'],
-                 bill:['bill','rev','clients','adj'],
+                 bill:['bill','rev','invoices','clients','adj'],
                  mine:['mine','svc','map']}[home]||['mine'];
   const btn=(t,blocked)=>'<button class="'+(TAB===t[0]?'on':'')+(blocked?' lock':'')+'" onclick="'+
       (blocked?'pauseNudge()':'setTab(&quot;'+t[0]+'&quot;)')+'">'+esc(t[1])+'</button>';
@@ -4275,9 +4336,11 @@ function render(){
   renderClients(); renderTakeover(); renderProperty(); renderMap(); renderRevenue(); renderPayments(); renderPaidInv(); renderBalances(); renderAlerts(); renderAIStatus();
   renderRoster(); renderServices(); renderHdrTools();
   if(TAB==='view') renderView(); if(TAB==='hawk') renderChecks();
+  if(TAB==='invoices'){ fillPeople('invFRep','','Any salesperson',true); renderInvoices(); }
   if(TAB==='me') renderMeHome(); if(TAB==='mgr') renderMgrHome(); if(TAB==='cx') renderCxHome();
   if(TAB==='bill') renderBillHome(); if(TAB==='mine') renderMineHome();
   if(EP_ID) renderEmp();
+  if(typeof INV_ID!=='undefined'&&INV_ID) renderInv();
   renderPauseBar(); renderHawkChip();
 }
 function setHWho(v){ HWHO=v; renderHoursTab(); }
@@ -6342,6 +6405,26 @@ function renderClientPage(){
   }
   x+='</div>';
 
+  /* invoices — the register's answer to "what has this customer been billed" */
+  (function(){
+    const nk=norm(CP_NAME);
+    const mineInv=invoiceRegistry().list.filter(iv=>norm(iv.client)===nk || (iv.cli&&norm(iv.cli.n)===nk));
+    x+='<div class="cpbox"><h5>Invoices</h5>';
+    if(mineInv.length){
+      const owed=mineInv.reduce((a,iv)=>a+iv.bal,0);
+      const paidT=mineInv.filter(iv=>iv.status==='paid').reduce((a,iv)=>a+iv.total,0);
+      x+='<div class="note" style="margin-bottom:8px"><b>'+mineInv.length+'</b> on the register · '+money(paidT)+' paid'+
+        (owed?' · <b style="color:var(--red)">'+money2(owed)+' still owed</b>':'')+'</div>';
+      mineInv.slice(0,8).forEach(iv=>{
+        x+='<div class="svcrow"><span class="g">'+invLink(iv.no)+
+          '<div class="note">'+(iv.date?fmtY(iv.date):'no date')+' · '+money2(iv.pre)+' pre-tax</div></span>'+
+          '<span>'+invStatusPill(iv)+'</span></div>';
+      });
+      if(mineInv.length>8) x+='<div class="note" style="margin-top:6px">and '+(mineInv.length-8)+' more — the Invoices tab has them all</div>';
+    } else x+='<div class="note">Nothing on the invoice register under this name.</div>';
+    x+='</div>';
+  })();
+
   /* sales logged here */
   x+='<div class="cpbox"><h5>Logged in the tracker</h5>';
   if(mine.length){
@@ -6734,6 +6817,10 @@ document.addEventListener('keydown',e=>{
     if(e.key==='Escape'){ e.preventDefault(); closeAsk(); }
     return;
   }
+  const invEl=document.getElementById('invModal');
+  if(invEl && invEl.classList.contains('on')){
+    if(e.key==='Escape'){ e.preventDefault(); closeInv(); return; }
+  }
   const empEl=document.getElementById('empModal');
   if(empEl && empEl.classList.contains('on') && !document.getElementById('editModal').classList.contains('on')){
     if(e.key==='Escape'){ e.preventDefault(); closeEmp(); return; }
@@ -7054,7 +7141,7 @@ function cliApply(){
       'Nothing was saved. Try exporting only active clients from Service Autopilot.');
     CLIENTS=load(K_CLIENTS,[]); return;
   }
-  geoDirty();
+  geoDirty(); invDirty();
   SYNCLOG.push({on:todayISO(),at:new Date().toISOString().slice(11,16),kind:kind,
     added:d.added.length,changed:d.changed.length,gone:markGone?d.gone.length:0,
     conv:conv.length,total:CLIENTS.length});
@@ -7749,7 +7836,8 @@ function invPreview(){
   const dates=p.rows.map(x=>x.d).sort();
   const from=dates[0], to=dates[dates.length-1];
   const total=p.rows.reduce((a,x)=>a+x.v,0);
-  const existing=INVOICES.filter(x=>x.d>=from&&x.d<=to).length;
+  const nosIn={}; p.rows.forEach(x=>{ const no=String(x.i||'').trim(); if(no) nosIn[no]=1; });
+  const existing=INVOICES.filter(x=>{ const no=String(x.i||'').trim(); return no&&nosIn[no]; }).length;
   const noRep=p.rows.filter(x=>!x.r);
   let h='<div class="found" style="margin-top:14px"><h5>What this file holds</h5>';
   h+='<div class="li"><span class="g"><b>'+p.rows.length.toLocaleString()+'</b> invoice lines · '+
@@ -7761,44 +7849,68 @@ function invPreview(){
     '</b> row'+(p.noDate===1?'':'s')+' had no readable invoice date and were left out</span></div>';
   if(noRep.length) h+='<div class="li"><span class="g" style="color:var(--red)"><b>'+noRep.length+
     '</b> lines have no sales rep — '+money(noRep.reduce((a,x)=>a+x.v,0))+' unattributed</span></div>';
-  if(existing) h+='<div class="li"><span class="g">Replaces <b>'+existing.toLocaleString()+
-    '</b> line'+(existing===1?'':'s')+' already held for these dates</span></div>';
+  if(existing) h+='<div class="li"><span class="g">Refreshes <b>'+existing.toLocaleString()+
+    '</b> line'+(existing===1?'':'s')+' on invoices this file names — invoices it does not name are untouched</span></div>';
+  // The double-count trap: the same period exported once WITH the Invoice #
+  // column and once without cannot be matched up — warn before, never guess after.
+  const fileHasNos=p.rows.some(x=>String(x.i||'').trim());
+  if(!fileHasNos && INVOICES.some(x=>String(x.i||'').trim()&&x.d>=from&&x.d<=to))
+    h+='<div class="warnbox" style="margin-top:10px"><b>This file has no Invoice # column</b>, but numbered lines are already stored for these dates. The two cannot be matched, so importing keeps both copies and DOUBLES those figures. Re-export with the Invoice # column included.</div>';
+  else if(fileHasNos && INVOICES.some(x=>!String(x.i||'').trim()&&x.d>=from&&x.d<=to))
+    h+='<div class="warnbox" style="margin-top:10px"><b>Number-less lines are already stored for these dates.</b> This numbered file cannot match them, so overlapping lines may end up counted twice — the Data Hawk’s doubled-lines check will list any.</div>';
   h+='<div style="margin-top:12px;display:flex;gap:9px;flex-wrap:wrap">'+
      '<button class="p" onclick="invApply()">Import</button>'+
      '<button onclick="invClear()">Cancel</button></div></div>';
   box.innerHTML=h;
 }
 
+// Lines merge by INVOICE NUMBER: an invoice named in the file replaces exactly
+// its own lines; every invoice the file does not name is untouched. A partial
+// or filtered export can therefore never delete history — the failure mode the
+// old date-range replace had, where a thin file could silently wipe a window.
+// Lines with NO number can't match by number; for those alone the old
+// date-window swap remains, confined to other number-less lines, behind a
+// confirm: without force, a destructive no-number swap returns {needConfirm}
+// and MUTATES NOTHING.
+function invMergeLines(rows,force){
+  const nosIn={}; rows.forEach(x=>{ const no=String(x.i||'').trim(); if(no) nosIn[no]=1; });
+  let kept=INVOICES.filter(x=>{ const no=String(x.i||'').trim(); return !(no&&nosIn[no]); });
+  const noNumIn=rows.filter(x=>!String(x.i||'').trim());
+  if(noNumIn.length){
+    const nd=noNumIn.map(x=>x.d).sort(), nFrom=nd[0], nTo=nd[nd.length-1];
+    const beforeKept=kept.length;
+    const kept2=kept.filter(x=>String(x.i||'').trim() || x.d<nFrom || x.d>nTo);
+    const removing=beforeKept-kept2.length;
+    if(removing>noNumIn.length && !force)
+      return {needConfirm:{removing, adding:noNumIn.length, from:nFrom, to:nTo}};
+    kept=kept2;
+  }
+  const before=INVOICES.length;
+  INVOICES=kept.concat(rows).sort((a,b)=>a.d<b.d?-1:1);
+  return {replaced:before-kept.length};
+}
 function invApply(){
   if(!INV_PARSED) return;
   const rows=INV_PARSED.rows;
   const dates=rows.map(x=>x.d).sort();
   const from=dates[0], to=dates[dates.length-1];
-  // Swap out everything inside the file's own date range, so overlapping exports are safe.
-  const kept=INVOICES.filter(x=>x.d<from||x.d>to);
-  // Range-replace is right for a full weekly export and catastrophic for a partial
-  // one: a 2-line file spanning May–June would silently DELETE every other invoice
-  // in that window. If this file holds fewer lines than it is about to remove, stop
-  // and make the person say so out loud.
-  const removing=INVOICES.length-kept.length;
-  if(removing>rows.length){
-    if(!confirm('⚠️ This file covers '+fmtY(from)+' to '+fmtY(to)+' but holds only '+rows.length+
-      ' line'+(rows.length===1?'':'s')+' — importing it would DELETE the '+removing+
-      ' lines already stored for those dates and replace them with these '+rows.length+'.\n\n'+
-      'That is usually a partial export. Only continue if this file really is the complete '+
-      'billing record for that period.\n\nReplace '+removing+' lines with '+rows.length+'?')) return;
+  let m=invMergeLines(rows,false);
+  if(m.needConfirm){
+    const g=m.needConfirm;
+    if(!confirm('⚠️ '+g.adding+' line'+(g.adding===1?'':'s')+' in this file carry no invoice number, and matching them by date would DELETE '+
+      g.removing+' number-less lines already stored for '+fmtY(g.from)+' to '+fmtY(g.to)+'.\n\n'+
+      'Only continue if this file really is the complete record of those lines.')) return;
+    m=invMergeLines(rows,true);
   }
-  const before=INVOICES.length;
-  INVOICES=kept.concat(rows).sort((a,b)=>a.d<b.d?-1:1);
   try{ save(K_INV,INVOICES); }
   catch(e){
     alert('That is more invoice history than this browser will store.\n\nNothing was saved. Import a shorter date range.');
     INVOICES=load(K_INV,[]); return;
   }
-  histDirty(); svcDirty();
+  histDirty(); svcDirty(); invDirty();
   INVSYNC.push({on:todayISO(),at:new Date().toISOString().slice(11,16),
     lines:rows.length, from, to, total:Math.round(rows.reduce((a,x)=>a+x.v,0)),
-    replaced:before-kept.length});
+    replaced:m.replaced||0});
   if(INVSYNC.length>60) INVSYNC=INVSYNC.slice(-60);
   save(K_INVSYNC,INVSYNC);
   invClear(); render();
@@ -8158,6 +8270,7 @@ function pdiApply(){
     alert('That is more paid-invoice history than this browser will store.\n\nNothing was saved. Import a shorter date range.');
     PAIDINV=load(K_PDI,[]); return;
   }
+  invDirty();
   const dates=rows.map(x=>x.p).sort();
   PDISYNC.push({on:todayISO(),at:new Date().toISOString().slice(11,16),
     lines:rows.length, from:dates[0], to:dates[dates.length-1],
@@ -8220,6 +8333,395 @@ function renderPaidInv(){
           '</td><td class="num mono">'+money(e.t)+'</td><td class="num mono">'+money(e.pre)+'</td></tr>';
       }).join('')+'</tbody>';
   }
+}
+
+/* ============================================================
+   THE INVOICE REGISTRY — invoices as records, not background data
+   One canonical record per source invoice. Identity = source
+   system + source invoice number ('SA|12328'), assembled fresh
+   from the three feeds whenever one of them changes:
+     · audit lines (INVOICES) — what was billed, line by line
+     · paid feed   (PAIDINV)  — who paid, when, how
+     · balances    (OPENINV)  — what is still owed right now
+   The registry is DERIVED — it never stores a copy of feed data,
+   so a re-import can never fork a second truth. The only stored
+   facts are the two overlay stores: INVLINKS (sale links an admin
+   made by hand) and INVCLIMAP (client mappings an admin approved).
+   Client resolution never guesses: an approved mapping first, then
+   a UNIQUE exact roster-name match; anything else waits for review.
+   ============================================================ */
+function invId(no){ return 'SA|'+String(no==null?'':no).trim(); }
+let INV_REG=null;
+function invDirty(){ INV_REG=null; }
+function invoiceRegistry(){
+  if(INV_REG) return INV_REG;
+  const reg={}, order=[];
+  const get=no=>{
+    const key=invId(no);
+    if(!reg[key]){ reg[key]={id:key, src:'SA', no:String(no).trim(),
+      client:'', addr:'', date:'', lines:[], feeds:{},
+      pre:0, tax:0, total:0, bal:0, paidOn:'', method:'', status:'billed',
+      repHdr:'', health:[]}; order.push(reg[key]); }
+    return reg[key];
+  };
+  // Audit lines, grouped under their number. A line without a number cannot
+  // join an invoice — it stays a bare line, and the Hawk counts it.
+  INVOICES.forEach(x=>{
+    const no=String(x.i||'').trim(); if(!no) return;
+    const h=get(no); h.feeds.audit=1; h.lines.push(x);
+    if(!h.client) h.client=x.c;
+    if(!h.addr) h.addr=x.a||'';
+    if(!h.date||(x.d&&x.d<h.date)) h.date=x.d||h.date;
+  });
+  // Paid feed — the settlement authority. v is TAX-INCLUDED; s is the pre-tax subtotal.
+  PAIDINV.forEach(x=>{
+    const h=get(x.i); h.feeds.paid=x;
+    h.client=x.c||h.client; h.addr=x.a||h.addr; h.date=x.d||h.date;
+    h.total=+x.v||0; h.tax=+x.x||0; h.paidOn=x.p; h.method=x.m||'';
+    h.repHdr=x.r||''; h.status='paid';
+  });
+  // Balances snapshot — the still-owed authority. t is the BALANCE, not tax.
+  OPENINV.forEach(x=>{
+    const no=String(x.i||'').trim(); if(!no) return;
+    const h=get(no); h.feeds.open=x;
+    h.client=h.client||x.c; h.addr=h.addr||x.addr||''; h.date=h.date||x.d||'';
+    h.bal=+x.t||0;
+    h.status = h.status==='paid' ? 'conflict' : 'open';
+  });
+  // Derived money, client resolution, and per-invoice health.
+  // Gone clients COUNT for ambiguity: a historical invoice naming a departed
+  // client must not silently attach to an active client with the same name.
+  const cliByName={}, goneByName={};
+  CLIENTS.forEach(c=>{ const k=norm(c.n); if(!k) return;
+    if(c.gone) goneByName[k]=1; else (cliByName[k]=cliByName[k]||[]).push(c); });
+  const mapByKey={}; INVCLIMAP.forEach(m=>{ mapByKey[m.key]=m; });
+  order.forEach(h=>{
+    const lineSum=Math.round(h.lines.reduce((a,x)=>a+(+x.v||0),0)*100)/100;
+    h.linePre=lineSum;
+    // The audit repeats invoice-level tax on every line — Math.max, never a sum
+    // (same convention the tax hawk established). Without this, an unpaid
+    // invoice's Total was pre-tax while its balance included tax.
+    if(!h.tax) h.tax=h.lines.reduce((a,x)=>Math.max(a,+x.t||0),0);
+    const paid=h.feeds.paid;
+    h.pre = paid ? (+paid.s ? +paid.s : Math.round(((+paid.v||0)-(+paid.x||0))*100)/100)
+                 : (lineSum || Math.max(0,Math.round((h.total-h.tax)*100)/100));
+    if(!h.total) h.total=Math.round((h.pre+h.tax)*100)/100;
+    // client: approved mapping → unique exact roster name (+ address corroboration).
+    // A mapping that recorded its source spelling only applies to that spelling.
+    const nk=norm(h.client);
+    let m=nk?mapByKey[nk]:null;
+    if(m && m.from && m.from!==h.client) m=null;
+    let cli=null, how='';
+    if(m){
+      cli=m.u ? CLIENTS.find(c=>String(c.u).trim()===String(m.u).trim())
+              : ((cliByName[norm(m.name)]||[]).length===1 ? cliByName[norm(m.name)][0] : null);
+      if(cli) how='approved';
+    }
+    if(!cli && nk){
+      const hits=cliByName[nk]||[];
+      if(hits.length===1 && !goneByName[nk]){ cli=hits[0];
+        how=(h.addr&&cli.addr&&norm(h.addr)===norm(cli.addr))?'name+address':'name'; }
+      else if(hits.length>1 || (hits.length===1&&goneByName[nk])) h.health.push('client-ambiguous');
+    }
+    h.cli=cli||null; h.cliHow=cli?how:'';
+    if(!nk) h.health.push('no-client');
+    else if(!cli && h.health.indexOf('client-ambiguous')<0) h.health.push('client-match-needed');
+    // employee attribution: header rep (sold-by, paid feed) and line reps are
+    // different roles from different reports — kept apart, never merged.
+    h.repId = h.repHdr ? (paidInvRepId({r:h.repHdr})||'') : '';
+    const lineIds={}; h.lines.forEach(x=>{ const id=invoiceRepId(x); if(id) lineIds[id]=1; });
+    h.lineRepIds=Object.keys(lineIds);
+    if(h.repId && h.lineRepIds.length && h.lineRepIds.indexOf(h.repId)<0) h.health.push('employee-mismatch');
+    // money health: the paid feed and the audit lines must tell one story.
+    // The tolerance is for rounding noise only — capped so a large invoice
+    // cannot hide a large disagreement inside a percentage band.
+    if(paid && h.lines.length && Math.abs(lineSum-h.pre)>Math.min(Math.max(h.pre*0.02,5),50)) h.health.push('value-conflict');
+    if(h.status==='conflict') h.health.push('paid-and-owed');
+    if(!h.date) h.health.push('no-date');
+    if(h.total<0||h.pre<0) h.health.push('negative-amount');
+  });
+  order.sort((a,b)=>(a.date||'9999')<(b.date||'9999')?1:-1);
+  INV_REG={list:order, byNo:reg};
+  return INV_REG;
+}
+function invoiceOf(no){ return invoiceRegistry().byNo[invId(no)]||null; }
+const INV_HEALTH_LABEL={'client-match-needed':'CLIENT MATCH NEEDED','client-ambiguous':'client name is ambiguous',
+  'no-client':'no client on the record','employee-mismatch':'sold-by and line rep disagree',
+  'value-conflict':'paid feed and audit lines disagree on the money','paid-and-owed':'both PAID and STILL OWED',
+  'no-date':'no invoice date','negative-amount':'negative amount'};
+
+// Sales are joined at read time, so an edited sale is never stale here.
+// One sale may pay across several invoices, several sales may share one —
+// the automatic join is the invoice number the sale itself carries (THE LAW),
+// and INVLINKS holds the links an admin added by hand on top.
+function salesByInvNo(){
+  const m={};
+  ROWS.forEach(r=>{ const no=String(r.invNo||'').trim(); if(no) (m[no]=m[no]||[]).push({r,how:'invoice # on the sale'}); });
+  INVLINKS.forEach(l=>{ const r=ROWS.find(x=>x.id===l.rowId); if(!r) return;
+    const no=String(l.no).trim();
+    if(!(m[no]||[]).some(e=>e.r.id===r.id)) (m[no]=m[no]||[]).push({r,how:'linked '+(l.on||'')+(l.by?' by '+l.by:'')}); });
+  return m;
+}
+function invSales(h,map){ return (map||salesByInvNo())[h.no]||[]; }
+// Sales this invoice COULD belong to: same client name, within 90 days.
+// Signals only — a person confirms, the app never links on its own.
+function invSaleSuggestions(h){
+  const linked=invSales(h).map(e=>e.r.id);
+  const nk=norm(h.client); if(!nk||!h.date) return [];
+  return ROWS.filter(r=>!r.voidType && linked.indexOf(r.id)<0 && norm(r.client)===nk &&
+    Math.abs((dObj(h.date)-dObj(r.date))/86400000)<=90).slice(0,5);
+}
+function invLinkSale(no,rowId){
+  if(!can('edit_sales')){ toast('That is not part of your access'); return; }
+  const r=ROWS.find(x=>x.id===rowId); if(!r) return;
+  no=String(no).trim();
+  if(INVLINKS.some(l=>String(l.no).trim()===no && l.rowId===rowId)){ toast('Already linked'); return; }
+  INVLINKS.push({id:uid('il'), no, rowId, by:empWho()||'', on:todayISO()});
+  save(K_INVLINK,INVLINKS); invDirty();
+  auditRecord('inv-link',{no, rowId, client:r.client, value:bookedValue(r)});
+  toast('Linked invoice #'+no+' to the '+r.client+' sale');
+  if(typeof INV_ID!=='undefined'&&INV_ID) renderInv(); else render();
+}
+function invUnlinkSale(no,rowId){
+  if(!can('edit_sales')){ toast('That is not part of your access'); return; }
+  no=String(no).trim();
+  const l=INVLINKS.find(x=>String(x.no).trim()===no && x.rowId===rowId);
+  if(!l){ toast('That link came from the invoice number ON the sale — clear it on the sale itself (Edit → Invoice #).'); return; }
+  if(!confirm('Remove the hand-made link between invoice #'+no+' and this sale?')) return;
+  INVLINKS=INVLINKS.filter(x=>x!==l); save(K_INVLINK,INVLINKS); invDirty();
+  auditRecord('inv-unlink',{no, rowId});
+  if(typeof INV_ID!=='undefined'&&INV_ID) renderInv(); else render();
+}
+function invApproveClient(no,u,name){
+  if(!(can('edit_clients')||ADMIN)){ toast('That is not part of your access'); return; }
+  const h=invoiceOf(no); if(!h) return;
+  const key=norm(h.client); if(!key) return;
+  INVCLIMAP=INVCLIMAP.filter(m=>m.key!==key);
+  INVCLIMAP.push({id:uid('ic'), key, u:String(u||''), name:String(name||''), from:h.client, by:empWho()||'', on:todayISO()});
+  save(K_INVCLI,INVCLIMAP); invDirty();
+  auditRecord('inv-client-map',{from:h.client, to:name||u});
+  toast('“'+h.client+'” now maps to '+ (name||u) +' — everywhere, until unmapped');
+  if(typeof INV_ID!=='undefined'&&INV_ID) renderInv(); else render();
+}
+// Roster candidates for an unmatched invoice client — shared words, best first.
+function invClientCandidates(h){
+  const toks=nameTokens(h.client).filter(t=>t.length>2); if(!toks.length) return [];
+  return CLIENTS.filter(c=>!c.gone).map(c=>{
+    const ct=nameTokens(c.n); const hit=toks.filter(t=>ct.indexOf(t)>-1).length;
+    return hit?{c,hit}:null;
+  }).filter(Boolean).sort((a,b)=>b.hit-a.hit).slice(0,5).map(x=>x.c);
+}
+/* ---- the Invoices tab: high-density register + per-invoice page ---- */
+let INV_ID=null;
+function invLink(no,label){
+  no=String(no).trim();
+  // JSON.stringify + &quot; is the app's idiom for values inside inline handlers:
+  // the browser HTML-decodes the attribute BEFORE evaluating it as JS, so an
+  // HTML-entity escape alone would decode straight back into a string breakout.
+  const js=JSON.stringify(no).replace(/"/g,'&quot;');
+  return '<a class="emplink" href="#inv/'+esc(encodeURIComponent(no))+'" onclick="openInv('+js+');return false" title="Open invoice #'+esc(no)+'">'+esc(label!=null?label:('#'+no))+'</a>';
+}
+function invStatusPill(h){
+  if(h.status==='paid') return '<span class="pill sa">PAID '+fmt(h.paidOn)+'</span>';
+  if(h.status==='open') return '<span class="pill mid">OPEN · '+money2(h.bal)+'</span>';
+  if(h.status==='conflict') return '<span class="pill no">PAID + OWED</span>';
+  return '<span class="pill n">BILLED</span>';
+}
+function renderInvoices(){
+  const t=document.getElementById('invRegTable'); if(!t) return;
+  const R=invoiceRegistry(), saleMap=salesByInvNo();
+  const today=todayISO(), wk=weekStart(today), mo=today.slice(0,7), yr=today.slice(0,4);
+  // headline numbers — billed is pre-tax by invoice date; collected is the paid feed, tax included
+  const dated=R.list.filter(h=>h.date);
+  const sumPre=L=>L.reduce((a,h)=>a+h.pre,0);
+  const ytd=dated.filter(h=>h.date.slice(0,4)===yr&&h.date<=today);
+  const collectedYtd=R.list.filter(h=>h.paidOn&&h.paidOn.slice(0,4)===yr).reduce((a,h)=>a+h.total,0);
+  const unlinked=R.list.filter(h=>!(saleMap[h.no]||[]).length).length;
+  const review=R.list.filter(h=>h.health.length);
+  document.getElementById('invRegHint').textContent=R.list.length.toLocaleString()+' invoices on the register · assembled from '+
+    [INVOICES.length?'audit lines':'',PAIDINV.length?'paid feed':'',OPENINV.length?'balances':''].filter(Boolean).join(' + ');
+  document.getElementById('invRegTiles').innerHTML=
+    tile('Billed today',money(sumPre(dated.filter(h=>h.date===today))),'pre-tax · by invoice date')+
+    tile('This week',money(sumPre(dated.filter(h=>h.date>=wk&&h.date<=today))),'pre-tax')+
+    tile('This month',money(sumPre(dated.filter(h=>h.date.slice(0,7)===mo))),'pre-tax')+
+    tile('Billed '+yr,money(sumPre(ytd)),ytd.length.toLocaleString()+' invoices · avg '+money(ytd.length?sumPre(ytd)/ytd.length:0))+
+    tile('Collected '+yr,money(collectedYtd),'paid feed · tax included')+
+    tile('No sale linked',unlinked.toLocaleString(),'invoices with no sale behind them — most recurring billing is like this',unlinked===R.list.length&&R.list.length?'bad':'')+
+    tile('Needs a decision',review.length.toLocaleString(),review.length?'client matches, money conflicts — nothing is guessed':'the register is clean',review.length?'bad':'ok');
+  // filters
+  const q=norm(document.getElementById('invFQ').value);
+  const fs=document.getElementById('invFStatus').value;
+  const fh=document.getElementById('invFHealth').value;
+  const fr=document.getElementById('invFRep').value;
+  const ff=document.getElementById('invFFrom').value, fto=document.getElementById('invFTo').value;
+  let L=R.list;
+  if(q) L=L.filter(h=>(norm(h.no)+norm(h.client)+norm(h.addr)+norm(h.repHdr)+h.lines.map(x=>norm(x.s)).join('')).indexOf(q)>-1);
+  if(fs) L=L.filter(h=>h.status===fs);
+  if(fh==='clean') L=L.filter(h=>!h.health.length);
+  else if(fh==='issues') L=L.filter(h=>h.health.length);
+  else if(fh==='nosale') L=L.filter(h=>!(saleMap[h.no]||[]).length);
+  else if(fh==='linked') L=L.filter(h=>(saleMap[h.no]||[]).length);
+  else if(fh) L=L.filter(h=>h.health.indexOf(fh)>-1);
+  if(fr) L=L.filter(h=>h.repId===fr||h.lineRepIds.indexOf(fr)>-1);
+  if(ff) L=L.filter(h=>h.date>=ff);
+  if(fto) L=L.filter(h=>h.date&&h.date<=fto);
+  document.getElementById('invRegCount').textContent=L.length.toLocaleString()+(L.length!==R.list.length?' of '+R.list.length.toLocaleString():'');
+  if(!L.length){
+    t.innerHTML='<tbody><tr><td class="empty">'+(R.list.length?'No invoices match those filters.':'Import the invoice audit, paid invoices, or balances on the Revenue tab and the register builds itself.')+'</td></tr></tbody>';
+  } else {
+    t.innerHTML='<thead><tr><th>Invoice</th><th>Date</th><th>Client</th><th class="num">Pre-tax</th><th class="num">Total</th><th>Status</th><th>Sold by</th><th class="num">Lines</th><th>Sale</th><th>Health</th></tr></thead><tbody>'+
+      L.slice(0,500).map(h=>{
+        const sales=saleMap[h.no]||[];
+        const p=h.repId?person(h.repId):null;
+        return '<tr><td>'+invLink(h.no)+'</td><td class="mono">'+fmt(h.date)+'</td>'+
+          '<td title="'+esc(h.addr)+'"><a href="#" onclick="openClient('+JSON.stringify(h.cli?h.cli.n:h.client).replace(/"/g,'&quot;')+');return false">'+esc(h.cli?h.cli.n:h.client||'—')+'</a>'+
+            (h.cli?'':' <span class="pill no" title="no approved roster match">?</span>')+'</td>'+
+          '<td class="num mono">'+money2(h.pre)+'</td><td class="num mono">'+money2(h.total)+'</td>'+
+          '<td>'+invStatusPill(h)+'</td>'+
+          '<td>'+(p?empLink(p.id,empShort(p)):esc(h.repHdr||'—'))+'</td>'+
+          '<td class="num">'+(h.lines.length||'—')+'</td>'+
+          '<td>'+(sales.length?sales.length+' linked':'—')+'</td>'+
+          '<td>'+(h.health.length?'<span title="'+esc(h.health.map(k=>INV_HEALTH_LABEL[k]||k).join(' · '))+'" style="color:var(--red);font-weight:700">⚠ '+h.health.length+'</span>':'<span style="color:var(--grn-d)">✓</span>')+'</td></tr>';
+      }).join('')+'</tbody>'+(L.length>500?'<tbody><tr><td class="empty" colspan="10">Showing 500 of '+L.length.toLocaleString()+' — narrow the filters.</td></tr></tbody>':'');
+  }
+  // billed by salesperson — register attribution, pre-tax; NOT production credit
+  const byRep={};
+  R.list.forEach(h=>{ const id=h.repId||''; const k=id||(h.repHdr?'?'+h.repHdr:'(none)');
+    (byRep[k]=byRep[k]||{id,raw:h.repHdr,n:0,pre:0}); byRep[k].n++; byRep[k].pre+=h.pre; });
+  document.getElementById('invRegRepTable').innerHTML='<thead><tr><th>Salesperson</th><th class="num">Invoices</th><th class="num">Billed pre-tax</th></tr></thead><tbody>'+
+    Object.keys(byRep).sort((a,b)=>byRep[b].pre-byRep[a].pre).slice(0,12).map(k=>{ const e=byRep[k]; const p=e.id?person(e.id):null;
+      return '<tr><td>'+(p?empLink(p.id):esc(e.raw||'(no salesperson)'))+'</td><td class="num">'+e.n.toLocaleString()+'</td><td class="num mono">'+money(e.pre)+'</td></tr>'; }).join('')+'</tbody>';
+  // the review queue
+  document.getElementById('invRegReviewTable').innerHTML = review.length
+    ? '<thead><tr><th>Invoice</th><th>Client on the record</th><th>What needs deciding</th></tr></thead><tbody>'+
+      review.slice(0,40).map(h=>'<tr><td>'+invLink(h.no)+'</td><td>'+esc(h.client||'—')+'</td><td style="font-size:12px">'+
+        h.health.map(k=>INV_HEALTH_LABEL[k]||k).join(' · ')+'</td></tr>').join('')+'</tbody>'+
+      (review.length>40?'<tbody><tr><td class="empty" colspan="3">and '+(review.length-40)+' more — filter the register by “Needs review”.</td></tr></tbody>':'')
+    : '<tbody><tr><td class="empty">Nothing waiting. Every invoice resolves cleanly.</td></tr></tbody>';
+}
+
+function openInv(no){
+  const h=invoiceOf(no);
+  if(!h){ toast('No invoice #'+String(no||'').slice(0,20)+' on the register');
+    if(location.hash.indexOf('#inv/')===0){ try{ history.replaceState(null,'',location.pathname+location.search); }catch(e){} }
+    return false; }
+  INV_ID=h.no;
+  document.getElementById('invModal').classList.add('on');
+  try{ history.replaceState(null,'','#inv/'+encodeURIComponent(h.no)); }catch(e){}
+  renderInv(); return true;
+}
+function closeInv(){
+  document.getElementById('invModal').classList.remove('on'); INV_ID=null;
+  if(location.hash.indexOf('#inv/')===0){ try{ history.replaceState(null,'',location.pathname+location.search); }catch(e){} }
+}
+function renderInv(){
+  if(!INV_ID) return;
+  const h=invoiceOf(INV_ID); if(!h){ closeInv(); return; }
+  document.getElementById('ivTitle').textContent='Invoice #'+h.no;
+  document.getElementById('ivKind').innerHTML=invStatusPill(h)+' <span class="pill n">'+esc(h.src)+'</span>';
+  const sales=invSales(h), sugg=can('edit_sales')?invSaleSuggestions(h):[];
+  let x='<div class="cpgrid">';
+  // summary
+  x+='<div class="cpbox"><h5>Summary</h5>';
+  const kv=(k,v)=>{ if(v!==''&&v!=null) x+='<div class="kv"><span class="k">'+k+'</span><span class="v">'+v+'</span></div>'; };
+  kv('Invoice #','#'+esc(h.no)+' · '+esc(h.src));
+  kv('Invoice date',h.date?fmtY(h.date):'<span style="color:var(--red)">not on any feed</span>');
+  kv('Client',esc(h.client||'—'));
+  kv('Address',esc(h.addr||'—'));
+  kv('Pre-tax',money2(h.pre));
+  if(h.tax) kv('Sales tax',money2(h.tax));
+  kv('Total',money2(h.total));
+  if(h.status==='paid'){ kv('Paid',fmtY(h.paidOn)+(h.method?' · '+esc(h.method):'')); kv('Balance','$0.00'); }
+  else if(h.status==='open') kv('Balance','<span style="color:var(--red)">'+money2(h.bal)+' owed</span>');
+  else if(h.status==='conflict') kv('Balance','<span style="color:var(--red)">'+money2(h.bal)+' owed — yet the paid feed says settled '+fmt(h.paidOn)+'</span>');
+  else kv('Paid status','not on the balances or paid feeds — audit only');
+  x+='</div>';
+  // relationships
+  x+='<div class="cpbox"><h5>Relationships</h5>';
+  if(h.cli){
+    x+='<div class="kv"><span class="k">Client record</span><span class="v"><a href="#" onclick="openClient('+JSON.stringify(h.cli.n).replace(/"/g,'&quot;')+');return false">'+esc(h.cli.n)+'</a> <span class="pill '+(h.cliHow==='approved'?'sa':'mid')+'" title="how this link was made">'+esc(h.cliHow)+'</span></span></div>';
+  } else if(h.client){
+    x+='<div class="note" style="color:var(--red);font-weight:600">CLIENT MATCH NEEDED — “'+esc(h.client)+'” is not exactly one roster record.</div>';
+    if(can('edit_clients')||ADMIN){
+      const cands=invClientCandidates(h);
+      if(cands.length){ x+='<div class="note" style="margin-top:4px">Is it one of these?</div>';
+        cands.forEach(c=>{ x+='<div class="svcrow"><span class="g"><b>'+esc(c.n)+'</b><div class="note">'+esc(c.addr||'')+(c.city?', '+esc(c.city):'')+'</div></span>'+
+          '<button class="sm" onclick="invApproveClient('+JSON.stringify(String(h.no)).replace(/"/g,'&quot;')+','+JSON.stringify(String(c.u||'')).replace(/"/g,'&quot;')+','+JSON.stringify(c.n).replace(/"/g,'&quot;')+')">This is them</button></div>'; });
+      } else x+='<div class="note">No roster record shares a word with this name.</div>';
+    }
+  }
+  const pHdr=h.repId?person(h.repId):null;
+  x+='<div class="kv"><span class="k">Sold by <span title="from the Paid Invoices export">ⓘ</span></span><span class="v">'+(pHdr?empLink(pHdr.id):esc(h.repHdr||'—'))+'</span></div>';
+  if(h.lineRepIds.length) x+='<div class="kv"><span class="k">Rep on lines <span title="from the Invoice Audit — can legitimately differ from sold-by">ⓘ</span></span><span class="v">'+h.lineRepIds.map(id=>{const p=person(id);return p?empLink(p.id,empShort(p)):id;}).join(' · ')+'</span></div>';
+  x+='<div style="margin-top:9px"><b style="font-size:12px">Sales behind this invoice</b>';
+  if(sales.length){ sales.forEach(e=>{ const p=person(e.r.rep);
+    x+='<div class="svcrow"><span class="g"><b>'+esc(e.r.client)+'</b> · '+money2(bookedValue(e.r))+
+      '<div class="note">'+fmtY(e.r.date)+' · '+esc(e.r.service||'sale')+(p?' · '+esc(empShort(p)):'')+' · '+esc(e.how)+'</div></span>'+
+      '<span><button class="sm" onclick="rowInfo(\''+e.r.id+'\')">Info</button>'+
+      (can('edit_sales')?' <button class="sm" onclick="invUnlinkSale('+JSON.stringify(String(h.no)).replace(/"/g,'&quot;')+',\''+e.r.id+'\')">Unlink</button>':'')+'</span></div>'; });
+  } else x+='<div class="note">None linked. Recurring service billing usually has no sale — that is normal, not broken.</div>';
+  if(sugg.length){ x+='<div class="note" style="margin-top:6px">Possible matches — <b>a person decides, the app never links on its own</b>:</div>';
+    sugg.forEach(r=>{ const p=person(r.rep);
+      x+='<div class="svcrow"><span class="g">'+esc(r.service||'sale')+' · '+money2(bookedValue(r))+
+        '<div class="note">'+fmtY(r.date)+(p?' · '+esc(empShort(p)):'')+'</div></span>'+
+        '<button class="sm" onclick="invLinkSale('+JSON.stringify(String(h.no)).replace(/"/g,'&quot;')+',\''+r.id+'\')">Link</button></div>'; });
+  }
+  x+='</div></div>';
+  // lines
+  x+='<div class="cpbox"><h5>Invoice lines ('+h.lines.length+')</h5>';
+  if(h.lines.length){
+    h.lines.forEach(l=>{ x+='<div class="svcrow"><span class="g"><b>'+esc(l.s||'line')+'</b>'+
+      '<div class="note">'+(l.k&&l.k!=='None'?esc(l.k)+' · ':'')+fmtY(l.d)+(l.r?' · rep '+esc(l.r):'')+'</div></span>'+
+      '<span class="mono">'+money2(l.v)+'</span></div>'; });
+    x+='<div class="kv" style="margin-top:5px"><span class="k">Lines total (pre-tax)</span><span class="v mono">'+money2(h.linePre)+
+      (h.health.indexOf('value-conflict')>-1?' <span style="color:var(--red)">≠ '+money2(h.pre)+' on the paid feed</span>':'')+'</span></div>';
+  } else x+='<div class="note">The invoice audit holds no lines for this number'+(h.feeds.paid?' — the paid feed knows it settled, but not what was on it. Import the audit week that covers '+ (h.date?fmtY(h.date):'it')+'.':'.')+'</div>';
+  x+='</div>';
+  // commission trace
+  x+='<div class="cpbox"><h5>Commission trail</h5>';
+  if(sales.length){
+    sales.forEach(e=>{ const r=e.r;
+      x+='<div class="note" style="margin-bottom:4px"><b>'+esc(r.client)+'</b> · stage: '+esc(STAGE_LABEL[stageOf(r)])+
+        (r.invoiced?' · invoiced '+fmtY(r.invoiced)+' · commission due '+fmtY(dueDate(r)):'')+
+        (r.paid?' · commission paid '+fmtY(r.paid):'')+'</div>';
+      const led=payoutsFor(r.id);
+      if(led.length) led.forEach(pp=>{ const e2=person(pp.emp);
+        x+='<div class="kv"><span class="k">'+esc(PAYOUT_KINDS[pp.kind]||pp.kind)+' · '+fmt(pp.paidOn)+'</span><span class="v mono">'+money2(pp.amount)+(e2?' → '+esc(empShort(e2)):'')+'</span></div>'; });
+      else x+='<div class="note">No payout on the ledger yet'+(r.paid?' — marked paid without a ledger entry (the Hawk lists these)':'')+'.</div>';
+      const cbs=chargebacksFor(r.id);
+      cbs.forEach(cb=>{ const e2=person(cb.emp);
+        x+='<div class="kv"><span class="k">'+esc(PAYOUT_KINDS[cb.kind]||cb.kind)+' · '+esc(cb.status)+'</span><span class="v mono" style="color:var(--red)">'+money2(cb.amount)+(e2?' → '+esc(empShort(e2)):'')+'</span></div>'; });
+    });
+  } else x+='<div class="note">No sale, no commission — money can only move on a linked sale, and the payout ledger is the record of it.</div>';
+  x+='</div>';
+  // provenance
+  x+='<div class="cpbox"><h5>Provenance</h5>';
+  x+='<div class="kv"><span class="k">Canonical id</span><span class="v mono">'+esc(h.id)+'</span></div>';
+  x+='<div class="kv"><span class="k">Invoice audit</span><span class="v">'+(h.feeds.audit?h.lines.length+' lines · last import '+(lastInvSync()?fmtY(lastInvSync().on):'—'):'not present')+'</span></div>';
+  x+='<div class="kv"><span class="k">Paid feed</span><span class="v">'+(h.feeds.paid?'settled '+fmtY(h.paidOn)+' · last import '+(lastPdiSync()?fmtY(lastPdiSync().on):'—'):'not present')+'</span></div>';
+  x+='<div class="kv"><span class="k">Balances snapshot</span><span class="v">'+(h.feeds.open?money2(h.bal)+' owed as of '+(lastBalSync()?fmtY(lastBalSync().on):'—'):'not on it — settled or never open there')+'</span></div>';
+  if(h.health.length) x+='<div class="note" style="margin-top:7px;color:var(--red)"><b>Health:</b> '+h.health.map(k=>INV_HEALTH_LABEL[k]||k).join(' · ')+'</div>';
+  x+='</div>';
+  x+='</div>';
+  document.getElementById('ivBody').innerHTML=x;
+}
+
+// The whole record for one invoice, as plain lines — the assistant's view.
+function invoiceFactsFor(no){
+  const h=invoiceOf(no); if(!h) return '';
+  const L=['== Invoice #'+h.no+' ('+h.src+') =='];
+  L.push((h.client||'no client on record')+(h.addr?' · '+h.addr:'')+(h.date?' · billed '+h.date:''));
+  L.push('Status: '+(h.status==='paid'?'PAID '+h.paidOn+(h.method?' by '+h.method:''):h.status==='open'?'OPEN — '+money2(h.bal)+' owed':h.status==='conflict'?'CONFLICT — reported both paid and owed':'billed (audit only)')+
+    ' · '+money2(h.pre)+' pre-tax'+(h.tax?' + '+money2(h.tax)+' tax':''));
+  if(h.lines.length){ L.push('Lines ('+h.lines.length+'):');
+    h.lines.forEach(x=>L.push('- '+(x.s||'line')+' · '+money2(x.v)+(x.k&&x.k!=='None'?' · '+x.k:'')+(x.r?' · rep '+x.r:''))); }
+  const sales=invSales(h);
+  if(sales.length){ L.push('Linked sales:');
+    sales.forEach(e=>{ const p=person(e.r.rep);
+      L.push('- '+e.r.date+' · '+(e.r.service||'sale')+' · '+money2(bookedValue(e.r))+(p?' · rep '+p.name:'')+' ('+e.how+')'); });
+  } else L.push('No sale linked to this invoice.');
+  if(h.health.length) L.push('Data health: '+h.health.map(k=>INV_HEALTH_LABEL[k]||k).join(' · '));
+  return L.join('\n');
 }
 
 /* ============================================================
@@ -8293,7 +8795,7 @@ function balPreview(){
 function balApply(){
   if(!BAL_PARSED) return;
   OPENINV=BAL_PARSED.rows.slice().sort((a,b)=>a.d<b.d?-1:1);
-  save(K_BAL,OPENINV);
+  save(K_BAL,OPENINV); invDirty();
   BALSYNC.push({on:todayISO(),at:new Date().toISOString().slice(11,16),
     lines:OPENINV.length, total:Math.round(OPENINV.reduce((a,x)=>a+x.t,0)),
     past:OPENINV.filter(x=>/past/i.test(x.s)).length});
@@ -8483,7 +8985,7 @@ const FEEDS=[
   {id:'balances',label:'Invoices with balances', tab:'rev', last:()=>{const s=lastBalSync(); return s?s.on:'';}},
   {id:'paidinv', label:'Paid invoices', tab:'rev', last:()=>{const s=lastPdiSync(); return s?s.on:'';}}
 ];
-const PAUSE_ALLOWED=['clients','rev','import','admin'];
+const PAUSE_ALLOWED=['clients','rev','invoices','import','admin'];
 function mergeStatus(){
   const today=todayISO();
   return FEEDS.map(f=>{
@@ -8587,7 +9089,8 @@ function hawkCounts(){
     hawkSplit:'splits holding money', hawkSplitRate:'splits paid at one person’s rate', hawkPrePlan:'sales earning $0 (plan starts later)',
     hawkFormer:'former team members still in the money', hawkInvNo:'invoice numbers matching nothing',
     hawkPaidOwed:'invoices both paid and still owed', hawkPaidDrift:'deposits vs settled drift',
-    hawkSrcDup:'one source record, two sales', hawkCliDup:'one SA account, two roster records'};
+    hawkSrcDup:'one source record, two sales', hawkCliDup:'one SA account, two roster records',
+    hawkInvConflict:'invoices whose money disagrees between feeds', hawkInvClient:'invoices needing a client match'};
   const out={total:0,parts:[],items:{}};
   runChecks().forEach(c=>{
     if(HAWK_IDS[c.id] && c.items.length){
@@ -8704,10 +9207,16 @@ function jobMatches(q){
   let picks=scored.filter(x=>x.hit===maxHit).slice(0,6);
   // a name whose words are all inside a stronger match is the same person, shortened
   picks=picks.filter((p,i)=>!picks.some((o,j)=>j<i && p.toks.every(t=>o.toks.indexOf(t)>-1)));
-  // invoice numbers named straight out
+  // invoice numbers named straight out — resolved through the register first,
+  // so a number known only to the paid feed, the balances, or a sale still hits
   (q.match(/\d{3,8}/g)||[]).forEach(nu=>{
-    const line=INVOICES.find(x=>String(x.i)===nu)||PAYMENTS.find(x=>String(x.i)===nu);
-    if(line){ const n=line.c; if(n&&!picks.some(p=>norm(p.n)===norm(n))) picks.unshift({n,toks:nameTokens(n),full:true}); }
+    const reg=(typeof invoiceOf==='function')?invoiceOf(nu):null;
+    const line=reg||INVOICES.find(x=>String(x.i)===nu)||PAYMENTS.find(x=>String(x.i)===nu)||
+      OPENINV.find(x=>String(x.i)===nu)||PAIDINV.find(x=>String(x.i)===nu);
+    const saleHit=!line&&ROWS.find(r=>String(r.invNo||'').trim()===nu);
+    const n=line?(line.client||line.c):saleHit?saleHit.client:'';
+    if(n&&!picks.some(p=>norm(p.n)===norm(n))) picks.unshift({n,toks:nameTokens(n),full:true,invNo:nu});
+    else if(n) picks.forEach(p=>{ if(norm(p.n)===norm(n)) p.invNo=nu; });
   });
   const seen={}; return picks.filter(p=>{ const k=norm(p.n); if(seen[k])return false; seen[k]=1; return true; }).slice(0,3);
 }
@@ -8748,7 +9257,10 @@ async function aiAsk(){
     AICHAT.push({who:'bot',text:'No client or invoice here matches that. Give me a client name as it appears on the roster, or an invoice number.'});
     renderAskLog(); return;
   }
-  const facts=picks.map(p=>jobFactsFor(p.n)).join('\n\n');
+  // A question that names an invoice number gets that invoice's own record first,
+  // so the answer never depends on it surviving the client dossier's last-8 slices.
+  const invBlocks=picks.filter(p=>p.invNo).map(p=>invoiceFactsFor(p.invNo)).filter(Boolean);
+  const facts=(invBlocks.length?invBlocks.join('\n\n')+'\n\n':'')+picks.map(p=>jobFactsFor(p.n)).join('\n\n');
   const up=uploadStatusText();
   const srcLine='Records read: '+picks.map(p=>p.n).join(' · ')+
     (up.length?' — ⏰ '+up[0]:'');
@@ -9834,9 +10346,32 @@ function runChecks(){
     'Two client records carry the same Service Autopilot UserName — usually a rename that re-imported as new. Sales and invoices joined by name can split between them, so each looks smaller than the truth.',
     uDup.slice(0,20).map(d=>({
       text:'<b>'+esc(d.a.n)+'</b>'+(norm(d.a.n)!==norm(d.b.n)?' / <b>'+esc(d.b.n)+'</b>':' (twice)')+' · SA '+esc(d.a.u),
-      sub:esc(d.a.at||'no address')+(String(d.a.at||'')!==String(d.b.at||'')?' vs '+esc(d.b.at||'no address'):''),
+      sub:esc(d.a.addr||'no address')+(String(d.a.addr||'')!==String(d.b.addr||'')?' vs '+esc(d.b.addr||'no address'):''),
       act:''
     })));
+
+  /* --- 15. one invoice, two stories about the money --- */
+  // The paid feed says one figure, the audit's own lines sum to another. Nine of
+  // these were in the very first year of history imported — real, not theoretical.
+  const regList=(typeof invoiceRegistry==='function')?invoiceRegistry().list:[];
+  const moneyConf=regList.filter(h=>h.health.indexOf('value-conflict')>-1);
+  add('hawkInvConflict','bad','🦅 Paid feed and audit lines disagree on an invoice',
+    'The Paid Invoices export and the Invoice Audit lines tell different stories about the same invoice number. One export is stale, or lines were doubled. Whichever it is, any figure built on this invoice is wrong until a person decides.',
+    moneyConf.slice(0,20).map(h=>({
+      text:'<b>'+esc(h.client)+'</b> · '+invLink(h.no),
+      sub:'paid feed says '+money2(h.pre)+' pre-tax · the '+h.lines.length+' audit lines sum to '+money2(h.linePre),
+      act:''
+    })), moneyConf.reduce((a,h)=>a+Math.abs(h.linePre-h.pre),0));
+
+  /* --- 16. invoices whose client the roster cannot name --- */
+  const cliNeed=regList.filter(h=>h.health.indexOf('client-match-needed')>-1||h.health.indexOf('client-ambiguous')>-1);
+  add('hawkInvClient','warn','🦅 CLIENT MATCH NEEDED on the invoice register',
+    'These invoices name a client the roster cannot resolve to exactly one record — usually someone renamed or departed since the billing. Open the invoice and approve the match once; the app never guesses.',
+    cliNeed.slice(0,25).map(h=>({
+      text:'<b>'+esc(h.client||'(no client)')+'</b> · '+invLink(h.no)+' · '+money2(h.total),
+      sub:(h.date?fmtY(h.date)+' · ':'')+(h.health.indexOf('client-ambiguous')>-1?'more than one roster record has this exact name':'no exact roster match'),
+      act:''
+    })), cliNeed.reduce((a,h)=>a+h.total,0));
 
   return out;
 }
@@ -9874,9 +10409,17 @@ function chainAudit(){
     INVOICES.filter(x=>invoiceRepId(x)).length,INVOICES.filter(x=>!x.r).length,
     INVOICES.filter(x=>x.r&&!invoiceRepId(x)).length,
     'raw name kept; resolves through the alias table; unmatched names wait in the employee match queue');
-  add('invCli','Invoice line','Client record','NAME text',INVOICES.length,0,
-    INVOICES.filter(x=>cliByName[norm(x.c)]).length,INVOICES.filter(x=>!cliByName[norm(x.c)]).length,
-    'structural: invoice lines carry no client id');
+  const regL=(typeof invoiceRegistry==='function')?invoiceRegistry().list:[];
+  add('invCli','Invoice','Client record','approved map → unique name',regL.length,
+    regL.filter(h=>h.cliHow==='approved'||h.cliHow==='name+address').length,
+    regL.filter(h=>h.cliHow==='name').length,
+    regL.filter(h=>!h.cli).length,
+    'the register resolves clients — approved mappings and address-corroborated names are solid; bare name matches are weak; the rest wait for review');
+  const regMap=(typeof salesByInvNo==='function')?salesByInvNo():{};
+  add('invSale','Invoice','Sale','invoice # + admin links',regL.length,
+    regL.filter(h=>(regMap[h.no]||[]).length).length,
+    regL.filter(h=>!(regMap[h.no]||[]).length).length,0,
+    'weak = no sale behind the invoice — normal for recurring billing, so it is a count, not an alarm');
   if(PAIDINV.length){
     add('pdiEmp','Paid invoice','Employee','name → alias resolution',PAIDINV.length,
       PAIDINV.filter(x=>paidInvRepId(x)).length,PAIDINV.filter(x=>!x.r).length,
@@ -9903,7 +10446,7 @@ function chainAudit(){
     act.filter(c=>c.u).length,act.filter(c=>!c.u).length,0,
     'weak = no UserName in the export — the record is keyed by its display name');
   add('cliProp','Client','Property','ADDRESS text',act.length,0,
-    act.filter(c=>c.at).length,act.filter(c=>!c.at).length,
+    act.filter(c=>c.addr).length,act.filter(c=>!c.addr).length,
     'structural: property is not an entity — one address string per client, no multi-property, no ownership history');
   return L;
 }
@@ -12558,6 +13101,7 @@ function stateSnapshot(){   // v6: employee identity fields (first/last/photo/al
     clients:CLIENTS,syncs:SYNCLOG,conversions:CONVERSIONS,knocked:KNOCKED,invoices:INVOICES,
     invsyncs:INVSYNC,implog:IMPLOG,gear:GEAR,payments:PAYMENTS,paysyncs:PAYSYNC,
     takeovers:TAKEOVERS,openinv:OPENINV,balsyncs:BALSYNC,paidinv:PAIDINV,pdisyncs:PDISYNC,
+    invlinks:INVLINKS,invclimap:INVCLIMAP,
     tombstones:TOMBSTONES,oscs:OSCS,global:GLOBAL};
 }
 function backup(){
@@ -12677,6 +13221,18 @@ function restore(e){
     if(Array.isArray(d.balsyncs) && !BALSYNC.length){ BALSYNC=d.balsyncs; save(K_BALSYNC,BALSYNC); }
     if(Array.isArray(d.paidinv) && !PAIDINV.length){ PAIDINV=d.paidinv; save(K_PDI,PAIDINV); }
     if(Array.isArray(d.pdisyncs) && !PDISYNC.length){ PDISYNC=d.pdisyncs; save(K_PDISYNC,PDISYNC); }
+    // Admin decisions merge by id (never overwritten) — a backup can add links
+    // and approved mappings, not erase the ones made since it was taken.
+    if(Array.isArray(d.invlinks)){
+      const have=new Set(INVLINKS.map(x=>x.id));
+      d.invlinks.forEach(x=>{ if(x&&x.id&&!have.has(x.id)){ INVLINKS.push(x); have.add(x.id); } });
+      save(K_INVLINK,INVLINKS);
+    }
+    if(Array.isArray(d.invclimap)){
+      const haveK=new Set(INVCLIMAP.map(x=>x.key));
+      d.invclimap.forEach(x=>{ if(x&&x.key&&!haveK.has(x.key)){ INVCLIMAP.push(x); haveK.add(x.key); } });
+      save(K_INVCLI,INVCLIMAP);
+    }
     // Tombstones merge (never overwrite) so restoring a backup can't resurrect deleted records.
     if(Array.isArray(d.tombstones)){
       const have=new Set(TOMBSTONES.map(t=>t.srcKey+'~'+t.compKey));
@@ -12686,6 +13242,7 @@ function restore(e){
     if(Array.isArray(d.oscs) && !OSCS.length){ OSCS=d.oscs; save(K_OSC,OSCS); }
     if(d.global&&d.global.season&&!load(K_GLOBAL,null)){GLOBAL=d.global;save(K_GLOBAL,GLOBAL);}
     save(K_PEOPLE,PEOPLE); save(K_ROWS,ROWS);
+    invDirty();
     document.getElementById('restoreFile').value='';
     render();
     alert('Merged in '+addedP+' new salesperson'+(addedP===1?'':'s')+', '+addedR+' new sale'+(addedR===1?'':'s')+
@@ -13925,7 +14482,7 @@ function renderEmp(){
       const ob=openBy[String(x.i)]; const addr=addrOf[norm(x.c)]||'';
       const sale=ROWS.find(r=>norm(r.client)===norm(x.c) && ((r.invNo&&String(r.invNo)===String(x.i)) || Math.abs((dObj(x.d)-dObj(r.date))/86400000)<=60));
       const other=sale && shareFor(sale,p.id)===0;
-      h+='<tr><td class="mono">'+fmtY(x.d)+'</td><td class="mono">'+esc(x.i||'')+'</td><td><a href="#" onclick="openClient('+JSON.stringify(x.c).replace(/"/g,'&quot;')+');return false">'+esc(x.c)+'</a>'+(addr?'<div class="note">'+addr+'</div>':'')+'</td>'+
+      h+='<tr><td class="mono">'+fmtY(x.d)+'</td><td class="mono">'+(x.i?invLink(x.i):'')+'</td><td><a href="#" onclick="openClient('+JSON.stringify(x.c).replace(/"/g,'&quot;')+');return false">'+esc(x.c)+'</a>'+(addr?'<div class="note">'+addr+'</div>':'')+'</td>'+
         '<td class="note">'+esc(x.s||'')+'</td><td class="num mono">'+money2(+x.v||0)+(+x.t?'<div class="note">+'+money2(+x.t)+' tax</div>':'')+'</td>'+
         '<td>'+(ob?'<span class="pill '+(/past/i.test(ob.s)?'no':'mid')+'">'+esc(ob.s)+'</span>':'<span class="pill ok" title="not in the open-balances snapshot">cleared</span>')+'</td>'+
         '<td>'+(sale?'<button class="sm" onclick="rowInfo(\''+sale.id+'\')">'+esc(TYPE_LABEL[sale.type]||sale.type)+' · '+money(netValue(sale))+'</button>'+(other?' <span class="pill no" title="this invoice line names '+esc(empShort(p))+' but the sale is credited to '+esc(empName(person(sale.rep)))+'">credited to '+esc(empShort(person(sale.rep)))+'</span>':''):'<span class="note">no logged sale</span>')+'</td></tr>';
@@ -14326,10 +14883,24 @@ function cloudApply(d){
   BALSYNC=A(d.balsyncs,BALSYNC); put(K_BALSYNC,BALSYNC);
   PAIDINV=A(d.paidinv,PAIDINV); put(K_PDI,PAIDINV);
   PDISYNC=A(d.pdisyncs,PDISYNC); put(K_PDISYNC,PDISYNC);
+  // Admin decisions merge like the payout ledger — a stale device's copy can
+  // ADD links and mappings it holds, never erase the ones made since it synced.
+  // (Wholesale replacement here let a 409-triggered pull destroy an admin's
+  // just-made link with nothing but a "redo your last change" toast.)
+  if(Array.isArray(d.invlinks)){
+    const haveL=new Set(INVLINKS.map(x=>x&&x.id));
+    d.invlinks.forEach(x=>{ if(x&&x.id&&!haveL.has(x.id)){ INVLINKS.push(x); haveL.add(x.id); } });
+  }
+  put(K_INVLINK,INVLINKS);
+  if(Array.isArray(d.invclimap)){
+    const haveM=new Set(INVCLIMAP.map(x=>x&&x.key));
+    d.invclimap.forEach(x=>{ if(x&&x.key&&!haveM.has(x.key)){ INVCLIMAP.push(x); haveM.add(x.key); } });
+  }
+  put(K_INVCLI,INVCLIMAP);
   TOMBSTONES=A(d.tombstones,TOMBSTONES); put(K_TOMB,TOMBSTONES);
   OSCS=A(d.oscs,OSCS); put(K_OSC,OSCS);
   if(d.global&&typeof d.global==='object'){ GLOBAL=d.global; if(!GLOBAL.policy)GLOBAL.policy=Object.assign({},POLICY_DEFAULT); put(K_GLOBAL,GLOBAL); }
-  histDirty(); geoDirty();
+  histDirty(); geoDirty(); invDirty();
   CLOUD.applying=false;
 }
 // The badge grew up into the SYNC instrument on the strip. Old callers get the readout node.
@@ -14482,9 +15053,12 @@ reversalMigrate();
 
 render();
 cloudInit();
-// Deep link to a team member: #emp/<employee id>
-(function(){ const m=location.hash.match(/^#emp\/(.+)$/); if(m) openEmp(decodeURIComponent(m[1])); })();
-window.addEventListener('hashchange',function(){ const m=location.hash.match(/^#emp\/(.+)$/); if(m && m[1]!==EP_ID) openEmp(decodeURIComponent(m[1])); });
+// Deep link to a team member: #emp/<employee id> — or an invoice: #inv/<number>
+(function(){ let m=location.hash.match(/^#emp\/(.+)$/); if(m){ openEmp(decodeURIComponent(m[1])); return; }
+  m=location.hash.match(/^#inv\/(.+)$/); if(m) openInv(decodeURIComponent(m[1])); })();
+window.addEventListener('hashchange',function(){
+  let m=location.hash.match(/^#emp\/(.+)$/); if(m && m[1]!==EP_ID){ openEmp(decodeURIComponent(m[1])); return; }
+  m=location.hash.match(/^#inv\/(.+)$/); if(m && decodeURIComponent(m[1])!==INV_ID) openInv(decodeURIComponent(m[1])); });
 
 (function(){
   let ok=false;
