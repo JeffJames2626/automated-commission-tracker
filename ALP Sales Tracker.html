@@ -166,6 +166,14 @@ nav button.on{background:var(--sand);color:var(--ink);border-bottom-color:var(--
 @media(max-width:820px){
   nav button{padding:8px 11px;font-size:13px}
 }
+/* 760: the lower deck runs out of room for seven areas AND a labelled Tools button,
+   and a wrapped Tools costs 34px of header height. The word goes, the button stays,
+   and it keeps its accessible name through aria-label + title. */
+@media(max-width:760px){
+  #toolsBtn .tlab{display:none}
+  #toolsBtn::before{content:"\22EF";font-size:15px;line-height:1}
+  #toolsBtn.caret::after{margin-left:4px}
+}
 @media(prefers-reduced-motion:reduce){
   .rd,.rd .rail,.brandbtn{transition:none}
 }
@@ -204,8 +212,9 @@ section{margin:24px 0}
   min-width:0}                                  /* grid items default to min-width:auto and refuse to shrink */
 .tile .lab{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);
   overflow-wrap:anywhere}
-.tile .val{font-size:26px;font-weight:700;letter-spacing:-.02em;margin-top:5px;line-height:1.05}
-.tile .sub{font-size:12.5px;color:var(--muted);margin-top:4px}
+.tile .val{font-size:26px;font-weight:700;letter-spacing:-.02em;margin-top:5px;line-height:1.05;
+  overflow-wrap:anywhere}          /* .val is not always a number - it can hold a service name */
+.tile .sub{font-size:12.5px;color:var(--muted);margin-top:4px;overflow-wrap:anywhere}
 .tile.ok .val{color:var(--grn-d)}.tile.bad .val{color:var(--red)}
 .tile.click{cursor:pointer;transition:.12s}
 .tile.click:hover{border-color:#b9c2b2;box-shadow:0 5px 18px rgba(28,33,25,.13);transform:translateY(-1px)}
@@ -465,14 +474,18 @@ details.fold > summary .sum{color:var(--muted);font-size:12.5px}
 details.fold > summary .hspace{flex:1}
 details.fold > .foldbody{padding:2px 16px 16px}
 /* The two strips at the top of the admin page. */
-.needs{display:grid;grid-template-columns:repeat(auto-fit,minmax(178px,1fr));gap:10px;margin-bottom:10px}
+/* Scoped to the id on purpose: ".needs" also occurs as ".tile needs" on the
+   30,000 ft page, where it means "this tile has no feed yet". */
+#adminNeeds{display:grid;grid-template-columns:repeat(auto-fit,minmax(178px,1fr));gap:10px;margin-bottom:10px}
 .nd{border:1px solid var(--line);border-radius:11px;padding:13px 15px;background:var(--paper);
   box-shadow:var(--shadow);text-align:left;cursor:pointer;transition:.12s;display:block;width:100%;font:inherit;color:inherit;
   min-width:0;overflow-wrap:anywhere}
 .nd:hover{border-color:#b9c2b2;box-shadow:0 5px 18px rgba(28,33,25,.13);transform:translateY(-1px)}
-.nd .lab{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
-.nd .val{font-size:25px;font-weight:700;letter-spacing:-.02em;margin-top:5px;line-height:1.05}
-.nd .sub{font-size:12.5px;color:var(--muted);margin-top:4px}
+.nd .lab{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);
+  overflow-wrap:anywhere}
+.nd .val{font-size:25px;font-weight:700;letter-spacing:-.02em;margin-top:5px;line-height:1.05;
+  overflow-wrap:anywhere}
+.nd .sub{font-size:12.5px;color:var(--muted);margin-top:4px;overflow-wrap:anywhere}
 .nd.act{border-color:#e6c88a;background:linear-gradient(var(--gold-l),var(--paper) 62%)}
 .nd.act .val{color:#8a6f11}
 .nd.bad{border-color:#e8b3ae;background:linear-gradient(var(--red-l),var(--paper) 62%)}
@@ -842,7 +855,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
   details.fold > summary::before{content:""}
   details.fold:not([open]) > .foldbody{display:none}
   .nd{break-inside:avoid}
-  .needs{grid-template-columns:repeat(4,1fr)}
+  #adminNeeds{grid-template-columns:repeat(4,1fr)}
   .statestrip{grid-template-columns:repeat(6,1fr)}
   .card,.tile{box-shadow:none;break-inside:avoid}
   section{break-inside:avoid}
@@ -13519,7 +13532,9 @@ function renderHdrTools(){
   // Build the shell once; the Google button lives in #gsiHost and must survive repaints.
   if(!el.querySelector('.popwrap'))
     el.insertAdjacentHTML('afterbegin','<span class="popwrap"><button class="gh sm caret" id="toolsBtn" onclick="toolsMenu(event)"'+
-      ' aria-haspopup="menu" aria-expanded="false">Tools</button><div class="pop" id="toolsPop" role="menu"></div></span>');
+      ' aria-haspopup="menu" aria-expanded="false" aria-label="Tools"'+
+      ' title="Print, export and backup"><span class="tlab">Tools</span></button>'+
+      '<div class="pop" id="toolsPop" role="menu"></div></span>');
   document.getElementById('toolsPop').innerHTML=items;
   if(!document.getElementById('gsiHost')){ const g=document.createElement('div'); g.id='gsiHost'; el.appendChild(g); }
 }
