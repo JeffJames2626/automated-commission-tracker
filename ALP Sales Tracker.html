@@ -259,6 +259,9 @@ details summary:hover{background:#fafbf8}
 .note p{margin:0 0 9px}
 .warnbox{background:var(--gold-l);border:1px solid #e6d49a;border-radius:9px;padding:11px 13px;
   font-size:12.5px;line-height:1.55;color:#5c4a0f}
+/* the all-clear twin of .warnbox — same shape, so a good result and a bad one read as one family */
+.okbox{background:var(--grn-l);border:1px solid #bcd4b6;border-radius:9px;padding:11px 13px;
+  font-size:12.5px;line-height:1.55;color:var(--grn-d)}
 .empty{padding:34px 20px;text-align:center;color:var(--muted);font-size:14px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
 @media(max-width:900px){.grid2{grid-template-columns:1fr}}
@@ -1468,6 +1471,12 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
     </section>
 
     <section class="adminsec">
+      <div class="hdr"><h3>🩹 Health check</h3>
+        <span class="hint">Six things that can go wrong quietly. This only reads — it never changes, deletes or saves anything.</span></div>
+      <div id="healthBody"><button class="p" onclick="runHealthCheck()">Run the health check</button></div>
+    </section>
+
+    <section class="adminsec">
       <div class="hdr"><h3>💵 Payout ledger</h3>
         <span class="hint">Every commission payment is a permanent entry: who, how much, on what basis, recorded by whom. Reports read the ledger for “paid”; nothing about a sale’s current rep, rate or split can change it.</span></div>
       <div id="payoutLedgerBody"></div>
@@ -2633,6 +2642,64 @@ function ledgerOverridePaid(r,emp){
 // touched the book. Nothing here changes a record - it only reports.
 // Run it from the browser console:  ALP_dataRepairScan()
 // ============================================================
+// The Admin-tab face of ALP_dataRepairScan(). Same read-only checks, rendered as a
+// table with a plain sentence for each result, so nobody has to open a browser console.
+function runHealthCheck(){
+  const box=document.getElementById('healthBody'); if(!box) return;
+  const s=ALP_dataRepairScan();
+  const ROWSPEC=[
+    ['invoicedButNotFrozen', s.invoicedButNotFrozen.count,
+     'Sales invoiced but never locked',
+     'Marked invoiced with the bulk button before it started freezing the rate. They are not wrong today, but a future comp-plan change could still reprice them.',
+     s.invoicedButNotFrozen.count?('covering '+money(s.invoicedButNotFrozen.value)+
+       (s.invoicedButNotFrozen.alreadyPaid?', '+s.invoicedButNotFrozen.alreadyPaid+' already paid':'')):''],
+    ['sameJobLoggedToTwoPeople', s.sameJobLoggedToTwoPeople.count,
+     'One job logged to two people',
+     'The same sale imported twice under two different salespeople. Both would earn commission on it.',
+     s.sameJobLoggedToTwoPeople.count?s.sameJobLoggedToTwoPeople.detail.slice(0,3).map(d=>
+       esc(d.client)+' '+fmt(d.date)+' '+money(d.value)+' — '+esc(d.repA)+' and '+esc(d.repB)).join('<br>'):''],
+    ['paidSplitsThatDoNotAddUp', s.paidSplitsThatDoNotAddUp.count,
+     'Paid splits that do not add up',
+     'The shares on the ledger do not total what the sale records. Off by a cent, from the old rounding.',''],
+    ['phantomDebt', Object.keys(s.phantomDebtFromClearedPayments).length,
+     'Someone owing money for a payment that was undone',
+     'A paid date was cleared on a reversed sale and the clawback stayed behind.',
+     Object.keys(s.phantomDebtFromClearedPayments).map(k=>
+       esc(empShort(person(k))||k)+' '+money2(s.phantomDebtFromClearedPayments[k])).join(' · ')],
+    ['payoutsWithNoSale', s.payoutsWithNoSale,
+     'Commission paid on a sale that is gone',
+     'The sale was deleted but the payment entry is still on the ledger.',''],
+    ['salesParkedOnUnassigned', s.salesParkedOnUnassigned,
+     'Sales waiting to be reassigned',
+     'Their salesperson no longer exists on the roster, so they are parked rather than credited to the wrong person.','']
+  ];
+  const bad=ROWSPEC.filter(r=>r[1]>0).length;
+  let h='<div class="'+(bad?'warnbox':'okbox')+'" style="margin-bottom:12px">'+
+    (bad? '<b>'+bad+' of 6 checks found something.</b> None of it is changed automatically — read what each one means, then decide.'
+        : '<b>All six clear.</b> Nothing found that needs a decision.')+
+    '</div><div class="scroll"><table><thead><tr><th>Check</th><th class="num">Found</th><th>What it means</th></tr></thead><tbody>';
+  ROWSPEC.forEach(r=>{
+    h+='<tr><td><b>'+esc(r[2])+'</b></td>'+
+       '<td class="num"><span class="pill '+(r[1]?'no':'ok')+'">'+r[1]+'</span></td>'+
+       '<td>'+(r[1]?esc(r[3])+(r[4]?'<div class="note" style="margin-top:5px">'+r[4]+'</div>':'')
+                   :'<span class="note">Nothing found.</span>')+'</td></tr>';
+  });
+  h+='</tbody></table></div>'+
+     '<div class="note" style="margin-top:10px">Run this again any time — especially after a big import. '+
+     'It reads the book and reports; it never edits it.</div>'+
+     '<div style="margin-top:10px"><button class="sm" onclick="runHealthCheck()">Run it again</button> '+
+     '<button class="sm" onclick="copyHealthCheck()">Copy the result</button></div>';
+  box.innerHTML=h;
+  window.__lastHealthCheck=s;
+}
+function copyHealthCheck(){
+  const s=window.__lastHealthCheck||ALP_dataRepairScan();
+  const txt=JSON.stringify(s,null,1);
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(()=>toast('Copied — paste it wherever you need it'),
+      ()=>toast('Could not copy — the result is in the table above'));
+  } else toast('Could not copy — the result is in the table above');
+}
 function ALP_dataRepairScan(){
   const out={};
   // 1. Sales marked invoiced through the BULK button before it froze anything. Their
