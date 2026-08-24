@@ -9840,7 +9840,18 @@ function bulkStamp(field){
   const today=todayISO();
   let heldSkipped=0;
   if(field==='paid'){ const ok=rows.filter(r=>!splitPending(r)); heldSkipped=rows.length-ok.length; rows=ok; }
-  rows.forEach(r=>{ logEdit(r,field,r[field],today); r[field]=today; if(field==='paid') journalPaid(r,today); });
+  rows.forEach(r=>{
+    logEdit(r,field,r[field],today); r[field]=today;
+    // Marking a sale invoiced freezes its payment lag and its commission rate. The
+    // single-sale path (setStage) has always done this; the bulk path did not, so forty
+    // sales stamped at once stayed re-priceable — a later plan-rate or payLag change
+    // moved their due dates and rewrote what they were worth.
+    if(field==='invoiced'){
+      freezeDueLag(r);
+      if(r.commRate==null||r.commRate===''||!isFinite(+r.commRate)) r.commRate=rowRate(r);
+    }
+    if(field==='paid') journalPaid(r,today);
+  });
   save(K_ROWS,ROWS); render();
   if(heldSkipped) toast(heldSkipped+' skipped — split awaiting approval');
   if(lawSkipped) toast(lawSkipped+' skipped — invoice evidence missing');

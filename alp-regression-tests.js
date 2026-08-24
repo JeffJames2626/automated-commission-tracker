@@ -1539,6 +1539,40 @@
         window.alert=alertU; window.toast=toastU; PAYOUTS=[];
       }
 
+
+      /* ---------- FREEZE: both ways of marking a sale invoiced must freeze it ---------- */
+      // setStage froze the payment lag and the commission rate; bulkStamp did not. Forty
+      // sales stamped at once stayed re-priceable, so a later plan-rate or payLag change
+      // moved their due dates and rewrote what they were worth.
+      if(typeof bulkStamp==='function' && typeof setStage==='function'){
+        var alertF=window.alert, toastF=window.toast, confF=window.confirm;
+        window.alert=function(){}; window.toast=function(){}; window.confirm=function(){return true;};
+        var adminF=ADMIN, tabF=TAB; ADMIN=true; capsInvalidate();
+        var FA=mkPerson({id:'FA',name:'Frz Ann'}); FA.first='Frz'; FA.last='Ann'; FA.roles=['sales'];
+        FA.start='2026-01-01'; FA.commNew=10; FA.aliases=[]; FA.log=[];
+        PEOPLE=[FA]; PAYOUTS=[]; EMP_IDX=null; GLOBAL.payLag=30;
+        var one=mkRow({rep:'FA',value:1000,type:'new',date:'2026-06-05',client:'One Co'});
+        var many=mkRow({rep:'FA',value:1000,type:'new',date:'2026-06-05',client:'Many Co'});
+        one.invNo='INV-1'; one.files=[{n:'i.pdf',id:'f1'}];
+        many.invNo='INV-2'; many.files=[{n:'i.pdf',id:'f2'}];
+        ROWS=[one,many];
+        setStage(one.id,'invoiced','2026-06-20');
+        TAB='pipe'; render(); bulkStamp('invoiced');
+        checkTrue('FREEZE the single-sale path freezes the payment lag', one.dueLag===30, one.dueLag);
+        checkTrue('FREEZE the bulk path freezes the payment lag too', many.dueLag===30, many.dueLag);
+        check('FREEZE the single-sale path freezes the rate', 10, one.commRate);
+        check('FREEZE the bulk path freezes the rate too', 10, many.commRate);
+        var dueOne=dueDate(one), dueMany=dueDate(many);
+        FA.commNew=25; GLOBAL.payLag=60;
+        check('FREEZE a later plan change cannot reprice the single-stamped sale', 100, round2(rowComm(one)));
+        check('FREEZE a later plan change cannot reprice the bulk-stamped sale', 100, round2(rowComm(many)));
+        check('FREEZE a later payLag change cannot move the single-stamped due date', dueOne, dueDate(one));
+        check('FREEZE a later payLag change cannot move the bulk-stamped due date', dueMany, dueDate(many));
+        FA.commNew=10; GLOBAL.payLag=30;
+        ADMIN=adminF; TAB=tabF; capsInvalidate();
+        window.alert=alertF; window.toast=toastF; window.confirm=confF; PAYOUTS=[];
+      }
+
       /* ---------- C2: tombstones stop deleted records resurrecting ---------- */
       if(typeof addTombstone==='function' && typeof isTombstoned==='function'){
         TOMBSTONES=[];
