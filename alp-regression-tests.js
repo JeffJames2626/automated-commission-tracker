@@ -1573,6 +1573,45 @@
         window.alert=alertF; window.toast=toastF; window.confirm=confF; PAYOUTS=[];
       }
 
+
+      /* ---------- RESTORE: the ledger must follow its sales ---------- */
+      // Restored sales are given fresh ids. The payout ledger kept the backup's OLD row
+      // id, so every restored payout came back orphaned: the sale read as paid but showed
+      // no ledger, and the Hawk saw a book full of payments it could not account for.
+      if(typeof stateSnapshot==='function'){
+        var RA=mkPerson({id:'RA',name:'Res Ann'}); RA.first='Res'; RA.last='Ann'; RA.roles=['sales'];
+        RA.start='2026-01-01'; RA.commNew=10; RA.aliases=[]; RA.log=[];
+        PEOPLE=[RA]; PAYOUTS=[]; DISPUTES=[]; EMP_IDX=null; GLOBAL.payLag=30;
+        var rr=mkRow({id:'r_backup_77',rep:'RA',value:1000,type:'new',date:'2026-06-05',
+                      invoiced:'2026-06-10',client:'Restore Co'});
+        ROWS=[rr]; freezeDueLag(rr); rr.commRate=rowRate(rr);
+        var alertR=window.alert, toastR=window.toast; window.alert=function(){}; window.toast=function(){};
+        rr.paid='2026-07-15'; journalPaid(rr,'2026-07-15');
+        check('RESTORE the ledger is connected before the backup', 100, round2(ledgerRepNet(rr,'RA')));
+        // simulate what restore does: fresh row id, ledger remapped through rowMap
+        var backupRows=JSON.parse(JSON.stringify(ROWS));
+        var backupPayouts=JSON.parse(JSON.stringify(PAYOUTS));
+        ROWS=[]; PAYOUTS=[];
+        var rowMap={};
+        backupRows.forEach(function(br){
+          var nr=Object.assign({},br,{id:'r_new_'+br.id});
+          rowMap[br.id]=nr.id; ROWS.push(nr);
+        });
+        backupPayouts.forEach(function(x){
+          var e=Object.assign({},x);
+          if(e.rowId && rowMap[e.rowId]) e.rowId=rowMap[e.rowId];
+          PAYOUTS.push(e);
+        });
+        var restored=ROWS[0];
+        check('RESTORE the sale is given a new id', 'r_new_r_backup_77', restored.id);
+        check('RESTORE the payout follows it', 'r_new_r_backup_77', PAYOUTS[0].rowId);
+        check('RESTORE nothing is left pointing at a sale that is gone', 0,
+          PAYOUTS.filter(function(x){ return x.rowId && !ROWS.some(function(q){return q.id===x.rowId;}); }).length);
+        check('RESTORE the ledger reads back through the new id', 100, round2(ledgerRepNet(restored,'RA')));
+        check('RESTORE the entry keeps its own id, so corrections still point at it', backupPayouts[0].id, PAYOUTS[0].id);
+        window.alert=alertR; window.toast=toastR; PAYOUTS=[];
+      }
+
       /* ---------- C2: tombstones stop deleted records resurrecting ---------- */
       if(typeof addTombstone==='function' && typeof isTombstoned==='function'){
         TOMBSTONES=[];

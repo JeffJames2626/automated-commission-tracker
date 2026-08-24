@@ -11582,7 +11582,7 @@ function restore(e){
     // People are matched by ID first (the permanent key), then verified email, then a
     // confirmed alias or exact full name. A person nobody here knows keeps the id the
     // backup gave them, so every sale in that backup still points at the same record.
-    const idMap={}; let addedP=0;
+    const idMap={}; let addedP=0; const restoreNotes=[];
     d.people.forEach(bp=>{
       let hit=PEOPLE.find(x=>x.id===bp.id) || null;
       if(!hit && bp.email){ const r=resolveEmployee('','*',{email:bp.email}); if(r) hit=person(r.id); }
@@ -11602,14 +11602,28 @@ function restore(e){
     PEOPLE.forEach(p=>{ if(p.mgr&&idMap[p.mgr])p.mgr=idMap[p.mgr]; });
     if(d.global&&Array.isArray(d.global.empIgnore)){ GLOBAL.empIgnore=GLOBAL.empIgnore||[]; d.global.empIgnore.forEach(x=>{ if(!GLOBAL.empIgnore.some(y=>y.key===x.key)) GLOBAL.empIgnore.push(x); }); save(K_GLOBAL,GLOBAL); }
     const key=r=>r.rep+'|'+r.date+'|'+String(r.client).toLowerCase()+'|'+bookedValue(r).toFixed(2);
-    const seen=new Set(ROWS.map(key)); let addedR=0;
-    const byId={}; ROWS.forEach(r=>{ if(r.src&&r.srcId) byId[r.src+'|'+r.srcId]=1; });
+    // Restored sales are given fresh ids, so the payout ledger has to be told where each
+    // one went. Without this map, every restored payout still pointed at the backup's old
+    // row id and came back orphaned: the sale showed as paid but carried no ledger, and
+    // the Hawk saw a book full of payments it could not account for.
+    const rowMap={};
+    const seenRow={}; ROWS.forEach(r=>{ seenRow[key(r)]=r; });
+    const seen=new Set(Object.keys(seenRow)); let addedR=0;
+    const byId={}; ROWS.forEach(r=>{ if(r.src&&r.srcId) byId[r.src+'|'+r.srcId]=r; });
     (d.rows||[]).forEach(br=>{
       const r=Object.assign({},br,{id:uid('r'),rep:idMap[br.rep]||br.rep});
       if(!idMap[br.rep]){ r.repOrphan=br.rep||'(blank)'; r.repHow='orphan'; r.rep=empUnassigned().id; }
       // a source record ID is the surest sign it's the same sale
-      if(r.src&&r.srcId){ const ik=r.src+'|'+r.srcId; if(byId[ik])return; byId[ik]=1; }
-      const k=key(r); if(seen.has(k))return; seen.add(k); ROWS.push(r); addedR++;
+      if(r.src&&r.srcId){
+        const ik=r.src+'|'+r.srcId;
+        if(byId[ik]){ if(br.id) rowMap[br.id]=byId[ik].id; return; }   // already here: point the ledger at it
+        byId[ik]=r;
+      }
+      const k=key(r);
+      if(seen.has(k)){ if(br.id && seenRow[k]) rowMap[br.id]=seenRow[k].id; return; }
+      seen.add(k); seenRow[k]=r;
+      if(br.id) rowMap[br.id]=r.id;
+      ROWS.push(r); addedR++;
     });
     let addedH=0;
     if(Array.isArray(d.hours)){
@@ -11626,6 +11640,7 @@ function restore(e){
       const dseen=new Set(DISPUTES.map(dk));
       d.disputes.forEach(bd=>{
         const x=Object.assign({},bd,{id:uid('d'),rep:idMap[bd.rep]||empUnassigned().id});
+        if(x.rowId && rowMap[x.rowId]) x.rowId=rowMap[x.rowId];   // follow the sale to its new id
         if(dseen.has(dk(x)))return; dseen.add(dk(x)); DISPUTES.push(x);
       });
       save(K_DISP,DISPUTES);
@@ -11640,7 +11655,26 @@ function restore(e){
     if(d.gear && d.gear.snooze){ GEAR.snooze=Object.assign({},d.gear.snooze,GEAR.snooze); save(K_GEAR,GEAR); }
     if(Array.isArray(d.payments) && !PAYMENTS.length){ PAYMENTS=d.payments; save(K_PAY,PAYMENTS); }
     // Payout ledger merges by id and is never overwritten — a backup can add history, not erase it.
-    if(Array.isArray(d.payouts)){ const have=new Set(PAYOUTS.map(x=>x.id)); d.payouts.forEach(x=>{ if(x&&x.id&&!have.has(x.id)){ PAYOUTS.push(x); have.add(x.id); } }); save(K_PAYOUTS,PAYOUTS); }
+    // Each entry keeps its OWN id, because corrections point at the entry they correct
+    // (adjOf), but its employee and its sale are remapped onto whatever those records
+    // became here. An entry whose sale did not come across is kept and marked, not dropped:
+    // it is real money that was paid, and the Hawk should be able to see it.
+    if(Array.isArray(d.payouts)){
+      const have=new Set(PAYOUTS.map(x=>x.id)); let orphaned=0;
+      d.payouts.forEach(x=>{
+        if(!x||!x.id||have.has(x.id)) return;
+        const e=Object.assign({},x);
+        if(e.emp && idMap[e.emp]) e.emp=idMap[e.emp];
+        if(e.rowId){
+          if(rowMap[e.rowId]) e.rowId=rowMap[e.rowId];
+          else if(!ROWS.some(r=>r.id===e.rowId)){ e.rowMissing=e.rowId; orphaned++; }
+        }
+        PAYOUTS.push(e); have.add(e.id);
+      });
+      save(K_PAYOUTS,PAYOUTS);
+      if(orphaned) restoreNotes.push(orphaned+' payout entr'+(orphaned===1?'y':'ies')+
+        ' came back without the sale they were paid on — the Data Hawk lists them.');
+    }
     if(Array.isArray(d.paysyncs) && !PAYSYNC.length){ PAYSYNC=d.paysyncs; save(K_PAYSYNC,PAYSYNC); }
     if(Array.isArray(d.takeovers) && !TAKEOVERS.length){ TAKEOVERS=d.takeovers; save(K_TKO,TAKEOVERS); }
     if(Array.isArray(d.openinv) && !OPENINV.length){ OPENINV=d.openinv; save(K_BAL,OPENINV); }
@@ -11657,7 +11691,8 @@ function restore(e){
     document.getElementById('restoreFile').value='';
     render();
     alert('Merged in '+addedP+' new salesperson'+(addedP===1?'':'s')+', '+addedR+' new sale'+(addedR===1?'':'s')+
-      ' and '+addedH+' hours entr'+(addedH===1?'y':'ies')+'.\n\nAnything already here was left alone.');
+      ' and '+addedH+' hours entr'+(addedH===1?'y':'ies')+'.\n\nAnything already here was left alone.'+
+      (restoreNotes.length?'\n\n'+restoreNotes.join('\n'):''));
   };
   fr.readAsText(f);
 }
