@@ -25,19 +25,123 @@ h2{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;
 h3{font-size:16px;font-weight:650}
 .mono{font-variant-numeric:tabular-nums}
 
-header{background:var(--ink);color:#f3f5f0;padding:14px 0 0}
-header .top{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding-bottom:12px}
-header h1{color:#fff}
-.hsub{font-size:12.5px;color:#a9b3a5;margin-top:3px}
-.hspace{flex:1}
-.hbtns{display:flex;gap:8px;flex-wrap:wrap}
+/* ==========================================================================
+   HEADER — "the cockpit strip"
+   Upper deck = where you are + live readouts. Status only.
+   Lower deck = where you can go (nav) + what you can do (Tools). Action only.
+   Doctrine: nothing on the strip is lit while everything is normal.
+   ========================================================================== */
+header{background:var(--ink);color:#f3f5f0;padding:0}
+header .wrap{position:relative}
+.hspace{flex:1}   /* generic spacer — modal footers and toolbars lean on it */
 
-/* tabs */
-nav{display:flex;gap:2px;flex-wrap:wrap}
+.deck{display:flex;align-items:center;flex-wrap:wrap;gap:12px;row-gap:6px;
+  min-height:44px;padding:9px 0}                       /* 9 + 26 + 9 = 44px    */
+.deck-lo{align-items:flex-end;gap:8px;row-gap:0;min-height:0;padding:0;
+  border-top:1px solid #2c342a}                        /* + 1 + 37 = 82px      */
+.deck-gap{flex:1 1 auto;min-width:8px}
+
+/* brand + page context */
+header h1.brand{margin:0;flex:0 0 auto;font-size:13.5px;font-weight:650;line-height:1}
+.brandbtn{display:flex;align-items:center;gap:9px;background:none;border:0;padding:0;
+  margin:0;font:inherit;color:#9aa596;cursor:pointer;transition:color .12s}
+.brandbtn:hover{color:#e6eae2;background:none;border:0}
+.brandbtn:focus-visible{outline:2px solid var(--gold);outline-offset:3px;border-radius:5px}
+.brandbtn svg{display:block;flex:0 0 auto}
+.wm{white-space:nowrap}
+.crumb{flex:0 0 auto;margin:0 -3px;color:#69735f;font-size:14px;line-height:1}
+.page{flex:0 1 auto;font-size:16px;font-weight:700;line-height:20px;color:#f3f5f0;
+  letter-spacing:-.01em;white-space:nowrap}
+
+/* visually hidden, but present for screen readers — and printed (see @media print) */
+.vh{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}
+
+/* THE INSTRUMENT STRIP */
+.strip{display:flex;align-items:center;flex:0 0 auto;gap:2px}
+.strip .sep{flex:0 0 auto;width:1px;height:22px;margin:0 7px;background:#343c31}
+.rd{display:flex;align-items:center;gap:8px;flex:0 0 auto;
+  background:transparent;border:0;border-radius:7px;margin:0;padding:2px 10px;
+  font:inherit;color:inherit;text-align:left;white-space:nowrap;transition:background .12s}
+button.rd{cursor:pointer}
+button.rd:hover{background:#262d23;border:0}
+button.rd:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+.rd .rail{flex:0 0 auto;width:3px;height:26px;border-radius:2px;background:#4a5346;
+  transition:background .14s}
+.rd .txt{display:flex;flex-direction:column;min-width:0}
+.rd .lab{font-size:10px;font-weight:700;line-height:11px;letter-spacing:.10em;
+  text-transform:uppercase;color:#9aa596}
+.rd .val{font-size:13.5px;font-weight:650;line-height:14px;color:#f3f5f0;
+  font-variant-numeric:tabular-nums}
+/* the only states an instrument may show. grey rail = normal = say nothing. */
+.rd.s-idle  .val{color:#f3f5f0}
+.rd.s-quiet .val{color:#a9b3a5}
+.rd.s-good  .rail{background:#8fce8f} .rd.s-good .val{color:#8fce8f}
+.rd.s-warn  .rail{background:#e6d38a} .rd.s-warn .val{color:#e6d38a}
+.rd.s-gold  .rail{background:var(--gold)} .rd.s-gold .val{color:#e8c85a}
+.rd.s-bad   .rail{background:#e8a89f} .rd.s-bad  .val{color:#e8a89f}
+
+/* tabs — unchanged in behaviour */
+nav{display:flex;align-items:flex-end;flex-wrap:wrap;gap:2px;flex:1 1 auto;min-width:0}
 nav button{background:transparent;border:none;border-radius:8px 8px 0 0;color:#a9b3a5;
-  padding:10px 15px;font-size:13.5px;font-weight:650;cursor:pointer;border-bottom:3px solid transparent}
+  padding:9px 14px;font-size:13.5px;line-height:16px;font-weight:650;cursor:pointer;
+  border-bottom:3px solid transparent;white-space:nowrap}
 nav button:hover{color:#e6eae2;background:#262d23}
 nav button.on{background:var(--sand);color:var(--ink);border-bottom-color:var(--gold)}
+
+/* the one control on the lower deck */
+.hbtns{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:0 0 auto;padding-bottom:5px}
+#gsiHost{display:inline-flex;align-items:center}
+
+/* popovers: light surfaces, so a menu can never be confused with a gauge */
+.popwrap{position:relative;display:inline-flex}
+.pop{display:none;position:absolute;top:calc(100% + 7px);right:0;z-index:70;min-width:214px;
+  background:var(--paper);border:1px solid var(--line);border-radius:11px;padding:6px;
+  box-shadow:0 12px 34px rgba(28,33,25,.30)}
+.pop.on{display:block}
+.pop.left{left:0;right:auto}
+.pop .phead{padding:8px 11px 5px;font-size:10px;font-weight:700;letter-spacing:.10em;
+  text-transform:uppercase;color:var(--muted)}
+.pop button{display:block;width:100%;text-align:left;background:none;border:0;border-radius:7px;
+  padding:9px 11px;font-size:13.5px;font-weight:600;color:var(--ink);cursor:pointer}
+.pop button:hover{background:var(--band);border:0}
+.pop button.out{color:var(--red)}
+.pop button.out:hover{background:var(--red-l)}
+.pop hr{border:0;border-top:1px solid var(--line);margin:5px 8px}
+.pop .pnote{padding:1px 11px 8px;font-size:11.5px;line-height:1.45;color:var(--muted)}
+.gh.caret::after{content:"\25BE";margin-left:6px;font-size:11px;color:#9aa596}
+
+/* master caution light (phone) */
+#masterBtn{display:none}
+.master{align-items:center;gap:7px;padding:3px 8px;border:0;border-radius:7px;
+  background:transparent;font:inherit;font-size:13px;font-weight:650;color:#f3f5f0;
+  white-space:nowrap;cursor:pointer;font-variant-numeric:tabular-nums}
+.master:hover{background:#262d23;border:0}
+.master:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+.master .rail{flex:0 0 auto;width:3px;height:22px;border-radius:2px;background:#4a5346}
+.master .mtxt{margin-left:-3px}
+.master.s-quiet{color:#a9b3a5}
+.master.s-warn .rail{background:#e6d38a} .master.s-warn{color:#e6d38a}
+.master.s-gold .rail{background:var(--gold)} .master.s-gold{color:#e8c85a}
+.master.s-bad  .rail{background:#e8a89f} .master.s-bad{color:#e8a89f}
+
+@media(max-width:1100px){
+  .rd{padding:2px 8px}
+  .strip .sep{margin:0 5px}
+}
+/* 900px: labels drop off. rails carry the state, values carry the news. */
+@media(max-width:900px){
+  .rd .lab{display:none}
+  .rd .val{line-height:16px}
+  .rd .rail{height:20px}
+  .deck{min-height:40px}
+}
+@media(max-width:820px){
+  nav button{padding:8px 11px;font-size:13px}
+}
+@media(prefers-reduced-motion:reduce){
+  .rd,.rd .rail,.brandbtn{transition:none}
+}
 .tab{display:none}
 .tab.on{display:block}
 
@@ -268,6 +372,9 @@ details summary:hover{background:#fafbf8}
   font-size:12.5px;line-height:1.55;color:var(--grn-d)}
 .empty{padding:34px 20px;text-align:center;color:var(--muted);font-size:14px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+/* a grid item's default min-width:auto lets a wide table inside push the whole
+   page sideways on a phone — the column is the boss, the .scroll inside scrolls */
+.grid2>section{min-width:0}
 @media(max-width:900px){.grid2{grid-template-columns:1fr}}
 svg{display:block;max-width:100%}
 footer{padding:24px 0 40px;font-size:12px;color:var(--muted);text-align:center}
@@ -445,13 +552,6 @@ details.fold > .foldbody{padding:2px 16px 16px}
 .fab-mid{right:auto;left:50%;transform:translateX(-50%);background:#ee4f9a}
 .fab-mid:hover{background:#d63e87;transform:translateX(-50%) translateY(-1px)}
 
-/* ---- the Data Hawk's perch: a chip that always shows what it sees ---- */
-.hawkchip{background:transparent;border:1px solid #4a5346;color:#a9b3a5;border-radius:20px;
-  padding:7px 13px;font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap;transition:.12s}
-.hawkchip.ok{color:#8fce8f;border-color:#3c5a3c}
-.hawkchip.alert{background:var(--gold);border-color:var(--gold);color:#241f14}
-.hawkchip.alert:hover{background:#b8931f}
-.hawkchip.ok:hover{border-color:#5a7a5a}
 /* the house slogan */
 .slogan{margin:0 0 18px;padding:12px 16px;border-left:4px solid var(--gold);background:var(--gold-l);
   border-radius:0 9px 9px 0;font-size:14px;color:#5c4a10}
@@ -459,20 +559,36 @@ details.fold > .foldbody{padding:2px 16px 16px}
 
 /* ---- phone layout: hamburger header + fixed bottom action bar ---- */
 #hamBtn{display:none;background:transparent;border:1px solid #4a5346;color:#e6eae2;
-  font-size:20px;line-height:1;padding:8px 13px;border-radius:8px}
+  font-size:19px;line-height:20px;padding:7px 12px;border-radius:8px}
 @media(max-width:640px){
-  header .top{padding-bottom:10px}
-  header h1{font-size:17px}
-  .hsub{display:none}
+  /* one deck, one master light. header = 48px */
+  .deck{gap:8px;min-height:48px;padding:6px 0}
+  header h1.brand .wm,.crumb{display:none}
+  .page{flex:1 1 auto;min-width:0;font-size:15.5px}
+  .strip{display:none}
+  #masterBtn{display:flex}
   #hamBtn{display:block}
-  /* everything header-related folds behind the hamburger */
-  header .hbtns{display:none}
-  header nav{display:none}
-  header.menu-open .hbtns{display:flex;flex-wrap:wrap;gap:8px;padding:4px 0 10px}
-  header.menu-open nav{display:flex;flex-direction:column;gap:2px;padding-bottom:12px}
+  .deck-lo{display:none}
+  /* the hamburger opens the instrument panel FIRST, then nav, then tools */
+  header.menu-open .strip{display:flex;order:9;flex-basis:100%;width:100%;
+    flex-direction:column;align-items:stretch;gap:0;
+    margin-top:4px;padding-top:6px;border-top:1px solid #2c342a}
+  header.menu-open .strip .sep{display:none}
+  header.menu-open .strip .popwrap{display:flex;width:100%}
+  header.menu-open .rd{width:100%;padding:11px 8px;gap:11px}
+  header.menu-open .rd .lab{display:block}
+  header.menu-open .rd .val{line-height:15px}
+  header.menu-open .rd .rail{height:28px}
+  header.menu-open .deck-lo{display:flex;flex-direction:column;align-items:stretch;
+    gap:0;padding:6px 0 12px;border-top:1px solid #2c342a}
+  header.menu-open .deck-gap{display:none}
+  header.menu-open nav{flex-direction:column;gap:2px;width:100%}
   header.menu-open nav button{border-radius:8px;border-bottom:none;text-align:left;
     padding:12px 14px;font-size:15px}
   header.menu-open nav button.on{background:var(--sand);color:var(--ink)}
+  header.menu-open .hbtns{width:100%;padding:9px 0 0;flex-wrap:wrap}
+  .pop{left:auto;right:0;min-width:0;width:min(280px,calc(100vw - 40px))}
+  .pop.left{left:0;right:auto}
   /* the three floating pills become one fixed bottom bar */
   .fab{position:fixed;top:auto;bottom:0;left:auto;right:0;transform:none;margin:0;
     width:33.34%;border-radius:0;box-shadow:0 -2px 12px rgba(28,33,25,.18);
@@ -490,6 +606,16 @@ details.fold > .foldbody{padding:2px 16px 16px}
   /* keep page content clear of the bar */
   body{padding-bottom:calc(64px + env(safe-area-inset-bottom))}
   .toast{bottom:calc(74px + env(safe-area-inset-bottom))}
+}
+/* 400px and down: the master light keeps its colour, drops its sentence */
+@media(max-width:400px){
+  .master .mtxt{display:none}
+  .master{padding:3px 6px;gap:6px}
+}
+/* Form rows: a cell's inline min-width (a desktop nicety) must never push the
+   page wider than the phone — the grid track is the boss at these sizes. */
+@media(max-width:640px){
+  .frow>div{min-width:0!important}
 }
 /* client picker — searchable roster dropdown */
 .cpickwrap{position:relative}
@@ -635,9 +761,17 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
 
 @media print{
   body{background:#fff}
-  header{background:#fff;color:var(--ink);border-bottom:2px solid var(--ink)}
-  header h1{color:var(--ink)}.hsub{color:var(--muted)}
-  .hbtns,nav,details:not(.fold),footer,#tab-import,#tab-plans{display:none!important}
+  /* the page name and the company line both make it onto paper */
+  header{background:#fff;color:var(--ink);border-bottom:2px solid var(--ink);padding:0}
+  header h1.brand,.brandbtn{color:var(--ink)}
+  .brandbtn svg rect{fill:var(--ink)}
+  .page{color:var(--ink);font-size:15px}
+  .crumb{color:var(--muted)}
+  .deck{padding:0 0 8px;min-height:0;row-gap:2px}
+  .vh{position:static;width:auto;height:auto;margin:0;overflow:visible;
+    clip:auto;clip-path:none;flex-basis:100%;white-space:normal;
+    font-size:11px;line-height:1.4;color:var(--muted)}
+  .strip,#masterBtn,#hamBtn,.hbtns,.pop,.deck-lo,nav,details:not(.fold),footer,#tab-import,#tab-plans{display:none!important}
   /* A folded admin section still prints its summary line, so the printout accounts for
      every section instead of silently dropping it. Open one before printing and its
      detail comes with it. */
@@ -674,20 +808,47 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
 <div id="loginWall" style="display:none"></div>
 <input type="file" id="avFile" accept="image/*" style="display:none" onchange="empPhotoFromInput(event)">
 
-<header>
+<header id="appHeader">
   <div class="wrap">
-    <div class="top">
-      <div>
-        <h1>ALP Sales Tracker</h1>
-        <div class="hsub">Automated Lawn &amp; Pest · production, comp plans, and commission by salesperson</div>
-      </div>
-      <div class="hspace"></div>
-      <button id="hamBtn" onclick="toggleMenu()" title="Menu" aria-label="Menu">&#9776;</button>
-      <div class="hbtns">
-        <span id="hdrTools"></span>
-      </div>
+
+    <!-- UPPER DECK — where you are, and how things are. Left = identity + page.
+         Right = instruments. Nothing here performs an action except opening a
+         detail menu. The grammar: a 3px RAIL is an instrument, a rounded
+         OUTLINE is a control — they may never be mistaken for each other. -->
+    <div class="deck">
+      <h1 class="brand">
+        <button class="brandbtn" onclick="setTab(homeTab())"
+                title="Automated Lawn &amp; Pest — production, comp plans, and commission by salesperson">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+            <rect x="1" y="1" width="22" height="22" rx="6" fill="#c9a227"></rect>
+            <path d="M6.6 17.4v-4.4M12 17.4V6.8M17.4 17.4v-7.1" fill="none"
+                  stroke="#1c2119" stroke-width="2.6" stroke-linecap="round"></path>
+          </svg>
+          <span class="wm">ALP Sales Tracker</span>
+        </button>
+      </h1>
+      <!-- The 76-character company line: zero pixels on screen (a constant is not
+           information), still read by screen readers and printed on every report. -->
+      <span class="vh" id="hdrTagline">Automated Lawn &amp; Pest — production, comp plans, and commission by salesperson</span>
+      <span class="crumb" aria-hidden="true">&rsaquo;</span>
+      <span class="page" id="hdrPage"></span>
+      <span class="deck-gap"></span>
+      <!-- Instruments. Filled by renderHdrStrip(). Grey until something is wrong. -->
+      <div class="strip" id="hdrStrip" role="group" aria-label="Status"></div>
+      <!-- Phone only: one master caution light standing in for the whole strip. -->
+      <button class="master s-quiet" id="masterBtn" onclick="masterTap()" aria-label="Status">
+        <span class="rail"></span><span class="mnum">OK</span><span class="mtxt"></span>
+      </button>
+      <button id="hamBtn" onclick="toggleMenu()" aria-label="Menu" aria-expanded="false">&#9776;</button>
     </div>
-    <nav id="nav"></nav>
+
+    <!-- LOWER DECK — where you can go, and what you can do. Action only. -->
+    <div class="deck deck-lo">
+      <nav id="nav" aria-label="Sections"></nav>
+      <span class="deck-gap"></span>
+      <div class="hbtns" id="hdrTools"></div>
+    </div>
+
   </div>
 </header>
 
@@ -3955,7 +4116,8 @@ function toggleMore(e){ e.stopPropagation(); const m=document.getElementById('mo
 function closeMore(){ const m=document.getElementById('moreMenu'); if(m) m.classList.remove('on'); }
 document.addEventListener('click',function(e){ if(!e.target.closest||!e.target.closest('.moreWrap')) closeMore(); });
 // Phone hamburger: nav and header actions fold behind ☰.
-function toggleMenu(){ document.querySelector('header').classList.toggle('menu-open'); }
+function toggleMenu(){ const h=document.querySelector('header'); h.classList.toggle('menu-open');
+  const b=document.getElementById('hamBtn'); if(b) b.setAttribute('aria-expanded',h.classList.contains('menu-open')?'true':'false'); }
 function closeMenu(){ const h=document.querySelector('header'); if(h) h.classList.remove('menu-open'); }
 function setWho(id){ WHO=id; render(); }
 function selPerson(id){ SEL=id; planToForm(); renderPlanList(); renderScenarios(); renderHours(); }
@@ -4020,6 +4182,10 @@ function render(){
   if(rest.length) nav+='<span class="moreWrap"><button class="moreBtn'+(rest.some(t=>t[0]===TAB)?' on':'')+'" onclick="toggleMore(event)">More ▾</button>'+
     '<span class="moreMenu" id="moreMenu">'+rest.map(t=>'<button onclick="setTab(&quot;'+t[0]+'&quot;);closeMore()">'+esc(t[1])+'</button>').join('')+'</span></span>';
   document.getElementById('nav').innerHTML=nav;
+  // The header names the page — the biggest type in it. Emoji stripped ("🦅 Data
+  // Hawk" → "Data Hawk"): this is the one string that must always be readable.
+  const hp=document.getElementById('hdrPage');
+  if(hp&&TAB_INFO[TAB]){ hp.textContent=TAB_INFO[TAB].label.replace(/^[^A-Za-z0-9]+\s*/,''); hp.title=TAB_INFO[TAB].desc||''; }
   TABS.forEach(t=>document.getElementById('tab-'+t[0]).classList.toggle('on',TAB===t[0]));
   renderAdmin();
 
@@ -8341,22 +8507,9 @@ function hawkCached(force){
     HAWK_CACHE={at:Date.now(), c:hawkCounts()};
   return HAWK_CACHE.c;
 }
-function renderHawkChip(){
-  let el=document.getElementById('hawkChip');
-  if(!el){
-    const bar=document.querySelector('header .hbtns');
-    if(!bar) return;
-    el=document.createElement('button'); el.id='hawkChip'; el.className='hawkchip';
-    el.onclick=function(){ if(ADMIN){ setTab('hawk'); } else { setTab('admin'); } };
-    bar.insertBefore(el, bar.firstChild);
-  }
-  const c=hawkCached();
-  el.className='hawkchip '+(c.total?'alert':'ok');
-  el.textContent='🦅 '+(c.total ? c.total+' finding'+(c.total===1?'':'s') : 'all clear');
-  el.title=c.total
-    ? 'Data Hawk: '+c.parts.join(' · ')+' — click to review'
-    : 'Data Hawk — sweeping every record. Nothing to flag right now.';
-}
+// The chip grew up into an instrument on the header strip. Every old call site
+// still works — it just repaints the whole strip now.
+function renderHawkChip(){ if(typeof renderHdrStrip==='function') renderHdrStrip(); }
 
 // What the hawk currently has its eye on, as counts per kind.
 function hawkCounts(){
@@ -12046,13 +12199,141 @@ function dl(blob,name){
   setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);
 }
 function csvCell(v){const s=String(v==null?'':v);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}
+/* ============================================================
+   THE COCKPIT STRIP
+   Upper deck instruments: a 3px rail + label + value per readout,
+   grey until something is actually wrong. Status opens detail; it
+   never performs. The three utilities live behind one Tools door
+   on the nav row — same role gates as always.
+   ============================================================ */
+function hdrRail(lab,val){
+  return '<span class="rail"></span><span class="txt"><span class="lab">'+lab+
+    '</span><span class="val">'+val+'</span></span>';
+}
+function renderHdrStrip(){
+  const box=document.getElementById('hdrStrip'); if(!box) return;
+  const s=(typeof session==='function')?session():null;
+  let h='';
+  // YOU — the frame everything else is read through. Signed out it is a plain
+  // span: a gauge with nothing behind it must not invite a click.
+  if(s){
+    const who=esc(s.name||s.email)+(s.role==='admin'?' · admin':'');
+    h+='<span class="popwrap"><button class="rd s-idle" id="rdYou" onclick="youMenu(event)" aria-haspopup="menu" aria-expanded="false"'+
+      ' title="Signed in with Google — every change is recorded under this verified name">'+hdrRail('Signed in',who)+'</button>'+
+      '<div class="pop left" id="youPop" role="menu"><div class="phead">'+who+'</div>'+
+      '<button role="menuitem" onclick="closePops();hdrMyPage()">My page</button>'+
+      (ADMIN?'<button role="menuitem" onclick="closePops();setTab(\'admin\')">Access &amp; security</button>':'')+
+      '<hr><button role="menuitem" class="out" onclick="closePops();googleSignOut()">Sign out</button></div></span>';
+  } else if(window.__GCID){
+    h+='<span class="rd s-bad" id="rdYou">'+hdrRail('Signed in','Not signed in')+'</span>';
+  }
+  if(h) h+='<span class="sep"></span>';
+  // SYNC — a status stops being a button-shaped thing. Click opens the existing menu.
+  const cs=(typeof CLOUD!=='undefined'&&CLOUD.status)||'off';
+  const flash=typeof CLOUD!=='undefined'&&CLOUD.flashUntil&&Date.now()<CLOUD.flashUntil;
+  // Amber "Off" is for the hosted site, where sync is expected. Opened from disk
+  // there is no backend to be off from — that's not a condition, it's just local.
+  const hosted=typeof cloudHasBackend==='function'&&cloudHasBackend();
+  const CS={off:hosted?['Off','s-warn','Cloud sync is off — data is only in this browser. Click to turn on.']
+                      :['Local','s-quiet','Data lives in this browser. Live sync runs on the hosted site.'],
+    live:['Live'+hdrFresh(),flash?'s-good':'s-idle','Live — synced with the cloud. Data is the same on every device.'],
+    saving:['Saving…','s-quiet','Saving changes to the cloud…'],
+    offline:['Offline','s-bad','Can’t reach the cloud right now — working locally, will retry.'],
+    error:['Cloud error','s-bad',(typeof CLOUD!=='undefined'&&CLOUD.lastErr)||'Cloud error']};
+  const cm=CS[cs]||CS.off;
+  h+='<button class="rd '+cm[1]+'" id="rdSync" onclick="cloudMenu()" title="'+esc(cm[2])+'">'+hdrRail('Sync',cm[0])+'</button>';
+  // DATA IN — the fuel gauge that used to only speak once the engine had stopped.
+  if(can('manage_imports')){
+    const st=mergeStatus().filter(x=>x.state!=='never');
+    if(st.length){
+      const worst=Math.max.apply(null,st.map(x=>x.days));
+      const stale=st.some(x=>x.state==='stale'), due=st.some(x=>x.state==='due');
+      const dv=stale?'Paused · '+worst+'d':worst===0?'Today':worst+' day'+(worst===1?'':'s');
+      h+='<button class="rd '+(stale?'s-bad':due?'s-warn':'s-idle')+'" id="rdData" onclick="setTab(\'import\')"'+
+        ' title="Oldest weekly file: '+worst+' day'+(worst===1?'':'s')+' ago. The tracker pauses at 7.">'+hdrRail('Data in',dv)+'</button>';
+    }
+  }
+  // DATA HAWK — rightmost, nothing beyond it to compete with. Gold only when lit;
+  // good news whispers. (And a field tech, who has no Hawk access, no longer sees it.)
+  if(can('view_data_hawk')){
+    const c=hawkCached();
+    h+='<button class="rd '+(c.total?'s-gold':'s-quiet')+'" id="rdHawk" onclick="setTab(\'hawk\')" title="'+
+      esc(c.total?'Data Hawk: '+c.parts.join(' · ')+' — click to review':'Data Hawk — sweeping every record. Nothing to flag right now.')+'">'+
+      hdrRail('Data hawk',c.total?c.total+' finding'+(c.total===1?'':'s'):'All clear')+'</button>';
+  }
+  box.innerHTML=h;
+  renderMaster();
+}
+function hdrFresh(){
+  if(typeof CLOUD==='undefined'||!CLOUD.lastOkAt) return '';
+  const m=Math.round((Date.now()-CLOUD.lastOkAt)/60000);
+  return m<1?' · now':m<60?' · '+m+'m':' · '+Math.round(m/60)+'h';
+}
+// Phone: one master caution light. The worst state wins; it says THAT something
+// is wrong and gets out of the way.
+function renderMaster(){
+  const el=document.getElementById('masterBtn'); if(!el) return;
+  const s=(typeof session==='function')?session():null;
+  const cs=(typeof CLOUD!=='undefined'&&CLOUD.status)||'off';
+  const hosted=typeof cloudHasBackend==='function'&&cloudHasBackend();
+  const hawk=can('view_data_hawk')?hawkCached():{total:0};
+  const st=can('manage_imports')?mergeStatus().filter(x=>x.state!=='never'):[];
+  const stale=st.some(x=>x.state==='stale'), due=st.some(x=>x.state==='due');
+  let cls,num,txt,act;
+  if(hawk.total){ cls='s-gold'; num=String(hawk.total); txt='finding'+(hawk.total===1?'':'s'); act=function(){setTab('hawk');}; }
+  else if(!s&&window.__GCID){ cls='s-bad'; num='!'; txt='Sign in'; act=null; }
+  else if(cs==='offline'||cs==='error'){ cls='s-bad'; num='!'; txt='Offline'; act=function(){cloudMenu();}; }
+  else if(stale){ cls='s-bad'; num='7d'; txt='paused'; act=function(){setTab('import');}; }
+  else if(cs==='off'&&hosted){ cls='s-warn'; num='!'; txt='Cloud off'; act=function(){cloudMenu();}; }
+  else if(due){ const w=Math.max.apply(null,st.map(x=>x.days)); cls='s-warn'; num=w+'d'; txt='data due'; act=function(){setTab('import');}; }
+  else { cls='s-quiet'; num='OK'; txt=''; act=null; }
+  el.className='master '+cls;
+  el.querySelector('.mnum').textContent=num;
+  el.querySelector('.mtxt').textContent=txt;
+  el._act=act;
+}
+function masterTap(){
+  const el=document.getElementById('masterBtn');
+  if(el&&el._act) el._act(); else toggleMenu();
+}
+function hdrMyPage(){
+  const s=(typeof session==='function')?session():null;
+  const r=s&&s.email?resolveEmployee('','*',{email:s.email}):null;
+  if(r&&typeof openEmp==='function') openEmp(r.id); else setTab(homeTab());
+}
+// Popovers: one open at a time, closed by any outside click or Escape.
+function closePops(){ document.querySelectorAll('.pop.on').forEach(p=>p.classList.remove('on'));
+  document.querySelectorAll('[aria-haspopup]').forEach(b=>b.setAttribute('aria-expanded','false')); }
+function hdrPopToggle(e,btnId,popId){
+  if(e) e.stopPropagation();
+  const p=document.getElementById(popId); if(!p) return;
+  const open=p.classList.contains('on');
+  closePops();
+  if(!open){ p.classList.add('on'); const b=document.getElementById(btnId); if(b) b.setAttribute('aria-expanded','true'); }
+}
+function youMenu(e){ hdrPopToggle(e,'rdYou','youPop'); }
+function toolsMenu(e){ hdrPopToggle(e,'toolsBtn','toolsPop'); }
+document.addEventListener('click',function(e){ if(!e.target.closest||!e.target.closest('.popwrap')) closePops(); });
+document.addEventListener('keydown',function(e){ if(e.key==='Escape') closePops(); });
+// Freshness ("Live · 2m") drifts even when nothing repaints — nudge it along.
+setInterval(function(){ if(document.getElementById('rdSync')) renderHdrStrip(); },60000);
+
 // Exports carry whatever the person can see — and nothing they cannot.
 function renderHdrTools(){
   const el=document.getElementById('hdrTools'); if(!el) return;
-  let h='<button class="gh" onclick="window.print()">Print / PDF</button>';
-  if(can('export_data')||scopeOf('sales')!=='none') h+='<button class="gh" onclick="exportCSV()">Export CSV</button>';
-  if(can('admin_security')) h+='<button class="gh" onclick="backup()">Backup all</button>';
-  el.innerHTML=h;
+  let items='<div class="phead">This page</div>'+
+    '<button role="menuitem" onclick="closePops();window.print()">Print / PDF</button>'+
+    '<div class="pnote">Ctrl&#8202;+&#8202;P does the same thing.</div>';
+  let data='';
+  if(can('export_data')||scopeOf('sales')!=='none') data+='<button role="menuitem" onclick="closePops();exportCSV()">Export CSV</button>';
+  if(can('admin_security')) data+='<button role="menuitem" onclick="closePops();backup()">Backup all</button>';
+  if(data) items+='<div class="phead">Your data</div>'+data;
+  // Build the shell once; the Google button lives in #gsiHost and must survive repaints.
+  if(!el.querySelector('.popwrap'))
+    el.insertAdjacentHTML('afterbegin','<span class="popwrap"><button class="gh sm caret" id="toolsBtn" onclick="toolsMenu(event)"'+
+      ' aria-haspopup="menu" aria-expanded="false">Tools</button><div class="pop" id="toolsPop" role="menu"></div></span>');
+  document.getElementById('toolsPop').innerHTML=items;
+  if(!document.getElementById('gsiHost')){ const g=document.createElement('div'); g.id='gsiHost'; el.appendChild(g); }
 }
 function exportCSV(){
   const EXP=visibleRows();
@@ -13656,20 +13937,18 @@ async function googleInit(){
   }catch(e){ window.__GCID=false; renderLoginWall(); }
 }
 function renderGoogleBtn(){
-  const bar=document.querySelector('header .hbtns'); if(!bar) return;
+  // Identity now lives on the instrument strip; this only manages the Google
+  // sign-in button, which sits after Tools on the nav row while signed out.
+  const bar=document.getElementById('hdrTools'); if(!bar) return;
   let host=document.getElementById('gsiHost');
-  if(!host){ host=document.createElement('div'); host.id='gsiHost';
-    host.style.cssText='display:inline-flex;align-items:center'; bar.insertBefore(host,bar.firstChild); }
+  if(!host){ host=document.createElement('div'); host.id='gsiHost'; bar.appendChild(host); }
   const s=session();
-  if(s){
-    host.innerHTML='<button class="gh sm" onclick="googleSignOut()" title="Signed in with Google — every change is recorded under this verified name">👤 '+
-      esc(s.name||s.email)+(s.role==='admin'?' · admin':'')+' ✕</button>';
-    return;
-  }
-  if(!window.__GCID || typeof google==='undefined' || !google.accounts){ host.innerHTML=''; return; }
+  if(s){ host.innerHTML=''; renderHdrStrip(); return; }
+  if(!window.__GCID || typeof google==='undefined' || !google.accounts){ host.innerHTML=''; renderHdrStrip(); return; }
   host.innerHTML='';
   google.accounts.id.initialize({client_id:window.__GCID, callback:googleCredential});
   google.accounts.id.renderButton(host,{theme:'outline',size:'medium',text:'signin_with'});
+  renderHdrStrip();
 }
 async function googleCredential(resp){
   try{
@@ -13851,33 +14130,24 @@ function cloudApply(d){
   histDirty(); geoDirty();
   CLOUD.applying=false;
 }
-function cloudBadge(){
-  let el=document.getElementById('cloudBadge');
-  if(!el){
-    const bar=document.querySelector('header .hbtns')||document.querySelector('header');
-    if(!bar) return null;
-    el=document.createElement('button'); el.id='cloudBadge'; el.className='gh sm';
-    el.onclick=cloudMenu; bar.insertBefore(el, bar.firstChild);
-  }
-  return el;
-}
+// The badge grew up into the SYNC instrument on the strip. Old callers get the readout node.
+function cloudBadge(){ return document.getElementById('rdSync'); }
 function cloudSetStatus(s,msg){
+  // A successful save flashes the readout green for three seconds, then settles
+  // back to neutral — reassurance without a permanently lit rail.
+  if(s==='live'){
+    if(CLOUD.status==='saving'){ CLOUD.flashUntil=Date.now()+3000;
+      setTimeout(function(){ renderHdrStrip(); },3100); }
+    CLOUD.lastOkAt=Date.now();
+  }
   CLOUD.status=s;
+  if(msg) CLOUD.lastErr=msg;
   // keep the footer honest about where the data lives
   const ft=document.getElementById('appFooter');
   if(ft) ft.innerHTML = (s==='live'||s==='saving')
     ? 'Every change saves itself instantly and syncs to your private cloud (☁) — no Save button anywhere. <b>Backup all</b> still makes a file you can keep.'
     : 'Every change saves itself instantly to this browser — no Save button anywhere. Turn on ☁ to sync across devices, and use <b>Backup all</b> for a file you can keep.';
-  const el=cloudBadge(); if(!el) return;
-  const map={off:['☁ Cloud: off','#a9b3a5'],live:['☁ Live','#8fce8f'],
-    saving:['☁ Saving…','#e6d38a'],offline:['☁ Offline','#e8a89f'],error:['☁ Cloud error','#e8a89f']};
-  const m=map[s]||map.off;
-  el.textContent=m[0]; el.style.color=m[1];
-  el.title=msg||({off:'Cloud sync is off — data is only in this browser. Click to turn on.',
-    live:'Live — synced with the cloud. Data is the same on every device.',
-    saving:'Saving changes to the cloud…',
-    offline:'Can’t reach the cloud right now — working locally, will retry.',
-    error:CLOUD.lastErr||'Cloud error'}[s]||'');
+  renderHdrStrip();
 }
 async function cloudFetch(method,body,extra){
   const opt={method,headers:Object.assign(authHeaders(),extra||{})};
