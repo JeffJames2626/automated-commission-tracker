@@ -1335,6 +1335,106 @@
         window.alert=alertH; window.toast=toastH;
       }
 
+
+      /* ---------- MONEY: the parts of a split always add back to the whole ---------- */
+      // 33.33 x 3 is 99.99, not 100.00. Rounding each share on its own lost a penny, the
+      // row still recorded the whole, and payoutVariance then offered a correction for a
+      // one-cent gap that could never be cleared.
+      if(typeof splitAmounts==='function'){
+        var third=[{rep:'a',frac:1/3},{rep:'b',frac:1/3},{rep:'c',frac:1/3}];
+        var sa=splitAmounts(100,third);
+        check('SPLIT thirds of $100 add back to $100', 100, round2(sa[0]+sa[1]+sa[2]));
+        check('SPLIT the residual goes to one share, not all', '33.34,33.33,33.33', sa.join(','));
+        var sixths=[{rep:'a',frac:1/6},{rep:'b',frac:1/6},{rep:'c',frac:1/6},
+                    {rep:'d',frac:1/6},{rep:'e',frac:1/6},{rep:'f',frac:1/6}];
+        check('SPLIT six ways still adds back', 100, round2(splitAmounts(100,sixths).reduce(function(a,b){return a+b;},0)));
+        check('SPLIT an uneven pair adds back', 77.77, round2(splitAmounts(77.77,[{rep:'a',frac:0.7},{rep:'b',frac:0.3}]).reduce(function(a,b){return a+b;},0)));
+        check('SPLIT a single share is untouched', '400', splitAmounts(400,[{rep:'a',frac:1}]).join(','));
+        check('SPLIT zero stays zero', '0', splitAmounts(0,[{rep:'a',frac:1}]).join(','));
+      }
+      if(typeof journalPaid==='function' && typeof payoutVariance==='function'){
+        var alertS=window.alert, toastS=window.toast; window.alert=function(){}; window.toast=function(){};
+        var S1=mkPerson({id:'SP1',name:'Sp One'}); S1.first='Sp'; S1.last='One'; S1.roles=['sales'];
+        S1.start='2026-01-01'; S1.commNew=10; S1.aliases=[]; S1.log=[];
+        var S2=mkPerson({id:'SP2',name:'Sp Two'}); S2.first='Sp'; S2.last='Two'; S2.roles=['sales'];
+        S2.start='2026-01-01'; S2.commNew=10; S2.aliases=[]; S2.log=[];
+        var S3=mkPerson({id:'SP3',name:'Sp Three'}); S3.first='Sp'; S3.last='Three'; S3.roles=['sales'];
+        S3.start='2026-01-01'; S3.commNew=10; S3.aliases=[]; S3.log=[];
+        PEOPLE=[S1,S2,S3]; PAYOUTS=[]; EMP_IDX=null; GLOBAL.payLag=30;
+        var sr=mkRow({rep:'SP1',value:1000,type:'new',date:'2026-06-05',invoiced:'2026-06-10',client:'Split Co'});
+        sr.split=[{rep:'SP1',pct:1},{rep:'SP2',pct:1},{rep:'SP3',pct:1}];
+        ROWS=[sr]; freezeDueLag(sr); sr.commRate=rowRate(sr); sr.paid='2026-07-10';
+        journalPaid(sr,'2026-07-10');
+        var live=PAYOUTS.filter(function(x){return x.kind==='rep'&&x.status!=='void';});
+        check('SPLIT an even three-way payout adds back to the whole commission', 100,
+          round2(live.reduce(function(a,x){return a+x.amount;},0)));
+        check('SPLIT the row records the same figure as the ledger', 100, round2(sr.paidAmt));
+        check('SPLIT paidTo agrees with the ledger', 100, round2((sr.paidTo||[]).reduce(function(a,x){return a+x.amount;},0)));
+        check('SPLIT no phantom variance on an even split', 0, payoutVariance(sr).length);
+        window.alert=alertS; window.toast=toastS; PAYOUTS=[];
+      }
+
+      /* ---------- MONEY: the values that actually turn up in the book ---------- */
+      if(typeof rowComm==='function'){
+        var MP=mkPerson({id:'MM',name:'Money Rep'}); MP.first='Money'; MP.last='Rep'; MP.roles=['sales'];
+        MP.start='2026-01-01'; MP.commNew=10; MP.aliases=[]; MP.log=[];
+        PEOPLE=[MP]; EMP_IDX=null; PAYOUTS=[];
+        var mv=function(v,rate){ var r=mkRow({rep:'MM',value:v,type:'new',date:'2026-06-05'});
+          if(rate!=null) r.commRate=rate; ROWS=[r]; return round2(rowComm(r)); };
+        check('MONEY $0 earns nothing', 0, mv(0));
+        check('MONEY $0.01 at 10% rounds to a cent', 0, mv(0.01));
+        check('MONEY $1 at 10%', 0.1, mv(1));
+        check('MONEY $99.99 at 10%', 10, mv(99.99));
+        check('MONEY $100 at 10%', 10, mv(100));
+        check('MONEY $999.99 at 10%', 100, mv(999.99));
+        check('MONEY $1,000 at 10%', 100, mv(1000));
+        check('MONEY $10,000 at 10%', 1000, mv(10000));
+        check('MONEY $100,000 at 10%', 10000, mv(100000));
+        check('MONEY $1,234,567.89 at 10%', 123456.79, mv(1234567.89));
+        check('MONEY 7.5% of $99.99 does not drift', 7.5, mv(99.99,7.5));
+        check('MONEY 33.333% of $1,000 rounds cleanly', 333.33, mv(1000,33.333));
+        check('MONEY a negative value cannot earn a negative commission', 0, mv(-500));
+      }
+
+      /* ---------- DATES: the boundaries that move a sale into the wrong period ---------- */
+      check('DATE Dec 31 stays in December', '2026-12', '2026-12-31'.slice(0,7));
+      check('DATE Jan 1 does not fall back a year', 'Jan 1, 2026', fmtY('2026-01-01'));
+      check('DATE Dec 31 does not roll forward a year', 'Dec 31, 2026', fmtY('2026-12-31'));
+      check('DATE a day is parsed in local time, never UTC', 1, dObj('2026-01-01').getDate());
+      check('DATE the last day of a leap February exists', 'Feb 29, 2024', fmtY('2024-02-29'));
+      check('DATE +1 day across new year', '2027-01-01', addDays('2026-12-31',1));
+      check('DATE +1 day across a non-leap February', '2026-03-01', addDays('2026-02-28',1));
+      check('DATE +1 day across a leap February', '2024-02-29', addDays('2024-02-28',1));
+      check('DATE +1 day across the spring clock change', '2026-03-09', addDays('2026-03-08',1));
+      check('DATE +1 day across the autumn clock change', '2026-11-02', addDays('2026-11-01',1));
+      check('DATE a 30-day payment lag from Jan 31', '2026-03-02', addDays('2026-01-31',30));
+      check('DATE the week starts on Monday', '2026-03-09', weekStart('2026-03-09'));
+      check('DATE the week containing Jan 1 starts in the old year', '2025-12-29', weekStart('2026-01-01'));
+
+      /* ---------- INTEGRITY: nothing points at a record that is not there ---------- */
+      if(typeof empParkOrphans==='function'){
+        var IP=mkPerson({id:'IP',name:'Int Rep'}); IP.first='Int'; IP.last='Rep'; IP.roles=['sales'];
+        IP.start='2026-01-01'; IP.commNew=10; IP.aliases=[]; IP.log=[];
+        PEOPLE=[IP]; EMP_IDX=null; PAYOUTS=[]; DISPUTES=[];
+        var good=mkRow({rep:'IP',value:1000,client:'Fine Co'});
+        ROWS=[good];
+        var badRep=function(){ return ROWS.filter(function(r){ return !r.rep || !PEOPLE.some(function(p){return p.id===r.rep;}); }).length; };
+        check('INTEGRITY a clean book has no sale pointing at a missing employee', 0, badRep());
+        var orphan=mkRow({rep:'GONE',value:500,client:'Orphan Co'});
+        ROWS=[good,orphan];
+        check('INTEGRITY an orphan is visible before parking', 1, badRep());
+        empParkOrphans();
+        check('INTEGRITY parking clears it without losing the sale', 0, badRep());
+        check('INTEGRITY the sale is still there, on the holding record', 2, ROWS.length);
+        check('INTEGRITY its value is untouched', 500, bookedValue(ROWS[1]));
+        // a payout pointing at a sale that no longer exists must stay visible, not vanish
+        PAYOUTS=[{id:'po_x',kind:'rep',emp:'IP',rowId:'NO_SUCH_ROW',period:'2026-06',
+                  basisValue:1000,rate:10,share:1,amount:100,paidOn:'2026-07-10',status:'paid'}];
+        var orphanPayouts=PAYOUTS.filter(function(x){ return x.rowId && !ROWS.some(function(r){return r.id===x.rowId;}); }).length;
+        check('INTEGRITY a payout whose sale was deleted is still detectable', 1, orphanPayouts);
+        PAYOUTS=[];
+      }
+
       /* ---------- C2: tombstones stop deleted records resurrecting ---------- */
       if(typeof addTombstone==='function' && typeof isTombstoned==='function'){
         TOMBSTONES=[];

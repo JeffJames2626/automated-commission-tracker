@@ -2529,6 +2529,26 @@ function rowHasLedger(r){ return PAYOUTS.some(x=>x.rowId===r.id && x.kind==='rep
 // What this person was actually handed for this sale (commission + any corrections).
 function ledgerPaid(r,emp){ return payoutsFor(r.id,emp,['rep','adjustment']).reduce((a,x)=>a+x.amount,0); }
 function ledgerPaidAll(r){ return payoutsFor(r.id,null,['rep','adjustment']).reduce((a,x)=>a+x.amount,0); }
+// Split one commission across shares so the parts always add back to the whole.
+// Rounding each share on its own loses a penny on an even three-way split
+// (33.33 x 3 = 99.99, not 100.00). The residual goes to the largest share.
+// journalPaid writes these amounts and payoutVariance expects them, so the ledger
+// and the check can never disagree by a rounding cent.
+function splitAmounts(whole,shares){
+  const w=round2(whole);
+  const amts=shares.map(sx=>round2(w*sx.frac));
+  const drift=round2(amts.reduce((a,b)=>round2(a+b),0)-w);
+  if(amts.length && drift!==0){
+    let big=0; for(let i=1;i<shares.length;i++) if(shares[i].frac>shares[big].frac) big=i;
+    amts[big]=round2(amts[big]-drift);
+  }
+  return amts;
+}
+function shareAmount(r,emp){
+  const shares=rowShares(r), i=shares.findIndex(s=>s.rep===emp);
+  if(i<0) return 0;
+  return splitAmounts(rowComm(r),shares)[i];
+}
 function recordPayout(o){
   const e={id:uid('po'),kind:o.kind||'rep',emp:o.emp,rowId:o.rowId,period:o.period||'',
     basisValue:round2(o.basisValue),rate:+o.rate||0,share:+o.share||0,amount:round2(o.amount),
@@ -2555,7 +2575,13 @@ function journalPaid(r,paidOn){
   const basis=netValue(r), rate=rowRate(r), period=String(dueDate(r)||r.date).slice(0,7);
   if(r.commRate==null||r.commRate===''||!isFinite(+r.commRate)) r.commRate=rate;   // rate frozen on the row from here on
   const shares=rowShares(r);
-  shares.forEach(sx=>recordPayout({kind:'rep',emp:sx.rep,rowId:r.id,period,basisValue:basis,rate,share:sx.frac,amount:basis*rate/100*sx.frac,paidOn}));
+  // Split the commission so the parts always add back to the whole. Rounding each
+  // share on its own loses a penny on an even three-way split — 33.33 + 33.33 + 33.33
+  // is 99.99, not 100.00 — and the row records the whole, so the ledger and the sale
+  // disagreed by a cent for ever and payoutVariance offered a correction nobody could
+  // clear. The residual goes to the largest share, which is the usual convention.
+  const amts=splitAmounts(basis*rate/100,shares);
+  shares.forEach((sx,i)=>recordPayout({kind:'rep',emp:sx.rep,rowId:r.id,period,basisValue:basis,rate,share:sx.frac,amount:amts[i],paidOn}));
   // Manager override is earned on the NET value — a sale already cancelled or
   // partly refunded when it is paid earns the manager only on what is left.
   // (A later reversal is handled by journalReversal as a manager-chargeback.)
@@ -2564,7 +2590,7 @@ function journalPaid(r,paidOn){
   if(m && +m.commOv>0 && r.date>=(p.start||'0000') && ovAmt>0.004)
     recordPayout({kind:'override',emp:m.id,rowId:r.id,period,basisValue:ovBasis,rate:+m.commOv,share:1,amount:ovAmt,paidOn,note:'team override on '+empName(p)+'’s sale'});
   r.paidAmt=round2(basis*rate/100);
-  r.paidTo=shares.map(sx=>({emp:sx.rep,share:sx.frac,amount:round2(basis*rate/100*sx.frac)}));
+  r.paidTo=shares.map((sx,i)=>({emp:sx.rep,share:sx.frac,amount:amts[i]}));   // the same allocated amounts the ledger got
   r.paidBasis={value:basis,rate:rate,period:period,on:paidOn};
   delete r.payoutReview; delete r.paidCalc;
 }
@@ -2595,7 +2621,7 @@ function ledgerOverridePaid(r,emp){
 function payoutVariance(r){
   if(!r.paid || !rowHasLedger(r)) return [];
   const out=[]; const ids=new Set(rowShares(r).map(x=>x.rep).concat(payoutsFor(r.id,null,['rep','adjustment']).map(x=>x.emp)));
-  ids.forEach(id=>{ const now=round2(rowComm(r)*shareFor(r,id)), paid=round2(ledgerRepNet(r,id)); if(Math.abs(now-paid)>=0.01) out.push({emp:id,kind:'rep',now,paid,diff:round2(now-paid)}); });
+  ids.forEach(id=>{ const now=round2(shareAmount(r,id)), paid=round2(ledgerRepNet(r,id)); if(Math.abs(now-paid)>=0.01) out.push({emp:id,kind:'rep',now,paid,diff:round2(now-paid)}); });
   // the manager override on this sale, measured against its own frozen rate
   payoutsFor(r.id,null,['override']).forEach(o=>{
     const paid=round2(ledgerOverridePaid(r,o.emp)), now=round2(netValue(r)*o.rate/100*o.share);
