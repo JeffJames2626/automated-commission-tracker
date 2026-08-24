@@ -299,6 +299,41 @@ body.walled>*:not(#loginWall){visibility:hidden}
 .adminsec{margin-bottom:22px}
 .adminsec > .hdr{display:flex;align-items:baseline;gap:11px;margin-bottom:11px;flex-wrap:wrap}
 .adminsec > .hdr h3{font-size:16px}
+/* Reference sections fold away. The admin page had twelve panels all shouting at once
+   and printed to fourteen pages; the things that need a decision are open, everything
+   you only look up when you need it sits behind a summary line. */
+details.fold{margin-bottom:12px;border:1px solid var(--line);border-radius:11px;background:var(--paper)}
+details.fold > summary{list-style:none;cursor:pointer;padding:13px 16px;display:flex;
+  align-items:baseline;gap:11px;flex-wrap:wrap;border-radius:11px}
+details.fold > summary::-webkit-details-marker{display:none}
+details.fold > summary::before{content:'\25b8';color:var(--muted);font-size:12px;flex:none;
+  transition:transform .12s;line-height:1.6}
+details.fold[open] > summary::before{transform:rotate(90deg)}
+details.fold > summary:hover{background:var(--sand)}
+details.fold > summary b{font-size:15px;font-weight:650}
+details.fold > summary .sum{color:var(--muted);font-size:12.5px}
+details.fold > summary .hspace{flex:1}
+details.fold > .foldbody{padding:2px 16px 16px}
+/* The two strips at the top of the admin page. */
+.needs{display:grid;grid-template-columns:repeat(auto-fit,minmax(178px,1fr));gap:10px;margin-bottom:10px}
+.nd{border:1px solid var(--line);border-radius:11px;padding:13px 15px;background:var(--paper);
+  box-shadow:var(--shadow);text-align:left;cursor:pointer;transition:.12s;display:block;width:100%;font:inherit;color:inherit}
+.nd:hover{border-color:#b9c2b2;box-shadow:0 5px 18px rgba(28,33,25,.13);transform:translateY(-1px)}
+.nd .lab{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.nd .val{font-size:25px;font-weight:700;letter-spacing:-.02em;margin-top:5px;line-height:1.05}
+.nd .sub{font-size:12.5px;color:var(--muted);margin-top:4px}
+.nd.act{border-color:#e6c88a;background:linear-gradient(var(--gold-l),var(--paper) 62%)}
+.nd.act .val{color:#8a6f11}
+.nd.bad{border-color:#e8b3ae;background:linear-gradient(var(--red-l),var(--paper) 62%)}
+.nd.bad .val{color:var(--red)}
+.nd.ok .val{color:var(--grn-d)}
+.statestrip{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:1px;
+  background:var(--line);border:1px solid var(--line);border-radius:11px;overflow:hidden;margin-bottom:20px}
+.statestrip > div{background:var(--paper);padding:11px 13px}
+.statestrip .k{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.statestrip .v{font-size:15px;font-weight:650;margin-top:3px}
+.statestrip .v.warn{color:var(--red)}
+.statestrip .v.good{color:var(--grn-d)}
 .tiles.small .tile .val{font-size:22px}
 .alinks{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
 .alink{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--paper);
@@ -592,7 +627,17 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
   body{background:#fff}
   header{background:#fff;color:var(--ink);border-bottom:2px solid var(--ink)}
   header h1{color:var(--ink)}.hsub{color:var(--muted)}
-  .hbtns,nav,details,footer,#tab-import,#tab-plans{display:none!important}
+  .hbtns,nav,details:not(.fold),footer,#tab-import,#tab-plans{display:none!important}
+  /* A folded admin section still prints its summary line, so the printout accounts for
+     every section instead of silently dropping it. Open one before printing and its
+     detail comes with it. */
+  details.fold{border:1px solid #ccc;break-inside:avoid}
+  details.fold > summary{padding:7px 10px}
+  details.fold > summary::before{content:""}
+  details.fold:not([open]) > .foldbody{display:none}
+  .nd{break-inside:avoid}
+  .needs{grid-template-columns:repeat(4,1fr)}
+  .statestrip{grid-template-columns:repeat(6,1fr)}
   .card,.tile{box-shadow:none;break-inside:avoid}
   section{break-inside:avoid}
 
@@ -1455,39 +1500,20 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
         <span class="hspace"></span>
         <button class="sm" onclick="lockAdmin()">Lock</button>
       </div>
-      <div class="tiles small" id="adminTiles"></div>
+      <h3 style="margin:0 0 9px">What needs you</h3>
+      <div class="needs" id="adminNeeds"></div>
+      <div class="statestrip" id="adminState"></div>
     </section>
-
-    <section class="adminsec">
-      <div class="hdr"><h3>🦅 Data Hawk</h3>
-        <span class="hint">The discrepancy hunter has its own tab now.</span></div>
-      <div class="note" id="adminHawkNote"></div>
-    </section>
-
-    <section class="adminsec">
-      <div class="hdr"><h3>Admin-only tabs</h3>
-        <span class="hint">Visible in the top row while you are unlocked.</span></div>
-      <div class="alinks" id="adminLinks"></div>
-    </section>
-
     <section class="adminsec">
       <div class="hdr"><h3>🩹 Health check</h3>
         <span class="hint">Six things that can go wrong quietly. This only reads — it never changes, deletes or saves anything.</span></div>
       <div id="healthBody"><button class="p" onclick="runHealthCheck()">Run the health check</button></div>
     </section>
-
-    <section class="adminsec">
-      <div class="hdr"><h3>💵 Payout ledger</h3>
-        <span class="hint">Every commission payment is a permanent entry: who, how much, on what basis, recorded by whom. Reports read the ledger for “paid”; nothing about a sale’s current rep, rate or split can change it.</span></div>
-      <div id="payoutLedgerBody"></div>
-    </section>
-
     <section class="adminsec">
       <div class="hdr"><h3>👥 Employee match needed</h3>
         <span class="hint">Names the other systems use that the roster does not recognise. Tie each one to the right person once and every import after that remembers it. Nothing is guessed.</span></div>
       <div id="empMatchBody"></div>
     </section>
-
     <section class="adminsec">
       <div class="hdr"><h3>👤 Team logins</h3>
         <span class="hint">Who can sign in with Google, and as what. A rep sees their numbers; an admin gets everything. Add each person's work email here AND on their comp plan so their login ties to their record.</span></div>
@@ -1498,24 +1524,33 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
       </div>
       <div class="scroll" id="teamLoginBody"><div class="note">Connects when ☁ is on.</div></div>
     </section>
-
     <section class="adminsec">
-      <div class="hdr"><h3>🔏 Audit trail</h3>
-        <span class="hint">Every change to a logged sale — who, when, from which device. Chained locally, vaulted on the server with IP and server time. Proof for the reps and for the company.</span></div>
-      <div class="note" id="auditStatus" style="margin-bottom:10px"></div>
-      <div class="scroll" id="auditBody"></div>
+      <div class="hdr"><h3>Backup</h3>
+        <span class="hint">Everything lives in this browser. A backup is the only copy that survives it.</span></div>
+      <div class="card pad">
+        <div style="display:flex;gap:9px;flex-wrap:wrap;align-items:center">
+          <button class="p" onclick="backup()">Download a backup</button>
+          <button onclick="exportCSV()">Export sales to CSV</button>
+          <span class="note" id="backupNote"></span>
+        </div>
+      </div>
     </section>
-
-    <section class="adminsec">
-      <div class="hdr"><h3>Deleted imported records</h3>
-        <span class="hint">Sales you deleted that will stay deleted through re-imports. Restore one to let the next import bring it back.</span></div>
-      <div class="scroll" id="tombBody"></div>
-    </section>
-
-    <section class="adminsec">
-      <div class="hdr"><h3>Who can get in here</h3>
-        <span class="hint">Admin is a property of a person, so the tracker knows who did what.</span></div>
-      <div class="card">
+    <details class="fold">
+      <summary><b>🦅 Data Hawk</b><span class="sum" id="foldHawk"></span></summary>
+      <div class="foldbody">
+            <div class="note" id="adminHawkNote"></div>
+      </div>
+    </details>
+    <details class="fold">
+      <summary><b>💵 Payout ledger</b><span class="sum" id="foldLedger"></span></summary>
+      <div class="foldbody">
+            <div id="payoutLedgerBody"></div>
+      </div>
+    </details>
+    <details class="fold">
+      <summary><b>Who can get in here, and the PIN</b><span class="sum" id="foldWho"></span></summary>
+      <div class="foldbody">
+            <div class="card">
         <div class="scroll"><table id="adminUsers"></table></div>
         <div class="pad" style="border-top:1px solid var(--line)">
         <div class="frow" style="max-width:560px">
@@ -1531,12 +1566,31 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
         </div>
         </div>
       </div>
-    </section>
-
-    <section class="adminsec">
-      <div class="hdr"><h3>Calendar</h3>
-        <span class="hint">Where the money dates live.</span></div>
-      <div class="card pad">
+      </div>
+    </details>
+    <details class="fold">
+      <summary><b>🔏 Audit trail</b><span class="sum" id="foldAudit"></span></summary>
+      <div class="foldbody">
+            <div class="note" id="auditStatus" style="margin-bottom:10px"></div>
+      <div class="scroll" id="auditBody"></div>
+      </div>
+    </details>
+    <details class="fold">
+      <summary><b>Admin-only tabs</b><span class="sum" id="foldTabs"></span></summary>
+      <div class="foldbody">
+            <div class="alinks" id="adminLinks"></div>
+      </div>
+    </details>
+    <details class="fold">
+      <summary><b>Deleted imported records</b><span class="sum" id="foldTomb"></span></summary>
+      <div class="foldbody">
+            <div class="scroll" id="tombBody"></div>
+      </div>
+    </details>
+    <details class="fold">
+      <summary><b>Commission run calendar</b><span class="sum" id="foldCal"></span></summary>
+      <div class="foldbody">
+            <div class="card pad">
         <div class="frow" style="max-width:520px">
           <div><label>Commission run day of the month</label>
             <input type="number" id="payDay" min="1" max="28" step="1" onchange="savePayDay()"></div>
@@ -1550,19 +1604,19 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
           in Google if you shift the day, or the two will disagree.
         </div>
       </div>
-    </section>
-
-    <section class="adminsec">
-      <div class="hdr"><h3>Backup</h3>
-        <span class="hint">Everything lives in this browser. A backup is the only copy that survives it.</span></div>
-      <div class="card pad">
-        <div style="display:flex;gap:9px;flex-wrap:wrap;align-items:center">
-          <button class="p" onclick="backup()">Download a backup</button>
-          <button onclick="exportCSV()">Export sales to CSV</button>
-          <span class="note" id="backupNote"></span>
-        </div>
       </div>
-    </section>
+    </details>
+
+
+
+
+
+
+
+
+
+
+
   </div>
 </div>
 
@@ -3988,20 +4042,59 @@ function renderAdmin(){
   const ls=lastSync(), ils=lastInvSync();
   const age=d=>d?Math.round((dObj(todayISO())-dObj(d))/86400000):null;
   const ra=age(ls&&ls.on), ia=age(ils&&ils.on);
-  let h='';
-  h+=tlink(tile('Needs fixing',bad,bad?'across the checks below':'nothing broken',bad?'bad':'ok'),
-      "jumpToChecks()",'See the failing checks below');
-  h+=tlink(tile('Worth a look',warn,'lower priority'),
-      "jumpToChecks()",'See the flagged checks below');
-  h+=tlink(tile('Roster',ra==null?'never':ra+'d old',ls?'synced '+fmtY(ls.on):'no client sync yet',
-      ra==null||ra>7?'bad':'ok'),
-      "setTab('clients')",'Open the Clients tab — roster and sync');
-  h+=tlink(tile('Invoices',ia==null?'never':ia+'d old',ils?'through '+fmtY(ils.to):'no invoice import yet',
-      ia==null||ia>=7?'bad':'ok'),
-      "setTab('rev')",'Open the Revenue tab — invoices, payments and balances');
-  h+=tlink(tile('Sales logged',ROWS.length.toLocaleString(),PEOPLE.filter(p=>p.active).length+' active reps'),
-      "setTab('sales')",'Open the Sales tab — every logged sale');
-  document.getElementById('adminTiles').innerHTML=h;
+  // ---- WHAT NEEDS YOU: only the things a person has to decide or act on ----
+  // The admin page used to open with five status tiles and bury the two live jobs -
+  // unmatched names and the backup - at sections six and twelve. These are the ones
+  // that carry a decision, in the order they cost you.
+  const q=(typeof empMatchQueue==='function')?empMatchQueue():[];
+  const qRecords=q.reduce((a,x)=>a+(x.n||0),0);
+  const impact=checks.filter(c=>c.sev==='bad').reduce((a,c)=>a+(c.impact||0),0);
+  let payable=0;
+  try{ PEOPLE.filter(p=>p.active).forEach(p=>{ payable+=compPosition(p,todayISO().slice(0,7)).payable||0; }); }
+  catch(e){ payable=0; }
+  const nd=(cls,lab,val,sub,go,title)=>'<button class="nd '+cls+'" onclick="'+go+'" title="'+esc(title)+'">'+
+    '<div class="lab">'+esc(lab)+'</div><div class="val">'+val+'</div><div class="sub">'+sub+'</div></button>';
+  let n='';
+  n+=nd(bad?'bad':'ok','Needs fixing',bad,
+        bad?(impact>0.5?money(impact)+' at stake':'across the checks'):'nothing broken',
+        "jumpToChecks()",'Open the Data Hawk');
+  n+=nd(q.length?'act':'ok','Names to match',q.length,
+        q.length?qRecords.toLocaleString()+' records waiting on a decision':'everyone resolves',
+        "setTab('admin');setTimeout(function(){var e=document.getElementById('empMatchBody');if(e)e.scrollIntoView({block:'center'});},60)",
+        'Names the other systems use that the roster does not recognise');
+  n+=nd(payable>0.5?'act':'ok','Commission payable',money(payable),
+        payable>0.5?'owed right now, across everyone':'nothing outstanding',
+        "setTab('comm')",'Open the Commissions tab');
+  n+=nd(ROWS.length&&!lastBackupOn()?'bad':'ok','Backup',
+        lastBackupOn()?(age(lastBackupOn())||0)+'d old':'never',
+        lastBackupOn()?'downloaded '+fmtY(lastBackupOn()):'the only copy is this browser',
+        "backup()",'Download a backup now');
+  const nEl=document.getElementById('adminNeeds'); if(nEl) nEl.innerHTML=n;
+
+  // ---- STATE OF THE DATA: reassurance, not action. Deliberately quieter. ----
+  const st=(k,v,cls)=>'<div><div class="k">'+esc(k)+'</div><div class="v'+(cls?' '+cls:'')+'">'+v+'</div></div>';
+  let s='';
+  s+=st('Roster', ra==null?'never synced':ra+'d old', (ra==null||ra>7)?'warn':'good');
+  s+=st('Invoices', ia==null?'never imported':ia+'d old', (ia==null||ia>=7)?'warn':'good');
+  s+=st('Sales logged', ROWS.length.toLocaleString(), '');
+  s+=st('Active reps', PEOPLE.filter(p=>p.active&&p.id!==EMP_UNASSIGNED).length, '');
+  s+=st('Payout entries', PAYOUTS.filter(x=>x.status!=='void').length.toLocaleString(), '');
+  s+=st('Worth a look', warn, '');
+  const sEl=document.getElementById('adminState'); if(sEl) sEl.innerHTML=s;
+
+  // ---- one-line summaries on every folded section, so nothing hides ----
+  const setSum=(id,txt)=>{ const e=document.getElementById(id); if(e) e.textContent=txt; };
+  setSum('foldHawk', bad+warn ? (bad+warn)+' findings · its own tab has the detail' : 'nothing outstanding');
+  setSum('foldLedger', PAYOUTS.filter(x=>x.status!=='void').length
+    ? PAYOUTS.filter(x=>x.status!=='void').length+' entries · '+
+      money(PAYOUTS.filter(x=>x.kind==='rep'&&x.status!=='void').reduce((a,x)=>a+x.amount,0))+' paid to reps'
+    : 'no commission paid through the ledger yet');
+  setSum('foldWho', PEOPLE.filter(p=>p.admin).length+' admin · '+
+    PEOPLE.filter(p=>p.active&&p.id!==EMP_UNASSIGNED).length+' on the roster');
+  setSum('foldTabs', 'the eleven tabs only an admin sees');
+  setSum('foldTomb', (typeof TOMBSTONES!=='undefined'&&TOMBSTONES.length)
+    ? TOMBSTONES.length+' held out of re-imports' : 'nothing deleted');
+  setSum('foldCal', 'commission runs on day '+((GLOBAL.payDay)||16)+' of the month');
 
   const ut=document.getElementById('adminUsers');
   if(ut){
@@ -4163,6 +4256,10 @@ async function teamLoginDrop(email){
 
 function renderAudit(){
   const st=document.getElementById('auditStatus'), box=document.getElementById('auditBody');
+  // the folded section's one-line summary, so the chain state is visible without opening it
+  const fa=document.getElementById('foldAudit');
+  if(fa) fa.textContent=(AUDIT_CHAIN.ok?'chain verified':'CHAIN BROKEN')+' · '+
+    AUDIT.length.toLocaleString()+' entries on this device';
   if(!st||!box) return;
   const chain = AUDIT_CHAIN.ok
     ? '<span class="pill ok">CHAIN VERIFIED</span>'
@@ -4225,6 +4322,9 @@ function tlink(h,js,tip){
 }
 // Scroll to the data-checks detail on the Admin tab.
 function jumpToChecks(){ setTab('hawk'); }
+// Backups are the only copy that survives this browser, so the admin page says how old
+// the last one is. Recorded when Download a backup is used.
+function lastBackupOn(){ return (GLOBAL && GLOBAL.lastBackup) || ''; }
 
 function renderTeam(){
   const act=PEOPLE.filter(p=>p.active);
@@ -11685,6 +11785,7 @@ function backup(){
   // Gated in the header too, but the guard belongs in the function: a whole-state
   // dump is an admin operation however it was reached.
   if(!can('admin_security')){ toast('That is not part of your access'); return; }
+  GLOBAL.lastBackup=todayISO(); save(K_GLOBAL,GLOBAL);
   dl(new Blob([JSON.stringify(stateSnapshot(),null,2)],
     {type:'application/json'}),'alp-sales-backup-'+todayISO()+'.json');
 }
