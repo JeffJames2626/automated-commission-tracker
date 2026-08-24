@@ -313,7 +313,16 @@ a.emplink:hover{color:var(--grn-d);border-bottom-color:var(--grn)}
 .moreMenu.on{display:flex}
 .moreMenu button{background:none;border:none;text-align:left;padding:8px 11px;border-radius:7px;color:var(--ink);white-space:nowrap;font-size:13.5px}
 .moreMenu button:hover{background:var(--band)}
+.moreMenu .mhead{padding:8px 11px 3px;font-size:10px;font-weight:700;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--muted)}
+.moreMenu .mhead:not(:first-child){margin-top:4px;border-top:1px solid var(--line);padding-top:9px}
 nav button.moreBtn{opacity:.85}
+/* the section strip: sibling pages of wherever you are, one click apart */
+#subnav{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0 -8px}
+#subnav button{background:var(--paper);border:1px solid var(--line);border-radius:16px;
+  padding:5px 13px;font-size:12.5px;font-weight:650;color:var(--muted);cursor:pointer}
+#subnav button:hover{border-color:#b9c2b2;color:var(--ink)}
+#subnav button.on{background:var(--ink);border-color:var(--ink);color:#f3f5f0}
 .homesw{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
 .homesw .note{margin-right:2px}
 .hverdict{background:var(--paper);border:1px solid var(--line);border-radius:11px;box-shadow:var(--shadow);padding:13px 15px;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
@@ -637,6 +646,7 @@ details.fold > .foldbody{padding:2px 16px 16px}
     font-size:15px;min-height:44px;box-sizing:border-box;border-radius:8px;
     background:transparent;border:0;color:#c3cbbe}
   header.menu-open .moreMenu button:hover{background:#262d23;color:#e6eae2}
+  header.menu-open .moreMenu .mhead{color:#9aa596;border-top-color:#2c342a;padding:9px 14px 3px}
   header.menu-open .hbtns{width:100%;padding:9px 0 0;flex-wrap:wrap}
   .pop{left:auto;right:0;min-width:0;width:min(280px,calc(100vw - 40px))}
   .pop.left{left:0;right:auto}
@@ -909,6 +919,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
 
 <div class="wrap">
 <div class="alertbar" id="alertBar"></div>
+<div id="subnav" style="display:none"></div>
 
 <!-- ==================== TEAM ==================== -->
 <div class="tab" id="tab-view">
@@ -4221,6 +4232,46 @@ const TABS=[
 ];
 // The homes are the first block above; they are never shown in the main nav row
 // alongside the working tabs — the current home is simply where you land.
+
+/* ============================================================
+   NAVIGATION ARCHITECTURE — complex underneath, simple on top.
+   Seven areas: TODAY (your role's home) · SALES · CLIENTS ·
+   INVOICES · TEAM · COMMISSIONS · MORE. A feature does not get a
+   top-level slot just because it has its own page — everything
+   else lives one click deeper: in its section's strip, or in the
+   grouped More menu. No route, page, or permission changed.
+   ============================================================ */
+// The primary row per home. Capability filtering trims per person, so a
+// listed tab someone cannot open simply never renders for them.
+const NAV_PRIMARY={view:['view','sales','clients','invoices','roster','comm'],
+                   mgr:['mgr','sales','clients','invoices','roster','comm'],
+                   me:['me','sales','clients','comm'],
+                   cx:['cx','clients','roster','svc'],
+                   bill:['bill','invoices','clients'],
+                   mine:['mine','svc','map']};
+// Sections: sibling pages that share one strip under the header.
+// A tab belongs to at most one strip (Jeff's sketch: Scoreboard and Hours
+// live with TEAM; Pipeline lives with SALES).
+const NAV_GROUPS={sales:['sales','pipe'],
+                  clients:['clients','prop','map','svc'],
+                  invoices:['invoices','rev'],
+                  roster:['roster','score','hours','team'],
+                  comm:['comm','adj','plans']};
+// The More menu, grouped by what the pages are FOR — never again a flat
+// 17-item dropdown. Anything visible but unlisted lands in the last group,
+// so no tab can ever become unreachable by omission.
+const NAV_MORE=[['Selling',['pipe','score','hours']],
+                ['Clients & field',['prop','map','svc']],
+                ['Money',['rev','adj','plans','team']],
+                ['Oversight',['hawk','import','admin']]];
+function subnavFor(tab){
+  const g=Object.keys(NAV_GROUPS).find(k=>NAV_GROUPS[k].indexOf(tab)>-1);
+  if(!g) return '';
+  const items=NAV_GROUPS[g].filter(id=>tabAllowed(id));
+  if(items.length<2) return '';
+  return items.map(id=>'<button class="'+(tab===id?'on':'')+'" onclick="setTab(\''+id+'\')">'+
+    esc(TAB_INFO[id].label.replace(/^[^A-Za-z0-9]+\s*/,''))+'</button>').join('');
+}
 const HOME_TABS=['view','mgr','me','cx','bill','mine'];
 const TAB_INFO={}; TABS.forEach(t=>{ TAB_INFO[t[0]]={label:t[1],cap:t[2],desc:t[3]}; });
 function tabAllowed(id){ const i=TAB_INFO[id]; if(!i) return false; return !i.cap || can(i.cap); }
@@ -4279,25 +4330,41 @@ function render(){
   const paused=mergePaused();
   if(paused && PAUSE_ALLOWED.indexOf(TAB)<0)
     TAB = visible.some(t=>t[0]==='rev') ? 'rev' : 'clients';
-  // Home first, then the tabs this person actually works in; everything else
-  // they are allowed but rarely need goes under More.
+  // Seven areas on top: TODAY (your home) · Sales · Clients · Invoices ·
+  // Team · Commissions · More. Sections carry their own strips; the rest
+  // lives grouped under More. Nothing moved routes, pages, or permissions.
   const home=homeTab();
-  const PRIMARY={view:['view','hawk','sales','invoices','clients','roster','comm'],
-                 mgr:['mgr','score','sales','pipe','clients','roster'],
-                 me:['me','sales','pipe','clients','map'],
-                 cx:['cx','clients','prop','svc','map'],
-                 bill:['bill','rev','invoices','clients','adj'],
-                 mine:['mine','svc','map']}[home]||['mine'];
+  const PRIMARY=NAV_PRIMARY[home]||['mine'];
+  // Your own home answers "where do I work today" — so that is its name here.
+  // The page keeps its real title in the header.
   const btn=(t,blocked)=>'<button class="'+(TAB===t[0]?'on':'')+(blocked?' lock':'')+'" onclick="'+
-      (blocked?'pauseNudge()':'setTab(&quot;'+t[0]+'&quot;)')+'">'+esc(t[1])+'</button>';
+      (blocked?'pauseNudge()':'setTab(&quot;'+t[0]+'&quot;)')+'" title="'+esc(t[3]||'')+'">'+
+      esc(t[0]===home?'Today':t[1])+'</button>';
   const prim=visible.filter(t=>PRIMARY.indexOf(t[0])>-1).sort((a,b)=>PRIMARY.indexOf(a[0])-PRIMARY.indexOf(b[0]));
   const more=visible.filter(t=>PRIMARY.indexOf(t[0])<0 && HOME_TABS.indexOf(t[0])<0);
   const moreHomes=visible.filter(t=>HOME_TABS.indexOf(t[0])>-1 && PRIMARY.indexOf(t[0])<0);
   let nav=prim.map(t=>btn(t, paused && PAUSE_ALLOWED.indexOf(t[0])<0)).join('');
   const rest=moreHomes.concat(more);
-  if(rest.length) nav+='<span class="moreWrap"><button class="moreBtn'+(rest.some(t=>t[0]===TAB)?' on':'')+'" onclick="toggleMore(event)">More ▾</button>'+
-    '<span class="moreMenu" id="moreMenu">'+rest.map(t=>'<button onclick="setTab(&quot;'+t[0]+'&quot;);closeMore()">'+esc(t[1])+'</button>').join('')+'</span></span>';
+  if(rest.length){
+    const mbtn=t=>'<button onclick="setTab(&quot;'+t[0]+'&quot;);closeMore()">'+esc(t[1])+'</button>';
+    const used={}; let menu='';
+    NAV_MORE.forEach(g=>{
+      const members=g[1].map(id=>rest.find(t=>t[0]===id)).filter(Boolean);
+      if(!members.length) return;
+      members.forEach(t=>used[t[0]]=1);
+      menu+='<span class="mhead">'+esc(g[0])+'</span>'+members.map(mbtn).join('');
+    });
+    const homesLeft=moreHomes.filter(t=>!used[t[0]]);
+    const leftover=rest.filter(t=>!used[t[0]] && homesLeft.indexOf(t)<0);
+    if(leftover.length) menu+='<span class="mhead">Also here</span>'+leftover.map(mbtn).join('');
+    if(homesLeft.length) menu+='<span class="mhead">Other role views</span>'+homesLeft.map(mbtn).join('');
+    nav+='<span class="moreWrap"><button class="moreBtn'+(rest.some(t=>t[0]===TAB)?' on':'')+'" onclick="toggleMore(event)">More ▾</button>'+
+      '<span class="moreMenu" id="moreMenu">'+menu+'</span></span>';
+  }
   document.getElementById('nav').innerHTML=nav;
+  // The section strip: sibling pages of wherever you are, one click apart.
+  const sn=document.getElementById('subnav');
+  if(sn){ const s=subnavFor(TAB); sn.innerHTML=s; sn.style.display=s?'':'none'; }
   // The header names the page — the biggest type in it. Emoji stripped ("🦅 Data
   // Hawk" → "Data Hawk"): this is the one string that must always be readable.
   const hp=document.getElementById('hdrPage');

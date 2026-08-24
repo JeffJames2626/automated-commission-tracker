@@ -1712,6 +1712,28 @@
         window.alert=alertB; window.toast=toastB; PAYOUTS=[];
       }
 
+      /* ---------- NAV: seven areas on top, everything reachable underneath ---------- */
+      if(typeof NAV_PRIMARY!=='undefined'){
+        var navAll={}; TABS.forEach(function(t){navAll[t[0]]=1;});
+        var covered={}; HOME_TABS.forEach(function(id){covered[id]=1;});
+        Object.keys(NAV_PRIMARY).forEach(function(h){ NAV_PRIMARY[h].forEach(function(id){covered[id]=1;}); });
+        Object.keys(NAV_GROUPS).forEach(function(g){ NAV_GROUPS[g].forEach(function(id){covered[id]=1;}); });
+        NAV_MORE.forEach(function(g){ g[1].forEach(function(id){covered[id]=1;}); });
+        check('NAV every page has a labelled place', '',
+          TABS.map(function(t){return t[0];}).filter(function(id){return !covered[id];}).join(','));
+        var ghost=[];
+        Object.keys(NAV_PRIMARY).forEach(function(h){ NAV_PRIMARY[h].forEach(function(id){ if(!navAll[id]) ghost.push(id); }); });
+        Object.keys(NAV_GROUPS).forEach(function(g){ NAV_GROUPS[g].forEach(function(id){ if(!navAll[id]) ghost.push(id); }); });
+        NAV_MORE.forEach(function(g){ g[1].forEach(function(id){ if(!navAll[id]) ghost.push(id); }); });
+        check('NAV nothing points at a page that does not exist', '', ghost.join(','));
+        check('NAV no primary row exceeds six areas plus More', '',
+          Object.keys(NAV_PRIMARY).filter(function(h){ return NAV_PRIMARY[h].length>6; }).join(','));
+        check('NAV every section strip names at least two pages', '',
+          Object.keys(NAV_GROUPS).filter(function(g){ return NAV_GROUPS[g].length<2; }).join(','));
+      } else {
+        results.push({name:'NAV structure exists (NAV_PRIMARY)', expected:true, actual:false, pass:false});
+      }
+
       /* ---------- INVOICE REGISTRY: invoices as first-class records ---------- */
       // One canonical record per source invoice (source system + number), assembled
       // from the three feeds. Nothing is guessed, nothing is migrated, the payout
