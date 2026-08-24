@@ -1699,6 +1699,84 @@
         window.alert=alertB; window.toast=toastB; PAYOUTS=[];
       }
 
+      /* ---------- CHAIN OF CUSTODY: the audit's uncovered failure cases ---------- */
+      // Jeff's integrity audit: identity is ids, names are display values. These
+      // prove the cases the rest of the suite did not already pin down.
+      if(typeof chainAudit==='function' && typeof resolveEmployee==='function'){
+        var CA=mkPerson({id:'CA',name:'Chain Ann'}); CA.first='Chain'; CA.last='Ann'; CA.roles=['sales'];
+        CA.start='2026-01-01'; CA.commNew=10; CA.email='chain.ann@automatedlawnandpest.com'; CA.aliases=[]; CA.log=[];
+        var CB=mkPerson({id:'CB',name:'Chain Bob'}); CB.first='Chain'; CB.last='Bob'; CB.roles=['sales'];
+        CB.start='2026-01-01'; CB.commNew=10; CB.aliases=[]; CB.log=[];
+        PEOPLE=[CA,CB]; EMP_IDX=null; ROWS=[]; PAYOUTS=[]; DISPUTES=[];
+        if(typeof CLIENTS!=='undefined') CLIENTS=[];
+        if(typeof INVOICES!=='undefined') INVOICES=[];
+        PAIDINV=[]; OPENINV=[]; PAYMENTS=[];
+        var alertC=window.alert, toastC=window.toast; window.alert=function(){}; window.toast=function(){};
+
+        // 2. EMAIL CHANGE: the address is an attribute, not the identity
+        check('CHAIN email resolves to the id', 'CA', (resolveEmployee('','*',{email:'chain.ann@automatedlawnandpest.com'})||{}).id);
+        CA.email='ann.chain@automatedlawnandpest.com'; EMP_IDX=null;
+        check('CHAIN the NEW email resolves after a change', 'CA', (resolveEmployee('','*',{email:'ann.chain@automatedlawnandpest.com'})||{}).id);
+        var cr1=mkRow({rep:'CA',value:1000,type:'new',date:'2026-06-05',client:'Chain Co'});
+        ROWS=[cr1];
+        check('CHAIN id-based history survives the email change', 1, empData('CA').rows.length);
+
+        // 4. REASSIGNED BEFORE PAYOUT: commission follows the sale, no residue
+        var cr2=mkRow({rep:'CA',value:2000,type:'new',date:'2026-06-05',invoiced:'2026-06-10',client:'Move Co'});
+        ROWS=[cr2]; freezeDueLag(cr2); cr2.commRate=rowRate(cr2);
+        cr2.rep='CB';
+        check('CHAIN reassigned-before-payout: the new rep earns it', 200, round2(rowComm(cr2)*shareFor(cr2,'CB')));
+        check('CHAIN reassigned-before-payout: the old rep earns nothing', 0, round2(rowComm(cr2)*shareFor(cr2,'CA')));
+        check('CHAIN reassigned-before-payout: no ledger residue', 0, payoutsFor(cr2.id).length);
+        check('CHAIN reassigned-before-payout: nothing to correct', 0, payoutVariance(cr2).length);
+
+        // 5. REASSIGNED AFTER PAYOUT: the money stays where it went; the drift is flagged
+        var cr3=mkRow({rep:'CA',value:3000,type:'new',date:'2026-06-05',invoiced:'2026-06-10',client:'Paid Move Co'});
+        ROWS=[cr3]; freezeDueLag(cr3); cr3.commRate=rowRate(cr3);
+        cr3.paid='2026-07-15'; journalPaid(cr3,'2026-07-15');
+        check('CHAIN paid: the ledger names the payee', 300, round2(ledgerRepNet(cr3,'CA')));
+        cr3.rep='CB';
+        check('CHAIN reassigned-after-payout: the payout does NOT move', 300, round2(ledgerRepNet(cr3,'CA')));
+        check('CHAIN reassigned-after-payout: the new rep gains no paid money', 0, round2(ledgerRepNet(cr3,'CB')));
+        checkTrue('CHAIN reassigned-after-payout: the drift is flagged, not hidden', payoutVariance(cr3).length>0, payoutVariance(cr3).length);
+
+        // 13/14. ONE SOURCE RECORD, TWO SALES — and the same id used once is fine
+        var sd1=mkRow({rep:'CA',value:500,src:'SA',srcId:'DUP-1',client:'Dup Co',date:'2026-06-01'});
+        var sd2=mkRow({rep:'CA',value:500,src:'SA',srcId:'DUP-1',client:'Dup Co',date:'2026-06-20'});
+        var sd3=mkRow({rep:'CA',value:500,src:'EL',srcId:'DUP-1',client:'Other Co',date:'2026-06-20'});
+        ROWS=[sd1,sd2,sd3];
+        var srcCheck=function(){ var c=runChecks().find(function(x){return x.id==='hawkSrcDup';}); return c||{items:[]}; };
+        check('CHAIN the same source record twice is reported', 1, srcCheck().items.length);
+        ROWS=[sd1,sd3];
+        check('CHAIN the same record id in DIFFERENT systems is two real records', 0, srcCheck().items.length);
+
+        // one SA account, two roster records
+        CLIENTS=[{n:'Harbor View HOA',u:'U-77',at:'1 Bay St',ct:'Client'},
+                 {n:'Harborview HOA', u:'U-77',at:'1 Bay St',ct:'Client'}];
+        var cliCheck=function(){ var c=runChecks().find(function(x){return x.id==='hawkCliDup';}); return c||{items:[]}; };
+        check('CHAIN one SA account on two roster records is reported', 1, cliCheck().items.length);
+        CLIENTS=[{n:'Harbor View HOA',u:'U-77',at:'1 Bay St',ct:'Client'},
+                 {n:'Other Client',u:'U-88',at:'2 Bay St',ct:'Client'}];
+        check('CHAIN distinct SA accounts say nothing', 0, cliCheck().items.length);
+
+        // the chain audit itself: measures, never guesses
+        ROWS=[mkRow({rep:'CA',value:100,client:'Known Co'}),
+              Object.assign(mkRow({value:100,client:'Ghost Co'}),{rep:EMP_UNASSIGNED,repHow:'orphan'})];
+        CLIENTS=[{n:'Known Co',u:'U-1',at:'1 St',ct:'Client',sp:'Chain Ann'}];
+        PAYOUTS=[{id:'cp1',emp:'CA',rowId:'r_gone',kind:'rep',amount:50,status:'paid',paidOn:'2026-07-01'}];
+        var CH={}; chainAudit().forEach(function(x){ CH[x.id]=x; });
+        check('CHAIN audit counts the parked sale as broken', 1, CH.saleEmp.broken);
+        check('CHAIN audit sees the sale→client join is name-based', 1, CH.saleCli.weak);
+        check('CHAIN audit counts the client the roster does not know', 1, CH.saleCli.broken);
+        check('CHAIN audit counts the payout whose sale is gone', 1, CH.paySale.broken);
+        check('CHAIN audit knows property is only an address string', 1, CH.cliProp.weak);
+        check('CHAIN audit resolves the account owner through the matcher', 1, CH.cliEmp.ok);
+
+        window.alert=alertC; window.toast=toastC; PAYOUTS=[]; CLIENTS=[];
+      } else {
+        results.push({name:'CHAIN chainAudit() exists', expected:true, actual:false, pass:false});
+      }
+
       /* ---------- PAID INVOICES: the feed that puts names on collected money ---------- */
       // One row per settled invoice. Records merge by invoice number and are never
       // deleted by an import; the salesperson resolves at runtime through the same

@@ -889,6 +889,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
     <div id="chkTiles" style="margin-bottom:12px"></div>
     <div id="hawkBriefWrap"></div>
     <div id="chkBody"></div>
+    <div id="chainWrap" style="margin-top:16px"></div>
     <input id="hawkQ" type="hidden">
   </section>
 </div>
@@ -8525,7 +8526,8 @@ function hawkCounts(){
     hawkVariance:'paid sales drifted from their payout', hawkNoIdDupes:'probable duplicate sales',
     hawkSplit:'splits holding money', hawkSplitRate:'splits paid at one person’s rate', hawkPrePlan:'sales earning $0 (plan starts later)',
     hawkFormer:'former team members still in the money', hawkInvNo:'invoice numbers matching nothing',
-    hawkPaidOwed:'invoices both paid and still owed', hawkPaidDrift:'deposits vs settled drift'};
+    hawkPaidOwed:'invoices both paid and still owed', hawkPaidDrift:'deposits vs settled drift',
+    hawkSrcDup:'one source record, two sales', hawkCliDup:'one SA account, two roster records'};
   const out={total:0,parts:[],items:{}};
   runChecks().forEach(c=>{
     if(HAWK_IDS[c.id] && c.items.length){
@@ -9749,7 +9751,115 @@ function runChecks(){
         act:''})), drift.reduce((a,d)=>a+Math.abs(d.diff),0));
   }
 
+  /* --- 13. the same source record entered as two different sales --- */
+  // The importer updates in place on src+srcId, so a pair like this predates that
+  // rule or was edited into collision. Both halves earn commission on one real job.
+  const srcSeen={}, srcDup=[];
+  ROWS.forEach(r=>{ if(!(r.src&&r.srcId)) return; const k=r.src+'|'+String(r.srcId).trim();
+    if(srcSeen[k]) srcDup.push({a:srcSeen[k],b:r}); else srcSeen[k]=r; });
+  add('hawkSrcDup','bad','🦅 One source record, two sales',
+    'Two sales carry the SAME source system and record id. One real job in the CRM is counted — and commissioned — twice here.',
+    srcDup.slice(0,20).map(d=>({
+      text:'<b>'+esc(d.a.client)+'</b> · '+(SRC_LABEL[d.a.src]||d.a.src)+' #'+esc(d.a.srcId),
+      sub:fmt(d.a.date)+' '+money2(bookedValue(d.a))+' and '+fmt(d.b.date)+' '+money2(bookedValue(d.b))+
+        (norm(d.a.client)!==norm(d.b.client)?' · also as “'+esc(d.b.client)+'”':''),
+      act:'<button class="sm" onclick="rowInfo(\''+d.a.id+'\')">A</button> <button class="sm" onclick="rowInfo(\''+d.b.id+'\')">B</button>'
+    })), srcDup.reduce((a,d)=>a+Math.min(rowComm(d.a),rowComm(d.b)),0));
+
+  /* --- 14. one SA account behind two roster records --- */
+  const uSeen={}, uDup=[];
+  CLIENTS.forEach(c=>{ if(!c.u) return; const k=String(c.u).trim();
+    if(uSeen[k]) uDup.push({a:uSeen[k],b:c}); else uSeen[k]=c; });
+  add('hawkCliDup','warn','🦅 One SA account, two roster records',
+    'Two client records carry the same Service Autopilot UserName — usually a rename that re-imported as new. Sales and invoices joined by name can split between them, so each looks smaller than the truth.',
+    uDup.slice(0,20).map(d=>({
+      text:'<b>'+esc(d.a.n)+'</b>'+(norm(d.a.n)!==norm(d.b.n)?' / <b>'+esc(d.b.n)+'</b>':' (twice)')+' · SA '+esc(d.a.u),
+      sub:esc(d.a.at||'no address')+(String(d.a.at||'')!==String(d.b.at||'')?' vs '+esc(d.b.at||'no address'):''),
+      act:''
+    })));
+
   return out;
+}
+
+/* ============================================================
+   CHAIN OF CUSTODY
+   One table answering Jeff's question: employee → client →
+   property → sale → invoice → commission → payout — what each
+   link actually stands on. "Solid" = held by an internal or
+   source id. "Weak" = held by a display name, an address, or a
+   manual entry with nothing to verify against. "Broken" = the
+   far end does not exist. Nothing here guesses or repairs —
+   it measures.
+   ============================================================ */
+function chainAudit(){
+  const L=[];
+  const add=(id,from,to,how,total,ok,weak,broken,note)=>L.push({id,from,to,how,total,ok,weak,broken,note});
+  const parked=ROWS.filter(r=>r.rep===EMP_UNASSIGNED||!person(r.rep));
+  add('saleEmp','Sale','Employee','employee id',ROWS.length,ROWS.length-parked.length,0,parked.length,
+    'rep is an internal id; the import name is kept in repRaw; orphans park on Unassigned for review');
+  const withId=ROWS.filter(r=>r.src&&r.srcId);
+  add('saleSrc','Sale','Source record','source system + record id',ROWS.length,withId.length,ROWS.length-withId.length,0,
+    'weak = manual or pre-provenance rows — legitimate, but unverifiable against the CRM');
+  const cliByName={}; CLIENTS.forEach(c=>{ const k=norm(c.n); if(k) cliByName[k]=1; });
+  const cliHit=ROWS.filter(r=>cliByName[norm(r.client)]);
+  add('saleCli','Sale','Client record','NAME text',ROWS.length,0,cliHit.length,ROWS.length-cliHit.length,
+    'structural: sales carry no client id — the join is the client’s display name');
+  const paidRows=ROWS.filter(r=>r.paid&&!r.voidType);
+  const invNos={}; INVOICES.forEach(x=>{ if(x.i) invNos[String(x.i).trim()]=1; });
+  const withNo=paidRows.filter(r=>r.invNo&&String(r.invNo).trim());
+  const foundNo=INVOICES.length?withNo.filter(r=>invNos[String(r.invNo).trim()]):withNo;
+  add('saleInv','Paid sale','Invoice','invoice number',paidRows.length,foundNo.length,withNo.length-foundNo.length,paidRows.length-withNo.length,
+    'THE LAW says every paid sale names its real invoice; weak = a number the imported audit does not hold');
+  add('invEmp','Invoice line','Employee','name → alias resolution',INVOICES.length,
+    INVOICES.filter(x=>invoiceRepId(x)).length,INVOICES.filter(x=>!x.r).length,
+    INVOICES.filter(x=>x.r&&!invoiceRepId(x)).length,
+    'raw name kept; resolves through the alias table; unmatched names wait in the employee match queue');
+  add('invCli','Invoice line','Client record','NAME text',INVOICES.length,0,
+    INVOICES.filter(x=>cliByName[norm(x.c)]).length,INVOICES.filter(x=>!cliByName[norm(x.c)]).length,
+    'structural: invoice lines carry no client id');
+  if(PAIDINV.length){
+    add('pdiEmp','Paid invoice','Employee','name → alias resolution',PAIDINV.length,
+      PAIDINV.filter(x=>paidInvRepId(x)).length,PAIDINV.filter(x=>!x.r).length,
+      PAIDINV.filter(x=>x.r&&!paidInvRepId(x)).length,'same rules as invoice lines');
+    add('pdiInv','Paid invoice','Invoice audit','invoice number',PAIDINV.length,
+      INVOICES.length?PAIDINV.filter(x=>invNos[String(x.i).trim()]).length:0,
+      INVOICES.length?PAIDINV.filter(x=>!invNos[String(x.i).trim()]).length:PAIDINV.length,0,
+      'weak = a settled invoice the audit does not hold — usually a billing week not yet imported');
+  }
+  const payLive=PAYOUTS.filter(x=>x.status!=='void');
+  add('payEmp','Payout','Employee','employee id',payLive.length,
+    payLive.filter(x=>person(x.emp)).length,0,payLive.filter(x=>!person(x.emp)).length,
+    'financial history — entries are immutable, corrections are new entries');
+  add('paySale','Payout','Sale','sale id',payLive.length,
+    payLive.filter(x=>ROWS.some(r=>r.id===x.rowId)).length,0,
+    payLive.filter(x=>!ROWS.some(r=>r.id===x.rowId)).length,
+    'broken = the sale was deleted after money moved — kept and flagged, never dropped');
+  const act=CLIENTS.filter(c=>!c.gone);
+  add('cliEmp','Client','Account owner','name → alias resolution',act.length,
+    act.filter(c=>clientRepId(c)).length,act.filter(c=>!c.sp).length,
+    act.filter(c=>c.sp&&!clientRepId(c)).length,
+    'the SA salesperson text resolves at runtime; takeover rules apply on top');
+  add('cliId','Client','Source identity','SA UserName',act.length,
+    act.filter(c=>c.u).length,act.filter(c=>!c.u).length,0,
+    'weak = no UserName in the export — the record is keyed by its display name');
+  add('cliProp','Client','Property','ADDRESS text',act.length,0,
+    act.filter(c=>c.at).length,act.filter(c=>!c.at).length,
+    'structural: property is not an entity — one address string per client, no multi-property, no ownership history');
+  return L;
+}
+function renderChainPanel(){
+  const box=document.getElementById('chainWrap'); if(!box) return;
+  const L=chainAudit();
+  box.innerHTML='<div class="card"><div class="pad"><div class="sechead"><h3>Chain of custody</h3>'+
+    '<span class="hint">employee → client → property → sale → invoice → commission → payout — what each link stands on. Red = the join is a display name or address, not an id.</span></div>'+
+    '<div class="scroll"><table><thead><tr><th>Link</th><th>Joined by</th><th class="num">Records</th><th class="num">Solid</th><th class="num">Weak</th><th class="num">Broken</th><th>Why it is the way it is</th></tr></thead><tbody>'+
+    L.map(x=>'<tr><td style="white-space:nowrap"><b>'+x.from+'</b> → '+x.to+'</td>'+
+      '<td>'+(/NAME|ADDRESS/.test(x.how)?'<span style="color:var(--red);font-weight:700">'+x.how+'</span>':x.how)+'</td>'+
+      '<td class="num">'+x.total.toLocaleString()+'</td><td class="num">'+(x.ok?x.ok.toLocaleString():'—')+'</td>'+
+      '<td class="num">'+(x.weak?x.weak.toLocaleString():'—')+'</td>'+
+      '<td class="num">'+(x.broken?'<b style="color:var(--red)">'+x.broken.toLocaleString()+'</b>':'—')+'</td>'+
+      '<td style="font-size:11.5px;color:var(--muted)">'+x.note+'</td></tr>').join('')+
+    '</tbody></table></div></div></div>';
 }
 
 function fixSaleType(id,t){
@@ -9887,6 +9997,7 @@ function renderChecks(){
                   :'<div class="note" style="margin-bottom:12px">Add the Claude API key on the <a href="#" onclick="setTab(\'import\');return false">Import tab</a> and the Hawk becomes an analyst: briefings, root causes, and per-finding investigation.</div>');
   document.getElementById('hawkBriefWrap').innerHTML=briefHtml;
   renderChecksBody(checks);
+  renderChainPanel();
 }
 function renderChecksBody(checks){
   const box=document.getElementById('chkBody'); if(!box) return;
