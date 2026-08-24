@@ -49,9 +49,16 @@ header h1.brand{margin:0;flex:0 0 auto;font-size:13.5px;font-weight:650;line-hei
 .brandbtn:focus-visible{outline:2px solid var(--gold);outline-offset:3px;border-radius:5px}
 .brandbtn svg{display:block;flex:0 0 auto}
 .wm{white-space:nowrap}
-.crumb{flex:0 0 auto;margin:0 -3px;color:#69735f;font-size:14px;line-height:1}
+.wm b{font-weight:inherit}
+.wm-s{display:none}             /* narrow screens swap the string; nothing is ever cut */
+.crumb{flex:0 0 auto;width:1px;height:20px;margin:0 2px;background:#4a5346;border-radius:1px}
 .page{flex:0 1 auto;font-size:16px;font-weight:700;line-height:20px;color:#f3f5f0;
   letter-spacing:-.01em;white-space:nowrap}
+/* What this page is for. Truncation happens in JS on a word boundary, so this
+   never clips mid-word - overflow:hidden here is only a belt to that braces. */
+.pdesc{flex:0 1 auto;min-width:0;overflow:hidden;white-space:nowrap;
+  font-size:12.5px;font-weight:500;line-height:17px;color:#a9b3a5;
+  border-left:1px solid #3a4335;padding-left:11px;margin-left:1px}
 
 /* visually hidden, but present for screen readers — and printed (see @media print) */
 .vh{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
@@ -80,10 +87,19 @@ button.rd:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
 .rd.s-warn  .rail{background:#e6d38a} .rd.s-warn .val{color:#e6d38a}
 .rd.s-gold  .rail{background:var(--gold)} .rd.s-gold .val{color:#e8c85a}
 .rd.s-bad   .rail{background:#e8a89f} .rd.s-bad  .val{color:#e8a89f}
+/* The only verb allowed on the instrument strip, and only while sync is down. */
+.hretry{flex:0 0 auto;background:none;border:0;margin:0 0 0 -6px;padding:3px 5px;
+  font:inherit;font-size:12.5px;font-weight:650;color:#e8a89f;cursor:pointer;
+  text-decoration:underline;text-underline-offset:3px}
+.hretry:hover{background:none;border:0;color:#f4d7d3}
+.hretry:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+/* Backup is overdue and the cloud is not holding a copy: the one red in a resting header. */
+.rd .warndot{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:#e8a89f;
+  margin-left:1px;align-self:center}
 
 /* tabs — unchanged in behaviour */
 nav{display:flex;align-items:flex-end;flex-wrap:wrap;gap:2px;flex:1 1 auto;min-width:0}
-nav button{background:transparent;border:none;border-radius:8px 8px 0 0;color:#a9b3a5;
+nav button{background:transparent;border:none;border-radius:8px 8px 0 0;color:#c3cbbe;
   padding:9px 14px;font-size:13.5px;line-height:16px;font-weight:650;cursor:pointer;
   border-bottom:3px solid transparent;white-space:nowrap}
 nav button:hover{color:#e6eae2;background:#262d23}
@@ -125,6 +141,13 @@ nav button.on{background:var(--sand);color:var(--ink);border-bottom-color:var(--
 .master.s-gold .rail{background:var(--gold)} .master.s-gold{color:#e8c85a}
 .master.s-bad  .rail{background:#e8a89f} .master.s-bad{color:#e8a89f}
 
+/* THE LADDER. Each step gives up the least useful thing still on the deck, and
+   every step is a swap or a removal - never a truncation.
+   >=1180 everything -- <1180 the page description goes -- <=1100 padding tightens
+   -- <=900 instrument labels drop and the wordmark shortens -- <=640 one row. */
+@media(max-width:1180px){
+  .pdesc{display:none}
+}
 @media(max-width:1100px){
   .rd{padding:2px 8px}
   .strip .sep{margin:0 5px}
@@ -135,6 +158,10 @@ nav button.on{background:var(--sand);color:var(--ink);border-bottom-color:var(--
   .rd .val{line-height:16px}
   .rd .rail{height:20px}
   .deck{min-height:40px}
+  /* 900 is also where the product name gets out of the page name's way: swap to a
+     shorter STRING, never truncate. */
+  .wm-l{display:none}
+  .wm-s{display:inline}
 }
 @media(max-width:820px){
   nav button{padding:8px 11px;font-size:13px}
@@ -173,8 +200,10 @@ section{margin:24px 0}
 .vtxt .l2{font-size:13px;color:var(--ink-2);margin-top:4px}
 
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(172px,1fr));gap:12px}
-.tile{background:var(--paper);border:1px solid var(--line);border-radius:11px;padding:14px 15px;box-shadow:var(--shadow)}
-.tile .lab{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.tile{background:var(--paper);border:1px solid var(--line);border-radius:11px;padding:14px 15px;box-shadow:var(--shadow);
+  min-width:0}                                  /* grid items default to min-width:auto and refuse to shrink */
+.tile .lab{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);
+  overflow-wrap:anywhere}
 .tile .val{font-size:26px;font-weight:700;letter-spacing:-.02em;margin-top:5px;line-height:1.05}
 .tile .sub{font-size:12.5px;color:var(--muted);margin-top:4px}
 .tile.ok .val{color:var(--grn-d)}.tile.bad .val{color:var(--red)}
@@ -428,7 +457,8 @@ details.fold > .foldbody{padding:2px 16px 16px}
 /* The two strips at the top of the admin page. */
 .needs{display:grid;grid-template-columns:repeat(auto-fit,minmax(178px,1fr));gap:10px;margin-bottom:10px}
 .nd{border:1px solid var(--line);border-radius:11px;padding:13px 15px;background:var(--paper);
-  box-shadow:var(--shadow);text-align:left;cursor:pointer;transition:.12s;display:block;width:100%;font:inherit;color:inherit}
+  box-shadow:var(--shadow);text-align:left;cursor:pointer;transition:.12s;display:block;width:100%;font:inherit;color:inherit;
+  min-width:0;overflow-wrap:anywhere}
 .nd:hover{border-color:#b9c2b2;box-shadow:0 5px 18px rgba(28,33,25,.13);transform:translateY(-1px)}
 .nd .lab{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
 .nd .val{font-size:25px;font-weight:700;letter-spacing:-.02em;margin-top:5px;line-height:1.05}
@@ -440,7 +470,7 @@ details.fold > .foldbody{padding:2px 16px 16px}
 .nd.ok .val{color:var(--grn-d)}
 .statestrip{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:1px;
   background:var(--line);border:1px solid var(--line);border-radius:11px;overflow:hidden;margin-bottom:20px}
-.statestrip > div{background:var(--paper);padding:11px 13px}
+.statestrip > div{background:var(--paper);padding:11px 13px;min-width:0;overflow-wrap:anywhere}
 .statestrip .k{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
 .statestrip .v{font-size:15px;font-weight:650;margin-top:3px}
 .statestrip .v.warn{color:var(--red)}
@@ -561,13 +591,22 @@ details.fold > .foldbody{padding:2px 16px 16px}
 #hamBtn{display:none;background:transparent;border:1px solid #4a5346;color:#e6eae2;
   font-size:19px;line-height:20px;padding:7px 12px;border-radius:8px}
 @media(max-width:640px){
-  /* one deck, one master light. header = 48px */
-  .deck{gap:8px;min-height:48px;padding:6px 0}
+  /* one deck, one master light. header = 48px: 2 + 44 + 2, so every control on it
+     can be a full 44px touch target without the bar growing. */
+  .deck{gap:6px;min-height:48px;padding:2px 0}
   header h1.brand .wm,.crumb{display:none}
   .page{flex:1 1 auto;min-width:0;font-size:15.5px}
   .strip{display:none}
   #masterBtn{display:flex}
   #hamBtn{display:block}
+  /* Grow the HIT AREA, not the glyph. The mark still draws at 22px. */
+  .brandbtn{min-width:44px;min-height:44px;justify-content:center}
+  /* Below 400px the master light drops its word and is just a rail + "OK"/count.
+     It still has to be catchable, so the hit area holds 44px on its own. */
+  #masterBtn{min-width:44px;min-height:44px;padding:3px 10px;justify-content:center}
+  /* border-box, or the 1px border makes a 44px target 46px tall and the bar 50px. */
+  #hamBtn{box-sizing:border-box;min-width:44px;height:44px;padding:0;font-size:20px;
+    line-height:42px;text-align:center}
   .deck-lo{display:none}
   /* the hamburger opens the instrument panel FIRST, then nav, then tools */
   header.menu-open .strip{display:flex;order:9;flex-basis:100%;width:100%;
@@ -582,10 +621,21 @@ details.fold > .foldbody{padding:2px 16px 16px}
   header.menu-open .deck-lo{display:flex;flex-direction:column;align-items:stretch;
     gap:0;padding:6px 0 12px;border-top:1px solid #2c342a}
   header.menu-open .deck-gap{display:none}
-  header.menu-open nav{flex-direction:column;gap:2px;width:100%}
+  header.menu-open nav{flex-direction:column;gap:2px;width:100%;align-items:stretch}
   header.menu-open nav button{border-radius:8px;border-bottom:none;text-align:left;
-    padding:12px 14px;font-size:15px}
-  header.menu-open nav button.on{background:var(--sand);color:var(--ink)}
+    padding:13px 14px;font-size:15px;min-height:44px;box-sizing:border-box}
+  header.menu-open nav button.on{background:var(--sand);color:var(--ink);
+    box-shadow:inset 3px 0 0 var(--gold)}   /* no baseline to sit on, so it grows a spine */
+  /* A popover inside a drawer has nowhere to go. "More" flattens: its contents
+     become ordinary rows in the same list, at the same size, always visible. */
+  header.menu-open .moreWrap{display:flex;flex-direction:column;gap:2px;width:100%}
+  header.menu-open nav button.moreBtn{display:none}
+  header.menu-open .moreMenu{display:flex!important;position:static;flex-direction:column;
+    gap:2px;width:100%;background:none;border:0;box-shadow:none;padding:0;margin:0;min-width:0}
+  header.menu-open .moreMenu button{width:100%;text-align:left;padding:13px 14px;
+    font-size:15px;min-height:44px;box-sizing:border-box;border-radius:8px;
+    background:transparent;border:0;color:#c3cbbe}
+  header.menu-open .moreMenu button:hover{background:#262d23;color:#e6eae2}
   header.menu-open .hbtns{width:100%;padding:9px 0 0;flex-wrap:wrap}
   .pop{left:auto;right:0;min-width:0;width:min(280px,calc(100vw - 40px))}
   .pop.left{left:0;right:auto}
@@ -766,7 +816,8 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
   header h1.brand,.brandbtn{color:var(--ink)}
   .brandbtn svg rect{fill:var(--ink)}
   .page{color:var(--ink);font-size:15px}
-  .crumb{color:var(--muted)}
+  .crumb{background:#b8b2a6}
+  .pdesc{display:none}   /* screen-truncated: the .vh company line identifies the printout */
   .deck{padding:0 0 8px;min-height:0;row-gap:2px}
   .vh{position:static;width:auto;height:auto;margin:0;overflow:visible;
     clip:auto;clip-path:none;flex-basis:100%;white-space:normal;
@@ -824,14 +875,17 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
             <path d="M6.6 17.4v-4.4M12 17.4V6.8M17.4 17.4v-7.1" fill="none"
                   stroke="#1c2119" stroke-width="2.6" stroke-linecap="round"></path>
           </svg>
-          <span class="wm">ALP Sales Tracker</span>
+          <span class="wm"><b class="wm-l">ALP Sales Tracker</b><b class="wm-s">ALP Tracker</b></span>
         </button>
       </h1>
       <!-- The 76-character company line: zero pixels on screen (a constant is not
            information), still read by screen readers and printed on every report. -->
       <span class="vh" id="hdrTagline">Automated Lawn &amp; Pest — production, comp plans, and commission by salesperson</span>
-      <span class="crumb" aria-hidden="true">&rsaquo;</span>
+      <span class="crumb" aria-hidden="true"></span>
       <span class="page" id="hdrPage"></span>
+      <!-- The tab's own one-line purpose. Wide screens only: it is the first thing
+           that can afford to go when width gets tight. -->
+      <span class="pdesc" id="hdrDesc"></span>
       <span class="deck-gap"></span>
       <!-- Instruments. Filled by renderHdrStrip(). Grey until something is wrong. -->
       <div class="strip" id="hdrStrip" role="group" aria-label="Status"></div>
@@ -4187,6 +4241,12 @@ function render(){
   // Hawk" → "Data Hawk"): this is the one string that must always be readable.
   const hp=document.getElementById('hdrPage');
   if(hp&&TAB_INFO[TAB]){ hp.textContent=TAB_INFO[TAB].label.replace(/^[^A-Za-z0-9]+\s*/,''); hp.title=TAB_INFO[TAB].desc||''; }
+  // The sentence under the name: what this page is actually for. It has existed in
+  // TABS[3] all along and never once rendered.
+  const hd=document.getElementById('hdrDesc');
+  if(hd&&TAB_INFO[TAB]){ const d=TAB_INFO[TAB].desc||''; hd.textContent=fitWords(d,54); hd.title=d; }
+  // Same question, asked by the OS tab strip.
+  document.title=(hp&&hp.textContent?hp.textContent+' · ':'')+'ALP Sales Tracker';
   TABS.forEach(t=>document.getElementById('tab-'+t[0]).classList.toggle('on',TAB===t[0]));
   renderAdmin();
 
@@ -12317,6 +12377,15 @@ function csvCell(v){const s=String(v==null?'':v);return /[",\n]/.test(s)?'"'+s.r
    never performs. The three utilities live behind one Tools door
    on the nav row — same role gates as always.
    ============================================================ */
+// Cut a sentence to fit WITHOUT ever splitting a word. Mid-word clipping reads as
+// a broken app; a clean stop plus an ellipsis reads as an edited one. The full
+// string always goes in title=, so nothing is actually lost.
+function fitWords(s,n){
+  s=String(s||'').trim();
+  if(s.length<=n) return s;
+  const cut=s.slice(0,n), i=cut.lastIndexOf(' ');
+  return (i>18?cut.slice(0,i):cut).replace(/[\s,;:·—-]+$/,'')+'…';
+}
 function hdrRail(lab,val){
   return '<span class="rail"></span><span class="txt"><span class="lab">'+lab+
     '</span><span class="val">'+val+'</span></span>';
@@ -12329,11 +12398,18 @@ function renderHdrStrip(){
   // span: a gauge with nothing behind it must not invite a click.
   if(s){
     const who=esc(s.name||s.email)+(s.role==='admin'?' · admin':'');
+    const bs=backupStale();
+    const bt=bs?(bs>=9999?'No backup has ever been downloaded':'Last backup was '+bs+' days ago')+
+      ' and cloud sync is not holding a copy — this browser is the only place the book exists.':'';
     h+='<span class="popwrap"><button class="rd s-idle" id="rdYou" onclick="youMenu(event)" aria-haspopup="menu" aria-expanded="false"'+
-      ' title="Signed in with Google — every change is recorded under this verified name">'+hdrRail('Signed in',who)+'</button>'+
+      ' title="'+esc(bt||'Signed in with Google — every change is recorded under this verified name')+'">'+
+      hdrRail('Signed in',who)+(bs?'<span class="warndot" aria-hidden="true"></span>':'')+'</button>'+
       '<div class="pop left" id="youPop" role="menu"><div class="phead">'+who+'</div>'+
       '<button role="menuitem" onclick="closePops();hdrMyPage()">My page</button>'+
       (ADMIN?'<button role="menuitem" onclick="closePops();setTab(\'admin\')">Access &amp; security</button>':'')+
+      (bs?'<hr><button role="menuitem" class="out" onclick="closePops();backup()">Download a backup'+
+          '</button><div class="pnote" style="color:var(--red)">'+
+          (bs>=9999?'Never taken.':bs+' days old.')+' The cloud is not holding a copy.</div>':'')+
       '<hr><button role="menuitem" class="out" onclick="closePops();googleSignOut()">Sign out</button></div></span>';
   } else if(window.__GCID){
     h+='<span class="rd s-bad" id="rdYou">'+hdrRail('Signed in','Not signed in')+'</span>';
@@ -12353,6 +12429,10 @@ function renderHdrStrip(){
     error:['Cloud error','s-bad',(typeof CLOUD!=='undefined'&&CLOUD.lastErr)||'Cloud error']};
   const cm=CS[cs]||CS.off;
   h+='<button class="rd '+cm[1]+'" id="rdSync" onclick="cloudMenu()" title="'+esc(cm[2])+'">'+hdrRail('Sync',cm[0])+'</button>';
+  // Broken sync is the one state that earns an action next to the readout: the
+  // person is already looking here, and the fix is one call away.
+  if(cs==='offline'||cs==='error')
+    h+='<button class="hretry" id="rdRetry" onclick="cloudPushNow(false)" title="Try the cloud again right now">Retry</button>';
   // DATA IN — the fuel gauge that used to only speak once the engine had stopped.
   if(can('manage_imports')){
     const st=mergeStatus().filter(x=>x.state!=='never');
@@ -12374,6 +12454,17 @@ function renderHdrStrip(){
   }
   box.innerHTML=h;
   renderMaster();
+}
+// How overdue the backup is, in days - or 0 when it is not a concern. Only for
+// people who can actually take one, and only when the cloud is not already
+// holding a live copy.
+function backupStale(){
+  if(!can('admin_security')||!ROWS.length) return 0;
+  if(typeof CLOUD!=='undefined' && CLOUD.status==='live') return 0;
+  const b=(typeof lastBackupOn==='function')?lastBackupOn():'';
+  if(!b) return 9999;                       // never taken
+  const d=age(b)||0;
+  return d>=14 ? d : 0;
 }
 function hdrFresh(){
   if(typeof CLOUD==='undefined'||!CLOUD.lastOkAt) return '';
