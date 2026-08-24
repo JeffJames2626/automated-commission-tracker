@@ -1612,6 +1612,39 @@
         window.alert=alertR; window.toast=toastR; PAYOUTS=[];
       }
 
+
+      /* ---------- HAWK: a split paying everyone at one person's rate ---------- */
+      // journalPaid applies ONE rate to every share - the primary rep's - so on a split
+      // between two people on different plans, list order decides pay. Which rule is
+      // right is Jeff's to set, so this is reported rather than silently changed.
+      if(typeof runChecks==='function'){
+        var alertX=window.alert, toastX=window.toast; window.alert=function(){}; window.toast=function(){};
+        var XA=mkPerson({id:'XA',name:'Xa Ten'}); XA.first='Xa'; XA.last='Ten'; XA.roles=['sales'];
+        XA.start='2026-01-01'; XA.commNew=10; XA.aliases=[]; XA.log=[];
+        var XB=mkPerson({id:'XB',name:'Xb Eight'}); XB.first='Xb'; XB.last='Eight'; XB.roles=['sales'];
+        XB.start='2026-01-01'; XB.commNew=8; XB.aliases=[]; XB.log=[];
+        var XC=mkPerson({id:'XC',name:'Xc Ten'}); XC.first='Xc'; XC.last='Ten'; XC.roles=['sales'];
+        XC.start='2026-01-01'; XC.commNew=10; XC.aliases=[]; XC.log=[];
+        PEOPLE=[XA,XB,XC]; PAYOUTS=[]; DISPUTES=[]; EMP_IDX=null;
+        var mixed=mkRow({rep:'XA',value:4000,type:'new',date:'2026-06-05',invoiced:'2026-06-10',client:'Mixed Co'});
+        mixed.split=[{rep:'XA',pct:50},{rep:'XB',pct:50}];
+        var matched=mkRow({rep:'XA',value:4000,type:'new',date:'2026-06-05',invoiced:'2026-06-10',client:'Matched Co'});
+        matched.split=[{rep:'XA',pct:50},{rep:'XC',pct:50}];
+        var plain=mkRow({rep:'XA',value:4000,type:'new',date:'2026-06-05',invoiced:'2026-06-10',client:'Plain Co'});
+        ROWS=[mixed,matched,plain];
+        ROWS.forEach(function(r){ freezeDueLag(r); r.commRate=rowRate(r); });
+        var sr=function(){ var c=runChecks().find(function(x){return x.id==='hawkSplitRate';}); return c||{items:[],impact:0}; };
+        check('HAWK a split across two different comp plans is reported', 1, sr().items.length);
+        check('HAWK it names the money at stake', 40, round2(sr().impact));
+        // a split between two people on the SAME rate is not a problem
+        ROWS=[matched,plain];
+        check('HAWK a split between two people on the same rate says nothing', 0, sr().items.length);
+        // and a plain sale never triggers it
+        ROWS=[plain];
+        check('HAWK a sale with no split says nothing', 0, sr().items.length);
+        window.alert=alertX; window.toast=toastX; PAYOUTS=[];
+      }
+
       /* ---------- C2: tombstones stop deleted records resurrecting ---------- */
       if(typeof addTombstone==='function' && typeof isTombstoned==='function'){
         TOMBSTONES=[];

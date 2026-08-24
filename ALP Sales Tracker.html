@@ -7943,7 +7943,7 @@ function hawkCounts(){
     hawkOvGross:'manager override over-paid', hawkLedgerGap:'paid money the ledger cannot account for',
     hawkVoidDate:'reversals with no effective date', hawkForgiven:'chargebacks forgiven',
     hawkVariance:'paid sales drifted from their payout', hawkNoIdDupes:'probable duplicate sales',
-    hawkSplit:'splits holding money', hawkPrePlan:'sales earning $0 (plan starts later)',
+    hawkSplit:'splits holding money', hawkSplitRate:'splits paid at one person’s rate', hawkPrePlan:'sales earning $0 (plan starts later)',
     hawkFormer:'former team members still in the money', hawkInvNo:'invoice numbers matching nothing'};
   const out={total:0,parts:[],items:{}};
   runChecks().forEach(c=>{
@@ -8528,6 +8528,41 @@ function runChecks(){
           '<button class="sm" onclick="rowInfo(\''+d.b.id+'\')">Second</button> '+
           '<button class="sm danger" onclick="delRow(\''+d.b.id+'\')">Delete the later one</button>'
     })));
+
+  /* --- THE DATA HAWK: a split paying everyone at one person's rate --- */
+  // journalPaid takes ONE rate for the whole sale - rowRate(r), which reads the primary
+  // rep's plan - and applies it to every share. So on a split between two people on
+  // different plans, whoever happens to be listed first sets the rate for both. A 50/50
+  // split of $4,000 between a 10% rep and an 8% rep pays $200/$200 if the 10% rep is
+  // first, and $160/$160 if the 8% rep is. That is list order deciding pay, which cannot
+  // be anybody's intended rule - but which rule is right (each person's own plan, or the
+  // primary's for the whole job) is Jeff's to set, not this file's. So it is reported,
+  // not silently changed.
+  const splitRate=[];
+  ROWS.filter(r=>!r.voidType && Array.isArray(r.split) && r.split.length>1).forEach(r=>{
+    const applied=rowRate(r);
+    const odd=[];
+    rowShares(r).forEach(s=>{
+      const p=person(s.rep); if(!p) return;
+      const own=(r.type==='renewal') ? (p.commRenew==null?p.commUp:p.commRenew)
+              : (r.type==='new' ? p.commNew : p.commUp);
+      if(own==null||own==='') return;
+      if(Math.abs((+own||0)-applied)>0.001)
+        odd.push({name:empShort(p), own:+own||0, paidAt:applied, share:s.frac,
+                  diff:round2(netValue(r)*s.frac*(applied-(+own||0))/100)});
+    });
+    if(odd.length) splitRate.push({r, odd});
+  });
+  add('hawkSplitRate','warn','\ud83e\udd85 Split paying everyone at one person\u2019s rate',
+    'A split sale is paid at a single rate \u2014 the one on the rep listed first \u2014 so a partner on a different comp plan is paid at somebody else\u2019s percentage. Decide whether a split should pay each person their own rate, then set the rate on the sale itself.',
+    splitRate.slice(0,30).map(d=>({
+      text:'<b>'+esc(d.r.client)+'</b> \u00b7 '+money(bookedValue(d.r))+' \u00b7 paid at '+num(rowRate(d.r),1)+'%',
+      sub:d.odd.map(o=>esc(o.name)+' is on '+num(o.own,1)+'% but was paid '+num(o.paidAt,1)+'% on '+
+          num(o.share*100,0)+'% of the sale \u2014 '+(o.diff>0?money2(o.diff)+' over':money2(-o.diff)+' under')).join(' \u00b7 '),
+      act:'<button class="sm" onclick="rowInfo(\''+d.r.id+'\')">Info</button> '+
+          '<button class="sm" onclick="editSplit(\''+d.r.id+'\')">Open the split</button>'
+    })),
+    splitRate.reduce((a,d)=>a+d.odd.reduce((s,o)=>s+Math.abs(o.diff),0),0));
 
   /* --- THE DATA HAWK: sale credited to one rep, invoice naming another --- */
   // Commission follows the sale's rep; the Revenue tab follows the invoice line.
