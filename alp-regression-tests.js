@@ -1435,6 +1435,36 @@
         PAYOUTS=[];
       }
 
+
+      /* ---------- PERIODS: "this week" and "to date" stop at today ---------- */
+      // A sale dated ahead of today used to be counted in "this week" and in "year to
+      // date" - a December sale appeared in an August week, and "to date" quietly meant
+      // the whole calendar year.
+      if(typeof empKpis==='function' && typeof empData==='function'){
+        var WP=mkPerson({id:'WP',name:'Win Rep'}); WP.first='Win'; WP.last='Rep'; WP.roles=['sales'];
+        WP.start='2026-01-01'; WP.commNew=10; WP.aliases=[]; WP.log=[];
+        PEOPLE=[WP]; EMP_IDX=null; PAYOUTS=[]; DISPUTES=[];
+        var td=todayISO(), wkStart=weekStart(td), future=addDays(td,100);
+        var past=mkRow({rep:'WP',value:1000,date:addDays(td,-40),client:'Past Co'});
+        var thisWk=mkRow({rep:'WP',value:500,date:wkStart,client:'Week Co'});
+        var soon=mkRow({rep:'WP',value:7000,date:future,client:'Future Co'});
+        ROWS=[past,thisWk,soon];
+        var k=empKpis(empData('WP'));
+        check('PERIOD this week counts only what has happened', 500, round2(k.week.v));
+        check('PERIOD this week counts the right number of sales', 1, k.week.n);
+        checkTrue('PERIOD year to date leaves out a future-dated sale', round2(k.ytd.v)<7000, round2(k.ytd.v));
+        check('PERIOD year to date is the past plus this week', 1500, round2(k.ytd.v));
+        check('PERIOD all time still includes everything booked', 8500, round2(k.all.v));
+        checkTrue('PERIOD the gap between all and to-date reveals the future sale', k.all.n>k.ytd.n, k.all.n+' vs '+k.ytd.n);
+        // a sale dated exactly today is inside every window
+        var todayRow=mkRow({rep:'WP',value:250,date:td,client:'Today Co'});
+        ROWS=[todayRow];
+        var k2=empKpis(empData('WP'));
+        check('PERIOD a sale dated today counts this week', 250, round2(k2.week.v));
+        check('PERIOD a sale dated today counts year to date', 250, round2(k2.ytd.v));
+        check('PERIOD a sale dated today counts this month', 250, round2(k2.month.v));
+      }
+
       /* ---------- C2: tombstones stop deleted records resurrecting ---------- */
       if(typeof addTombstone==='function' && typeof isTombstoned==='function'){
         TOMBSTONES=[];

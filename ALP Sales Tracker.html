@@ -12584,9 +12584,15 @@ function empKpis(D){
   const comm=r=>commFor(r,p.id);
   const K={};
   K.today={n:cnt(r=>r.date===today),v:sum(r=>r.date===today)};
-  K.week={n:cnt(r=>r.date>=wk),v:sum(r=>r.date>=wk)};
+  // Both windows are bounded at today. A sale dated ahead of today used to land in
+  // "this week" and in "year to date" — a December sale showed up in an August week,
+  // and "to date" quietly meant "the whole calendar year". The 30,000 ft page already
+  // bounded its week this way (11946); the employee page did not.
+  K.week={n:cnt(r=>r.date>=wk&&r.date<=today),v:sum(r=>r.date>=wk&&r.date<=today)};
   K.month={n:cnt(r=>String(r.date).slice(0,7)===mo),v:sum(r=>String(r.date).slice(0,7)===mo)};
-  K.ytd={n:cnt(r=>String(r.date).slice(0,4)===yr),v:sum(r=>String(r.date).slice(0,4)===yr)};
+  K.ytd={n:cnt(r=>String(r.date).slice(0,4)===yr&&r.date<=today),v:sum(r=>String(r.date).slice(0,4)===yr&&r.date<=today)};
+  // `all` stays inclusive on purpose: it is not a "to date" claim, so a sale booked
+  // ahead of today is still part of everything this person has sold.
   K.all={n:cnt(()=>true),v:sum(()=>true)};
   K.newN=cnt(r=>r.type==='new'); K.upN=cnt(r=>r.type==='upsell'); K.renN=cnt(r=>r.type==='renewal');
   K.avg=K.all.n?K.all.v/K.all.n:0;
