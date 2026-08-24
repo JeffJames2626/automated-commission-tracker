@@ -2569,6 +2569,19 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
   </div>
 </div>
 
+<!-- one sale, everything it connects to — deep link #sale/<id> -->
+<div class="modal" id="saleModal" onclick="if(event.target===this)closeSale()">
+  <div class="sheet wide">
+    <div class="top">
+      <h3 id="svTitle">Sale</h3>
+      <span class="note" id="svKind"></span>
+      <button class="x" onclick="closeSale()" title="Close (Esc)">&times;</button>
+    </div>
+    <div class="body" id="svBody"></div>
+    <div class="foot" id="svFoot"><span class="hspace"></span><button onclick="closeSale()">Close</button></div>
+  </div>
+</div>
+
 <div class="modal" id="quickModal" onclick="if(event.target===this)closeQuick()">
   <div class="sheet">
     <div class="top">
@@ -4439,6 +4452,8 @@ function render(){
   if(TAB==='bill') renderBillHome(); if(TAB==='mine') renderMineHome();
   if(EP_ID) renderEmp();
   if(typeof INV_ID!=='undefined'&&INV_ID) renderInv();
+  if(typeof SALE_ID!=='undefined'&&SALE_ID) renderSale();
+  if(CP_NAME) renderClientPage();
   renderPauseBar(); renderHawkChip();
 }
 function setHWho(v){ HWHO=v; renderHoursTab(); }
@@ -4610,7 +4625,7 @@ function renderEmpMatch(){
     h+='<div class="scroll"><table><thead><tr><th>Name in the data</th><th>System</th><th class="num">Records</th><th>Employee</th><th></th></tr></thead><tbody>';
     q.forEach((e,i)=>{
       const sug=e.suggest?person(e.suggest):null;
-      h+='<tr><td><b>'+esc(e.raw)+'</b>'+(sug?'<div class="note">looks like <b>'+esc(empName(sug))+'</b> — confirm below</div>':'')+'</td>'+
+      h+='<tr><td><b>'+esc(e.raw)+'</b>'+(sug?'<div class="note">looks like <b>'+empLink(e.suggest,empName(sug))+'</b> — confirm below</div>':'')+'</td>'+
         '<td class="note">'+Object.keys(e.sys).map(x=>esc(EMP_SYS[x]||x)).join(', ')+'</td>'+
         '<td class="num">'+e.n.toLocaleString()+'<div class="note">'+Object.keys(e.kinds).map(k=>e.kinds[k].toLocaleString()+' '+k).join(' · ')+'</div></td>'+
         '<td><select id="emq'+i+'"><option value="">— pick —</option>'+opts.replace('value="'+(e.suggest||'~')+'"','value="'+(e.suggest||'~')+'" selected')+'</select></td>'+
@@ -4736,7 +4751,7 @@ function renderTombstones(){
   let x='<table><thead><tr><th>Record</th><th>Source</th><th>Deleted</th><th></th></tr></thead><tbody>';
   TOMBSTONES.slice().reverse().forEach(t=>{
     const key=t.srcKey||t.compKey;
-    x+='<tr><td><b>'+esc(t.client||'(no name)')+'</b> · '+money2(+t.value||0)+(t.date?' · '+fmtY(t.date):'')+'</td>'+
+    x+='<tr><td><b>'+(t.client?cliLink(t.client):'(no name)')+'</b> · '+money2(+t.value||0)+(t.date?' · '+fmtY(t.date):'')+'</td>'+
       '<td>'+(SRC_LABEL[t.src]||t.src||'—')+(t.srcId?' #'+esc(t.srcId):'')+'</td>'+
       '<td class="mono">'+fmtY(t.on)+'</td>'+
       '<td class="num"><button class="sm" onclick="restoreDeleted('+JSON.stringify(key).replace(/"/g,'&quot;')+')">Restore</button></td></tr>';
@@ -5789,7 +5804,7 @@ function renderComm(){
     const flag = r.payOnly ? '<div class="note" style="color:var(--red)">base pay only — commission starts '+fmtY(r.p.start)+'</div>'
                : !r.live ? '<div class="note" style="color:var(--red)">plan starts '+fmtY(r.p.start)+'</div>'
                : r.partial ? '<div class="note" style="color:var(--red)">part month from '+fmtY(r.from)+'</div>' : '';
-    h+='<tr><td><b>'+esc(r.p.name)+'</b><div class="note">'+esc(r.p.title)+'</div>'+flag+'</td>'+
+    h+='<tr><td><b>'+empLink(r.p.id,r.p.name)+'</b><div class="note">'+esc(r.p.title)+'</div>'+flag+'</td>'+
       '<td class="num">'+r.news.filter(x=>!isReversed(x)).length+'</td><td class="num">'+money(r.newV)+'</td>'+
       '<td class="num">'+r.ups.filter(x=>!isReversed(x)).length+'</td><td class="num">'+money(r.upV)+'</td>'+
       '<td class="num">'+money(r.newC+r.upC)+(r.paidC?'<div class="note">'+money(r.paidC)+' of it paid</div>':'')+'</td>'+
@@ -5827,7 +5842,7 @@ function renderComm(){
   h+='</div>';
 
   const rr=reports.reduce((a,r)=>a.concat(r.reversalReview||[]),[]);
-  if(rr.length) h+='<div class="warnbox" style="margin:10px 0"><b>'+rr.length+' reversed, paid sale'+(rr.length===1?'':'s')+' cannot be charged back yet</b> — no effective date, or the original payout is still unconfirmed: '+rr.map(x=>esc(x.client)).join(', ')+'. Fix on the Adjustments tab. Nothing has been forgiven.</div>';
+  if(rr.length) h+='<div class="warnbox" style="margin:10px 0"><b>'+rr.length+' reversed, paid sale'+(rr.length===1?'':'s')+' cannot be charged back yet</b> — no effective date, or the original payout is still unconfirmed: '+rr.map(x=>saleLink(x.id,x.client)).join(', ')+'. Fix on the Adjustments tab. Nothing has been forgiven.</div>';
   /* ---- per person ---- */
   if(detail){
     reports.forEach(r=>{
@@ -5848,7 +5863,7 @@ function renderComm(){
       if(r.ledger.length){
         h+='<div class="repsec"><h4>Paid — from the payout ledger</h4><div class="scroll"><table><thead><tr><th>Paid</th><th>Kind</th><th>Sale</th><th class="num">Basis</th><th class="num">Rate</th><th class="num">Share</th><th class="num">Amount</th><th>Recorded by</th></tr></thead><tbody>';
         r.ledger.slice().sort((a,b)=>a.paidOn<b.paidOn?-1:1).forEach(x=>{ const row=ROWS.find(q=>q.id===x.rowId);
-          h+='<tr><td class="mono">'+fmt(x.paidOn)+'</td><td>'+esc(PAYOUT_KINDS[x.kind]||x.kind)+(x.reconstructed?' <span class="note">(legacy)</span>':'')+'</td><td>'+esc(row?row.client:x.rowId)+(x.reason?'<div class="note">'+esc(x.reason)+'</div>':'')+'</td>'+
+          h+='<tr><td class="mono">'+fmt(x.paidOn)+'</td><td>'+esc(PAYOUT_KINDS[x.kind]||x.kind)+(x.reconstructed?' <span class="note">(legacy)</span>':'')+'</td><td>'+(row?saleLink(row.id,row.client):esc(x.rowId))+(x.reason?'<div class="note">'+esc(x.reason)+'</div>':'')+'</td>'+
             '<td class="num mono">'+money2(x.basisValue)+'</td><td class="num">'+num(x.rate,1)+'%</td><td class="num">'+Math.round(x.share*100)+'%</td><td class="num mono">'+(x.amount<0?'−':'')+money2(Math.abs(x.amount))+'</td><td class="note">'+esc(x.by||'')+'</td></tr>'; });
         h+='<tr class="tot"><td colspan="6">'+r.ledger.length+' payout'+(r.ledger.length===1?'':'s')+'</td><td class="num">'+money2(r.ledgerRep+r.ledgerAdj+r.ledgerOv)+'</td><td></td></tr></tbody></table></div></div>';
       }
@@ -5878,7 +5893,7 @@ function renderComm(){
           const sh=shareFor(row,p.id), gross=bookedValue(row), netv=netValue(row);
           const val=netv*sh, comm=commFor(row,p.id), rrate=rowRate(row);
           sv+=val; sc+=comm;
-          h+='<tr><td class="mono">'+fmt(row.date)+'</td><td>'+esc(row.client)+'</td>'+
+          h+='<tr><td class="mono">'+fmt(row.date)+'</td><td>'+saleLink(row.id,row.client)+'</td>'+
             '<td>'+esc(row.service||'—')+'</td>'+
             (basis==='due'
               ? '<td class="mono">'+(row.invoiced?fmt(row.invoiced):'—')+'</td>'+
@@ -5904,7 +5919,7 @@ function renderComm(){
            '<th>Salesperson</th><th class="num">Booked</th><th class="num">Rate</th><th class="num">Override</th>'+
            '</tr></thead><tbody>';
         r.team.forEach(t=>{
-          h+='<tr><td>'+esc(t.name)+(t.since?'<div class="note">from '+fmtY(t.since)+', when their plan starts</div>':'')+'</td>'+
+          h+='<tr><td>'+(t.id?empLink(t.id,t.name):esc(t.name))+(t.since?'<div class="note">from '+fmtY(t.since)+', when their plan starts</div>':'')+'</td>'+
             '<td class="num">'+money2(t.booked)+'<div class="note">net of reversals</div></td>'+
             '<td class="num">'+num(p.commOv,1)+'%</td><td class="num mono">'+money2(t.comm)+(t.paid?'<div class="note">'+money2(t.paid)+' paid</div>':'')+'</td></tr>';
         });
@@ -5918,7 +5933,7 @@ function renderComm(){
            '<th class="num">Original payout</th><th class="num">Chargeback</th><th>Status</th>'+
            '</tr></thead><tbody>';
         r.chargebacks.concat(r.forgiven).forEach(x=>{ const row=ROWS.find(q=>q.id===x.rowId), orig=PAYOUTS.find(q=>q.id===x.adjOf);
-          h+='<tr'+(x.status==='forgiven'?' style="opacity:.7"':'')+'><td class="mono">'+fmt(x.paidOn)+'</td><td>'+esc(PAYOUT_KINDS[x.kind]||x.kind)+'</td><td>'+esc(row?row.client:x.rowId)+'</td>'+
+          h+='<tr'+(x.status==='forgiven'?' style="opacity:.7"':'')+'><td class="mono">'+fmt(x.paidOn)+'</td><td>'+esc(PAYOUT_KINDS[x.kind]||x.kind)+'</td><td>'+(row?saleLink(row.id,row.client):esc(x.rowId))+'</td>'+
             '<td>'+esc(x.reason||'')+'</td><td class="num mono neg">−'+money2(x.basisValue)+'</td>'+
             '<td class="num mono">'+(orig?money2(orig.amount)+'<div class="note">'+fmt(orig.paidOn)+'</div>':'—')+'</td>'+
             '<td class="num mono neg"><b>−'+money2(-x.amount)+'</b></td><td>'+(x.status==='applied'?'<span class="pill no">DEDUCTED</span>':'<span class="pill n">FORGIVEN · outside window</span>')+'</td></tr>';
@@ -5950,7 +5965,7 @@ function renderComm(){
         h+='<div class="warnbox" style="margin:12px 0"><b>'+money(r.heldC)+' held on '+r.held.length+
            ' split sale'+(r.held.length===1?'':'s')+' awaiting approval.</b> A split pays nobody until every rep on it '+
            'and an admin have signed off — approve it on the Sales tab and this money joins the next run: '+
-           r.held.slice(0,4).map(x=>esc(x.client)).join(', ')+(r.held.length>4?'…':'')+'</div>';
+           r.held.slice(0,4).map(x=>saleLink(x.id,x.client)).join(', ')+(r.held.length>4?'…':'')+'</div>';
       }
       const guarHrs=r.payLive?projectedHours(p,r.payFrom,b.to):0;
       const wholeMonth = r.payFrom===b.from;
@@ -6390,11 +6405,20 @@ function openClient(name){
   const c=CLIENTS.find(x=>norm(x.n)===norm(name));
   CP_NAME = c? c.n : name;
   document.getElementById('clientModal').classList.add('on');
+  try{ history.replaceState(null,'','#client/'+encodeURIComponent(CP_NAME)); }catch(e){}
   renderClientPage();
 }
 function closeClient(){
   document.getElementById('clientModal').classList.remove('on');
   CP_NAME=null;
+  if(location.hash.indexOf('#client/')===0){ try{ history.replaceState(null,'',location.pathname+location.search); }catch(e){} }
+}
+// The one way every screen links a client — same dotted-underline treatment as
+// people and invoices, so the connected things all read the same.
+function cliLink(name,label){
+  if(!name) return esc(label||'—');
+  const js=JSON.stringify(String(name)).replace(/"/g,'&quot;');
+  return '<a class="emplink" href="#client/'+esc(encodeURIComponent(name))+'" onclick="openClient('+js+');return false" title="Open '+esc(name)+'’s page">'+esc(label!=null?label:name)+'</a>';
 }
 
 // Which property facts this record carries. Clicking one turns it on or off, so a rep
@@ -6469,7 +6493,7 @@ function renderClientPage(){
     const kv=(k,v)=>'<div class="kv"><span class="k">'+k+'</span><span class="v">'+v+'</span></div>';
     x+=kv('Type', esc(c.at||'—'));
     x+=kv('Source', esc(c.src?srcName(c.src):'—'));
-    x+=kv('Salesperson', esc(c.sp||'—'));
+    x+=kv('Salesperson', c.sp?(clientRepId(c)?empLink(clientRepId(c),c.sp):esc(c.sp)):'—');
     if(isLead(c)) x+=kv('Lead since', c.lead?fmtY(c.lead):'—');
     else x+=kv('Client since', c.since?fmtY(c.since):'—');
     if(+c.lawn>0)  x+=kv('Lawn', Math.round(c.lawn).toLocaleString()+' sq ft');
@@ -6528,7 +6552,7 @@ function renderClientPage(){
   if(mine.length){
     mine.slice(0,10).forEach(r=>{
       const p=person(r.rep);
-      x+='<div class="svcrow"><span class="g"><b>'+esc(r.service||'—')+'</b> '+
+      x+='<div class="svcrow"><span class="g"><b>'+saleLink(r.id,r.service||'—')+'</b> '+
         '<span class="typepill '+esc(r.type)+'">'+esc(TYPE_LABEL[r.type]||r.type)+'</span>'+
         '<div class="note">'+fmtY(r.date)+' · '+(p?empLink(p.id,empShort(p)):'?')+
         ' · '+esc(STAGE_LABEL[stageOf(r)])+'</div></span>'+
@@ -6881,7 +6905,7 @@ function renderQRecent(){
     const r=ROWS.find(x=>x.id===id); if(!r)return;
     const p=person(r.rep);
     h+='<div class="r"><span class="dot" style="background:'+pColor(r.rep)+'"></span>'+
-      '<span class="g"><b>'+esc(r.client)+'</b>'+(r.service?' · '+esc(r.service):'')+
+      '<span class="g"><b>'+cliLink(r.client)+'</b>'+(r.service?' · '+saleLink(id,r.service):'')+
       ' · '+valueLabel(r)+(basisOf(r)!=='contract'?' = '+money(bookedValue(r)):'')+' · '+(r.type==='new'?'new':'upsell')+
       '<div class="note">'+fmt(r.date)+' · '+(p?empLink(p.id,empShort(p)):'')+'</div></span>'+
       '<button class="sm danger" onclick="undoQuick(\''+id+'\')">Undo</button></div>';
@@ -6915,9 +6939,18 @@ document.addEventListener('keydown',e=>{
     if(e.key==='Escape'){ e.preventDefault(); closeAsk(); }
     return;
   }
+  const saleEl=document.getElementById('saleModal');
+  if(saleEl && saleEl.classList.contains('on') && !document.getElementById('editModal').classList.contains('on')){
+    if(e.key==='Escape'){ e.preventDefault(); closeSale(); return; }
+  }
   const invEl=document.getElementById('invModal');
   if(invEl && invEl.classList.contains('on')){
     if(e.key==='Escape'){ e.preventDefault(); closeInv(); return; }
+  }
+  const cliEl=document.getElementById('clientModal');
+  if(cliEl && cliEl.classList.contains('on') && !document.getElementById('editModal').classList.contains('on') &&
+     !(document.getElementById('quickModal')&&document.getElementById('quickModal').classList.contains('on'))){
+    if(e.key==='Escape'){ e.preventDefault(); closeClient(); return; }
   }
   const empEl=document.getElementById('empModal');
   if(empEl && empEl.classList.contains('on') && !document.getElementById('editModal').classList.contains('on')){
@@ -7640,7 +7673,7 @@ function renderProperty(){
       flagged.sort((a,b)=>Math.abs(Math.log(b.s.rate/b.med))-Math.abs(Math.log(a.s.rate/a.med)));
       flagged.slice(0,40).forEach(f=>{
         const hi=f.s.rate>f.med;
-        z+='<tr><td><b>'+esc(f.s.r.client)+'</b> · '+esc(f.s.r.service)+
+        z+='<tr><td><b>'+cliLink(f.s.r.client)+'</b> · '+saleLink(f.s.r.id,f.s.r.service)+
           '<div class="note">'+money(f.s.booked)+' over '+f.s.size.toLocaleString()+' '+esc(SIZE_UNITS[f.s.driver][1])+
           ' · sold '+fmt(f.s.r.date)+'</div></td>'+
           '<td class="num mono" style="color:'+(hi?'var(--grn-d)':'var(--red)')+'"><b>'+money2(f.s.rate)+'</b>'+
@@ -7668,7 +7701,7 @@ function renderProperty(){
       const ev=[]; if(+c.zones>0)ev.push(c.zones+' zones'); if(c.clockBrand)ev.push(esc(c.clockBrand));
       if(c.clockLoc)ev.push('clock: '+esc(c.clockLoc)); if(c.shutoff)ev.push('shutoff: '+esc(c.shutoff));
       const bo=saLookup('Sprinkler Blowout');
-      w+='<tr><td><b>'+esc(c.n)+'</b>'+(c.at==='Commercial'?' <span class="pill sa">COMM</span>':'')+'</td>'+
+      w+='<tr><td><b>'+cliLink(c.n)+'</b>'+(c.at==='Commercial'?' <span class="pill sa">COMM</span>':'')+'</td>'+
         '<td>'+esc(c.city||'—')+'</td>'+
         '<td class="num mono">'+(+c.zones||'—')+'</td>'+
         '<td class="note">'+ev.slice(0,2).join(' · ')+'</td>'+
@@ -7832,7 +7865,7 @@ function pickPoint(i){
   MAP_SEL=c;
   const box=document.getElementById('mapPick');
   let h='<div class="card" style="box-shadow:none"><div class="pad" style="padding:13px 14px">';
-  h+='<div style="font-weight:700;font-size:14.5px">'+esc(c.n)+'</div>';
+  h+='<div style="font-weight:700;font-size:14.5px">'+cliLink(c.n)+'</div>';
   h+='<div class="note">'+(isLead(c)?'Lead':'Client')+(c.at?' · '+esc(c.at):'')+
      (c.zip?' · '+esc(c.zip):'')+(c.addr?'<br>'+mapLink(c,c.addr):'')+'</div>';
   RADII.forEach(rr=>{
@@ -7844,7 +7877,7 @@ function pickPoint(i){
   const q=near(c,0.25).filter(x=>x.c!==c && isLead(x.c)).slice(0,6);
   if(q.length){
     h+='<div class="note" style="margin-top:11px"><b>Nearest leads</b></div>';
-    q.forEach(x=>{ h+='<div class="note">'+esc(x.c.n)+' — '+(x.d<0.19?Math.round(x.d*5280)+' ft':num(x.d,2)+' mi')+'</div>'; });
+    q.forEach(x=>{ h+='<div class="note">'+cliLink(x.c.n)+' — '+(x.d<0.19?Math.round(x.d*5280)+' ft':num(x.d,2)+' mi')+'</div>'; });
   }
   h+='</div></div>';
   box.innerHTML=h;
@@ -8231,8 +8264,8 @@ function renderPayments(){
     '</td><td class="num mono">'+money(byM[k].t)+'</td></tr>').join('')+'</tbody>';
   document.getElementById('payRecentTable').innerHTML=
     '<thead><tr><th>Date</th><th>Client</th><th class="num">Amount</th><th>Invoice</th><th>Method</th></tr></thead><tbody>'+
-    PAYMENTS.slice(-14).reverse().map(x=>'<tr><td class="mono">'+fmt(x.d)+'</td><td>'+esc(x.c||'—')+
-    '</td><td class="num mono">'+money2(x.a)+'</td><td class="mono">'+(x.i?'#'+esc(x.i):'—')+'</td><td>'+esc(x.m||'—')+
+    PAYMENTS.slice(-14).reverse().map(x=>'<tr><td class="mono">'+fmt(x.d)+'</td><td>'+(x.c?cliLink(x.c):'—')+
+    '</td><td class="num mono">'+money2(x.a)+'</td><td class="mono">'+(x.i?invLink(x.i):'—')+'</td><td>'+esc(x.m||'—')+
     '</td></tr>').join('')+'</tbody>';
 }
 
@@ -8866,7 +8899,7 @@ function renderInvoices(){
           '<td>'+invStatusPill(h)+'</td>'+
           '<td>'+(p?empLink(p.id,empShort(p)):esc(h.repHdr||'—'))+'</td>'+
           '<td class="num">'+(h.lines.length||'—')+'</td>'+
-          '<td>'+(sales.length?sales.length+' linked':'—')+'</td>'+
+          '<td>'+(sales.length===1?saleLink(sales[0].r.id,'1 linked'):sales.length?invLink(h.no,sales.length+' linked'):'—')+'</td>'+
           '<td>'+(h.health.length?'<span title="'+esc(h.health.map(k=>INV_HEALTH_LABEL[k]||k).join(' · '))+'" style="color:var(--red);font-weight:700">⚠ '+h.health.length+'</span>':'<span style="color:var(--grn-d)">✓</span>')+'</td></tr>';
       }).join('')+'</tbody>'+(L.length>500?'<tbody><tr><td class="empty" colspan="10">Showing 500 of '+L.length.toLocaleString()+' — narrow the filters.</td></tr></tbody>':'');
   }
@@ -8880,7 +8913,7 @@ function renderInvoices(){
   // the review queue
   document.getElementById('invRegReviewTable').innerHTML = review.length
     ? '<thead><tr><th>Invoice</th><th>Client on the record</th><th>What needs deciding</th></tr></thead><tbody>'+
-      review.slice(0,40).map(h=>'<tr><td>'+invLink(h.no)+'</td><td>'+esc(h.client||'—')+'</td><td style="font-size:12px">'+
+      review.slice(0,40).map(h=>'<tr><td>'+invLink(h.no)+'</td><td>'+(h.client?cliLink(h.cli?h.cli.n:h.client):'—')+'</td><td style="font-size:12px">'+
         h.health.map(k=>INV_HEALTH_LABEL[k]||k).join(' · ')+'</td></tr>').join('')+'</tbody>'+
       (review.length>40?'<tbody><tr><td class="empty" colspan="3">and '+(review.length-40)+' more — filter the register by “Needs review”.</td></tr></tbody>':'')
     : '<tbody><tr><td class="empty">Nothing waiting. Every invoice resolves cleanly.</td></tr></tbody>';
@@ -8912,7 +8945,7 @@ function renderInv(){
   const kv=(k,v)=>{ if(v!==''&&v!=null) x+='<div class="kv"><span class="k">'+k+'</span><span class="v">'+v+'</span></div>'; };
   kv('Invoice #','#'+esc(h.no)+' · '+esc(h.src));
   kv('Invoice date',h.date?fmtY(h.date):'<span style="color:var(--red)">not on any feed</span>');
-  kv('Client',esc(h.client||'—'));
+  kv('Client', h.client?cliLink(h.cli?h.cli.n:h.client):'—');
   kv('Address',esc(h.addr||'—'));
   kv('Pre-tax',money2(h.pre));
   if(h.tax) kv('Sales tax',money2(h.tax));
@@ -8950,15 +8983,15 @@ function renderInv(){
   }
   x+='<div style="margin-top:9px"><b style="font-size:12px">Sales behind this invoice</b>';
   if(sales.length){ sales.forEach(e=>{ const p=person(e.r.rep);
-    x+='<div class="svcrow"><span class="g"><b>'+esc(e.r.client)+'</b> · '+money2(bookedValue(e.r))+
-      '<div class="note">'+fmtY(e.r.date)+' · '+esc(e.r.service||'sale')+(p?' · '+esc(empShort(p)):'')+' · '+esc(e.how)+'</div></span>'+
+    x+='<div class="svcrow"><span class="g"><b>'+cliLink(e.r.client)+'</b> · '+saleLink(e.r.id,money2(bookedValue(e.r)))+
+      '<div class="note">'+fmtY(e.r.date)+' · '+esc(e.r.service||'sale')+(p?' · '+empLinkS(e.r.rep):'')+' · '+esc(e.how)+'</div></span>'+
       '<span><button class="sm" onclick="rowInfo(\''+e.r.id+'\')">Info</button>'+
       (can('edit_sales')?' <button class="sm" onclick="invUnlinkSale('+JSON.stringify(String(h.no)).replace(/"/g,'&quot;')+',\''+e.r.id+'\')">Unlink</button>':'')+'</span></div>'; });
   } else x+='<div class="note">None linked. Recurring service billing usually has no sale — that is normal, not broken.</div>';
   if(sugg.length){ x+='<div class="note" style="margin-top:6px">Possible matches — <b>a person decides, the app never links on its own</b>:</div>';
     sugg.forEach(r=>{ const p=person(r.rep);
-      x+='<div class="svcrow"><span class="g">'+esc(r.service||'sale')+' · '+money2(bookedValue(r))+
-        '<div class="note">'+fmtY(r.date)+(p?' · '+esc(empShort(p)):'')+'</div></span>'+
+      x+='<div class="svcrow"><span class="g">'+saleLink(r.id,r.service||'sale')+' · '+money2(bookedValue(r))+
+        '<div class="note">'+fmtY(r.date)+(p?' · '+empLinkS(r.rep):'')+'</div></span>'+
         '<button class="sm" onclick="invLinkSale('+JSON.stringify(String(h.no)).replace(/"/g,'&quot;')+',\''+r.id+'\')">Link</button></div>'; });
   }
   x+='</div></div>';
@@ -8966,7 +8999,7 @@ function renderInv(){
   x+='<div class="cpbox"><h5>Invoice lines ('+h.lines.length+')</h5>';
   if(h.lines.length){
     h.lines.forEach(l=>{ x+='<div class="svcrow"><span class="g"><b>'+esc(l.s||'line')+'</b>'+
-      '<div class="note">'+(l.k&&l.k!=='None'?esc(l.k)+' · ':'')+fmtY(l.d)+(l.r?' · rep '+esc(l.r):'')+'</div></span>'+
+      '<div class="note">'+(l.k&&l.k!=='None'?esc(l.k)+' · ':'')+fmtY(l.d)+(l.r?' · rep '+(invoiceRepId(l)?empLink(invoiceRepId(l),l.r):esc(l.r)):'')+'</div></span>'+
       '<span class="mono">'+money2(l.v)+'</span></div>'; });
     x+='<div class="kv" style="margin-top:5px"><span class="k">Lines total (pre-tax)</span><span class="v mono">'+money2(h.linePre)+
       (h.health.indexOf('value-conflict')>-1?' <span style="color:var(--red)">≠ '+money2(h.pre)+' on the paid feed</span>':'')+'</span></div>';
@@ -8976,16 +9009,16 @@ function renderInv(){
   x+='<div class="cpbox"><h5>Commission trail</h5>';
   if(sales.length){
     sales.forEach(e=>{ const r=e.r;
-      x+='<div class="note" style="margin-bottom:4px"><b>'+esc(r.client)+'</b> · stage: '+esc(STAGE_LABEL[stageOf(r)])+
+      x+='<div class="note" style="margin-bottom:4px"><b>'+saleLink(r.id,r.client)+'</b> · stage: '+esc(STAGE_LABEL[stageOf(r)])+
         (r.invoiced?' · invoiced '+fmtY(r.invoiced)+' · commission due '+fmtY(dueDate(r)):'')+
         (r.paid?' · commission paid '+fmtY(r.paid):'')+'</div>';
       const led=payoutsFor(r.id);
       if(led.length) led.forEach(pp=>{ const e2=person(pp.emp);
-        x+='<div class="kv"><span class="k">'+esc(PAYOUT_KINDS[pp.kind]||pp.kind)+' · '+fmt(pp.paidOn)+'</span><span class="v mono">'+money2(pp.amount)+(e2?' → '+esc(empShort(e2)):'')+'</span></div>'; });
+        x+='<div class="kv"><span class="k">'+esc(PAYOUT_KINDS[pp.kind]||pp.kind)+' · '+fmt(pp.paidOn)+'</span><span class="v mono">'+money2(pp.amount)+(e2?' → '+empLinkS(pp.emp):'')+'</span></div>'; });
       else x+='<div class="note">No payout on the ledger yet'+(r.paid?' — marked paid without a ledger entry (the Hawk lists these)':'')+'.</div>';
       const cbs=chargebacksFor(r.id);
       cbs.forEach(cb=>{ const e2=person(cb.emp);
-        x+='<div class="kv"><span class="k">'+esc(PAYOUT_KINDS[cb.kind]||cb.kind)+' · '+esc(cb.status)+'</span><span class="v mono" style="color:var(--red)">'+money2(cb.amount)+(e2?' → '+esc(empShort(e2)):'')+'</span></div>'; });
+        x+='<div class="kv"><span class="k">'+esc(PAYOUT_KINDS[cb.kind]||cb.kind)+' · '+esc(cb.status)+'</span><span class="v mono" style="color:var(--red)">'+money2(cb.amount)+(e2?' → '+empLinkS(cb.emp):'')+'</span></div>'; });
     });
   } else x+='<div class="note">No sale, no commission — money can only move on a linked sale, and the payout ledger is the record of it.</div>';
   x+='</div>';
@@ -9135,7 +9168,7 @@ function renderBalances(){
   let h='';
   h+=tile('Outstanding',money(total),OPENINV.length+' unpaid invoices');
   h+=tile('Past due',money(past.reduce((a,x)=>a+x.t,0)),past.length+' invoices',past.length?'bad':'ok');
-  if(oldest) h+=tile('Oldest',fmtY(oldest.d),esc(oldest.c)+' · '+money2(oldest.t)+' · '+age(oldest)+'d');
+  if(oldest) h+=tile('Oldest',fmtY(oldest.d),cliLink(oldest.c)+' · '+(oldest.i?invLink(oldest.i,money2(oldest.t)):money2(oldest.t))+' · '+age(oldest)+'d');
   tiles.innerHTML=h;
   // aging buckets by invoice date
   const buckets=[['0–30',0,30],['31–60',31,60],['61–90',61,90],['90+',91,1e9]];
@@ -9153,7 +9186,7 @@ function renderBalances(){
     g.n++; g.t+=v.t; if(/past/i.test(v.s)) g.past++; });
   x='<thead><tr><th>Client</th><th class="num">Invoices</th><th class="num">Owed</th><th></th></tr></thead><tbody>';
   Object.values(byC).sort((a,b)=>b.t-a.t).slice(0,25).forEach(g=>{
-    x+='<tr><td><b>'+esc(g.name)+'</b></td><td class="num">'+g.n+'</td>'+
+    x+='<tr><td><b>'+cliLink(g.name)+'</b></td><td class="num">'+g.n+'</td>'+
       '<td class="num mono">'+money2(g.t)+'</td>'+
       '<td>'+(g.past?'<span class="pill no">PAST DUE</span>':'<span class="pill n">OPEN</span>')+'</td></tr>';
   });
@@ -9233,7 +9266,7 @@ function renderTakeover(){
       '<td class="num">'+(cs||'—')+'</td><td class="num">'+(ls||'—')+'</td>'+
       '<td class="num mono">'+(v.billed?money(v.billed):'—')+'</td>'+
       (v.rule
-        ? '<td colspan="2"><span class="pill ok">RULE ACTIVE</span> <span class="note">every sync keeps these on '+esc(to?empName(to):v.rule.to)+'</span></td>'
+        ? '<td colspan="2"><span class="pill ok">RULE ACTIVE</span> <span class="note">every sync keeps these on '+(to?empLink(to.id,empName(to)):esc(v.rule.to))+'</span></td>'
         : '<td><select id="tkoSel'+i+'">'+active.map(p=>'<option value="'+p.id+'">'+esc(empName(p))+'</option>').join('')+'</select></td>'+
           '<td><button class="sm p" onclick="runTakeover('+i+')">Take over '+v.matches.length+'</button></td>')+
       '</tr>';
@@ -9714,7 +9747,7 @@ function renderRevenue(){
   cls.forEach(g=>{
     const top=Object.keys(g.cats).sort((a,b)=>g.cats[b]-g.cats[a])[0];
     const known=CLIENTS.some(c=>norm(c.n)===norm(g.name));
-    x+='<tr><td><b>'+esc(g.name)+'</b></td><td class="num">'+g.lines+'</td>'+
+    x+='<tr><td><b>'+cliLink(g.name)+'</b></td><td class="num">'+g.lines+'</td>'+
       '<td class="num mono">'+money(g.billed)+'</td>'+
       '<td class="note">'+esc(INC_SHORT[top]||top)+'</td>'+
       '<td>'+(known?'<span class="pill ok">yes</span>':'<span class="pill no">not found</span>')+'</td></tr>';
@@ -9805,15 +9838,15 @@ function renderCloverleaf(){
   box.innerHTML=list.slice(0,25).map(x=>{
     const c=x.c;
     return '<div class="clover'+(x.done?' done':'')+'">'+
-      '<div class="hd">'+esc(c.n)+(c.zip?' · '+esc(c.zip):'')+
+      '<div class="hd">'+cliLink(c.n)+(c.zip?' · '+esc(c.zip):'')+
         '<span class="perhr">'+money(x.perHour)+'/hr</span></div>'+
-      '<div class="sub">'+esc(x.r.service)+' finished '+fmtY(x.r.completed)+
+      '<div class="sub">'+saleLink(x.r.id,x.r.service)+' finished '+fmtY(x.r.completed)+
         (x.age===0?' — today':' — '+x.age+' day'+(x.age===1?'':'s')+' ago')+
         ' · '+money(bookedValue(x.r))+
         (c.addr?'<br>'+mapLink(c,c.addr):'')+'</div>'+
       '<div class="doors">'+
         x.doors.map((d,i)=>'<div class="door"><span class="num">'+(i+1)+'</span>'+
-          '<span class="who"><b>'+esc(d.c.n)+'</b>'+
+          '<span class="who"><b>'+cliLink(d.c.n)+'</b>'+
             (isLead(d.c)?' <span class="pill mid">LEAD</span>':'')+
             (d.c.at==='Commercial'?' <span class="pill sa">COMM</span>':'')+
             (d.c.src?'<div class="note">'+esc(srcName(d.c.src))+
@@ -9874,12 +9907,12 @@ function renderCampaigns(){
       '<div class="hd">Sell '+esc(svc)+zip+' before '+fmtY(x.closes)+'</div>'+
       '<div class="dl">'+(x.left<=0?'last day':x.left+' day'+(x.left===1?'':'s')+' left')+
         (x.endedByInvoice?' — window ends when this job is invoiced':'')+'</div>'+
-      '<div class="bd">Sold to <b>'+esc(x.c.n)+'</b> on '+fmtY(x.r.date)+' for '+money(bookedValue(x.r))+'. '+
+      '<div class="bd">Sold to <b>'+cliLink(x.c.n)+'</b> on '+fmtY(x.r.date)+' for '+saleLink(x.r.id,money(bookedValue(x.r)))+'. '+
         'Within '+ringName+' there '+(x.leads.length===1?'is':'are')+' <b>'+x.leads.length+'</b> lead'+
         (x.leads.length===1?'':'s')+' and <b>'+x.clients.length+'</b> existing client'+
         (x.clients.length===1?'':'s')+'.'+
         (x.leads.length?'<br><span class="note">Closest: '+
-          x.leads.slice(0,4).map(l=>esc(l.c.n)+' ('+(l.d<0.19?Math.round(l.d*5280)+' ft':num(l.d,2)+' mi')+')').join(' · ')+
+          x.leads.slice(0,4).map(l=>cliLink(l.c.n)+' ('+(l.d<0.19?Math.round(l.d*5280)+' ft':num(l.d,2)+' mi')+')').join(' · ')+
           '</span>':'')+
       '</div>'+
       '<div style="margin-top:10px"><button class="sm" onclick="mapTo('+JSON.stringify(x.c.zip||'').replace(/"/g,'&quot;')+
@@ -9932,10 +9965,10 @@ function runChecks(){
   add('dupes','bad','Possible duplicate sales',
     'Same salesperson, client, service and value within a fortnight. Commission would be paid twice.',
     dupes.map(d=>({
-      text:'<b>'+esc(d.a.client)+'</b> · '+esc(d.a.service||'no service')+' · '+money(bookedValue(d.a)),
+      text:'<b>'+cliLink(d.a.client)+'</b> · '+esc(d.a.service||'no service')+' · '+saleLink(d.a.id,money(bookedValue(d.a))),
       sub:fmt(d.a.date)+' and '+fmt(d.b.date)+' — '+d.days+' day'+(d.days===1?'':'s')+' apart · '+
-        (person(d.a.rep)?person(d.a.rep).name:'?'),
-      act:'<button class="sm danger" onclick="delRow(\''+d.b.id+'\')">Delete the later one</button>'
+        (person(d.a.rep)?empLink(d.a.rep):'?'),
+      act:'<button class="sm" onclick="openSale(\''+d.a.id+'\')">First</button> <button class="sm" onclick="openSale(\''+d.b.id+'\')">Later</button> <button class="sm danger" onclick="delRow(\''+d.b.id+'\')">Delete the later one</button>'
     })));
 
   /* --- THE DATA HAWK: the same job counted in both systems --- */
@@ -9979,8 +10012,8 @@ function runChecks(){
       (crossTotal>80?' — top 80 of '+crossTotal:''),
     'Different source systems, matching or closely-related client names, money within 5%, dates within 90 days — usually one real job proposed in one CRM and billed through the other. If it is, delete one or the sale and the commission are both doubled. Strongest matches are listed first.',
     cross.map(d=>({
-      text:'<b>'+esc(d.a.client)+'</b> · '+money(bookedValue(d.a))+
-        (d.diff>0.01?' vs '+money(bookedValue(d.b)):'')+(d.b.client!==d.a.client?' · also as "'+esc(d.b.client)+'"':''),
+      text:'<b>'+cliLink(d.a.client)+'</b> · '+saleLink(d.a.id,money(bookedValue(d.a)))+
+        (d.diff>0.01?' vs '+saleLink(d.b.id,money(bookedValue(d.b))):'')+(d.b.client!==d.a.client?' · also as "'+cliLink(d.b.client)+'"':''),
       sub:(SRC_LABEL[d.a.src]||d.a.src)+' '+fmt(d.a.date)+' and '+(SRC_LABEL[d.b.src]||d.b.src)+' '+fmt(d.b.date)+
         ' — '+d.gap+'d apart'+(d.a.service||d.b.service?' · '+esc(d.a.service||'')+(d.b.service&&d.b.service!==d.a.service?' / '+esc(d.b.service):''):''),
       act:'<button class="sm" onclick="rowInfo(\''+d.a.id+'\')">First</button> '+
@@ -10007,7 +10040,7 @@ function runChecks(){
               : (r.type==='new' ? p.commNew : p.commUp);
       if(own==null||own==='') return;
       if(Math.abs((+own||0)-applied)>0.001)
-        odd.push({name:empShort(p), own:+own||0, paidAt:applied, share:s.frac,
+        odd.push({name:empShort(p), rep:s.rep, own:+own||0, paidAt:applied, share:s.frac,
                   diff:round2(netValue(r)*s.frac*(applied-(+own||0))/100)});
     });
     if(odd.length) splitRate.push({r, odd});
@@ -10015,8 +10048,8 @@ function runChecks(){
   add('hawkSplitRate','warn','\ud83e\udd85 Split paying everyone at one person\u2019s rate',
     'A split sale is paid at a single rate \u2014 the one on the rep listed first \u2014 so a partner on a different comp plan is paid at somebody else\u2019s percentage. Decide whether a split should pay each person their own rate, then set the rate on the sale itself.',
     splitRate.slice(0,30).map(d=>({
-      text:'<b>'+esc(d.r.client)+'</b> \u00b7 '+money(bookedValue(d.r))+' \u00b7 paid at '+num(rowRate(d.r),1)+'%',
-      sub:d.odd.map(o=>esc(o.name)+' is on '+num(o.own,1)+'% but was paid '+num(o.paidAt,1)+'% on '+
+      text:'<b>'+cliLink(d.r.client)+'</b> \u00b7 '+saleLink(d.r.id,money(bookedValue(d.r)))+' \u00b7 paid at '+num(rowRate(d.r),1)+'%',
+      sub:d.odd.map(o=>(o.rep?empLink(o.rep,o.name):esc(o.name))+' is on '+num(o.own,1)+'% but was paid '+num(o.paidAt,1)+'% on '+
           num(o.share*100,0)+'% of the sale \u2014 '+(o.diff>0?money2(o.diff)+' over':money2(-o.diff)+' under')).join(' \u00b7 '),
       act:'<button class="sm" onclick="rowInfo(\''+d.r.id+'\')">Info</button> '+
           '<button class="sm" onclick="editSplit(\''+d.r.id+'\')">Open the split</button>'
@@ -10079,15 +10112,15 @@ function runChecks(){
       linkedBy='client name within 60 days';
     }
     const others={};
-    lines.forEach(x=>{ const id=invoiceRepId(x); if(id && shareIds.indexOf(id)<0) others[x.r]=1; });
-    if(Object.keys(others).length) repMismatch.push({r, others:Object.keys(others), linkedBy});
+    lines.forEach(x=>{ const id=invoiceRepId(x); if(id && shareIds.indexOf(id)<0) others[x.r]=id; });
+    if(Object.keys(others).length) repMismatch.push({r, others, linkedBy});
   });
   add('hawkRep','warn','🦅 Sale and invoice name different reps',
     'The sale pays commission to one person while the invoice lines carry another name. One of them is wrong — or it should be a split. Only unambiguous matches are listed: a sale carrying a real invoice number, or a client with a single sale in the window.',
     repMismatch.slice(0,30).map(d=>({
-      text:'<b>'+esc(d.r.client)+'</b> · '+money(bookedValue(d.r)),
-      sub:'sale: '+esc(person(d.r.rep)?person(d.r.rep).name:'?')+' · invoice lines: '+esc(d.others.join(', '))+
-          ' · matched by '+esc(d.linkedBy),
+      text:'<b>'+cliLink(d.r.client)+'</b> · '+saleLink(d.r.id,money(bookedValue(d.r))),
+      sub:'sale: '+(person(d.r.rep)?empLink(d.r.rep):'?')+' · invoice lines: '+Object.keys(d.others).map(n=>d.others[n]?empLink(d.others[n],n):esc(n)).join(', ')+
+          ' · matched by '+(d.linkedBy.indexOf('invoice #')===0&&d.r.invNo?'invoice '+invLink(d.r.invNo):esc(d.linkedBy)),
       act:'<button class="sm" onclick="rowInfo(\''+d.r.id+'\')">Info</button> '+
           '<button class="sm" onclick="editSplit(\''+d.r.id+'\')">Split it</button>'
     })));
@@ -10102,7 +10135,7 @@ function runChecks(){
   add('hawkSeason','warn','🦅 Work completed outside its season',
     'The services sheet says this service is not done in that month. Either the completed date is wrong, the service name is wrong, or the sheet needs updating.',
     offSeason.slice(0,30).map(d=>({
-      text:'<b>'+esc(d.r.client)+'</b> · '+esc(d.r.service)+' · completed '+fmtY(d.r.completed),
+      text:'<b>'+cliLink(d.r.client)+'</b> · '+saleLink(d.r.id,d.r.service)+' · completed '+fmtY(d.r.completed),
       sub:'season: '+esc(d.v.window||d.v.months.map((x,i)=>x?MON[i]:'').filter(Boolean).join(', ')),
       act:'<button class="sm" onclick="openEdit(\''+d.r.id+'\')">Check</button>'
     })));
@@ -10112,8 +10145,8 @@ function runChecks(){
   add('hawkEmp','bad','🦅 Sales not tied to a real employee',
     'Imported with a salesperson the roster does not recognise (so they fell to the import default), or their rep id no longer exists. Commission on these is going to the wrong person or to nobody. Fix the name under Employee match needed, or set the rep on the sale.',
     orphanRows.slice(0,30).map(r=>({
-      text:'<b>'+esc(r.client)+'</b> · '+money(bookedValue(r))+' · '+fmtY(r.date),
-      sub:'source said: '+esc(r.repRaw||r.repOrphan||'(blank)')+' · credited to: '+esc(empName(person(r.rep))),
+      text:'<b>'+cliLink(r.client)+'</b> · '+saleLink(r.id,money(bookedValue(r)))+' · '+fmtY(r.date),
+      sub:'source said: '+esc(r.repRaw||r.repOrphan||'(blank)')+' · credited to: '+empLinkN(r.rep),
       act:'<button class="sm" onclick="openEdit(\''+r.id+'\')">Fix rep</button>'
     })), orphanRows.reduce((a,r)=>a+rowComm(r),0));
 
@@ -10123,7 +10156,7 @@ function runChecks(){
   add('hawkOwes','warn','🦅 Commission moving while the customer still owes',
     'These sales are invoiced (commission due or already paid out) but the balances snapshot shows the customer past due. Worth holding or checking before money goes out.',
     owes.slice(0,30).map(r=>({
-      text:'<b>'+esc(r.client)+'</b> · sale '+money(bookedValue(r))+' · owes '+money(pastDueBy[norm(r.client)]),
+      text:'<b>'+cliLink(r.client)+'</b> · sale '+saleLink(r.id,money(bookedValue(r)))+' · owes '+money(pastDueBy[norm(r.client)]),
       sub:'stage: '+STAGE_LABEL[stageOf(r)]+(r.paid?' · commission paid '+fmt(r.paid):' · commission due '+(dueDate(r)?fmt(dueDate(r)):'')),
       act:'<button class="sm" onclick="rowInfo(\''+r.id+'\')">Info</button>'
     })));
@@ -10134,7 +10167,7 @@ function runChecks(){
     'The CRM sent a different figure than what was first recorded. The change is applied and logged — confirm it is a real price change and not an export error.',
     drift.slice(0,30).map(r=>{
       const e=(r.edits||[]).filter(x=>x.by==='sync'&&x.f==='value').slice(-1)[0];
-      return {text:'<b>'+esc(r.client)+'</b> · '+money2(+e.from||0)+' → '+money2(+e.to||0),
+      return {text:'<b>'+cliLink(r.client)+'</b> · '+money2(+e.from||0)+' → '+money2(+e.to||0),
         sub:'changed '+fmt(e.on)+' · originally '+money2(origOf(r).value||0),
         act:'<button class="sm" onclick="rowInfo(\''+r.id+'\')">Info</button>'};
     }));
@@ -10170,8 +10203,8 @@ function runChecks(){
   add('hawkTax','bad','🦅 Sale value looks TAX-INCLUSIVE',
     'The sale matches an invoice’s WITH-TAX total, not its pre-tax amount. Values in this tracker are pre-tax — commission is never paid on sales tax. Edit the sale down to the pre-tax figure.',
     taxHits.slice(0,30).map(function(d){
-      return {text:'<b>'+esc(d.r.client)+'</b> · sale '+money2(bookedValue(d.r))+' = invoice '+
-        (d.inv.i?'#'+esc(d.inv.i)+' ':'')+money2(d.inv.pre)+' + tax '+money2(d.inv.tax),
+      return {text:'<b>'+cliLink(d.r.client)+'</b> · sale '+saleLink(d.r.id,money2(bookedValue(d.r)))+' = invoice '+
+        (d.inv.i?invLink(d.inv.i)+' ':'')+money2(d.inv.pre)+' + tax '+money2(d.inv.tax),
         sub:'pre-tax value should be '+money2(d.inv.pre)+' · sold '+fmt(d.r.date),
         act:'<button class="sm p" onclick="openEdit(\''+d.r.id+'\')">Edit the sale</button> '+
             '<button class="sm" onclick="rowInfo(\''+d.r.id+'\')">Info</button>'};
@@ -10193,8 +10226,8 @@ function runChecks(){
     lawless.slice(0,40).map(function(r){
       const missing=[]; if(!(r.invNo&&String(r.invNo).trim())) missing.push('invoice #');
       if(!(r.files&&r.files.length)) missing.push('PDF upload');
-      return {text:'<b>'+esc(r.client)+'</b> · '+money2(bookedValue(r))+' · <span class="pill '+((r.invoiced||r.paid)?'no':'mid')+'">'+STAGE_LABEL[stageOf(r)].toUpperCase()+'</span>',
-        sub:'missing: '+missing.join(' and ')+' · '+fmt(r.date)+' · '+(person(r.rep)?person(r.rep).name:'?'),
+      return {text:'<b>'+cliLink(r.client)+'</b> · '+saleLink(r.id,money2(bookedValue(r)))+' · <span class="pill '+((r.invoiced||r.paid)?'no':'mid')+'">'+STAGE_LABEL[stageOf(r)].toUpperCase()+'</span>',
+        sub:'missing: '+missing.join(' and ')+' · '+fmt(r.date)+' · '+(person(r.rep)?empLink(r.rep):'?'),
         act:'<button class="sm p" onclick="openEdit(\''+r.id+'\')">Fix it</button>'};
     }));
 
@@ -10223,7 +10256,7 @@ function runChecks(){
   add('hawkAfterPaid','bad','🦅 Money fields changed AFTER commission was paid',
     'The commission on these sales already went out, then somebody changed the value, type, rep, or split. The paid month stays frozen, but this is exactly the pattern that hides a skim — every change here is on the audit trail with who and when.',
     afterPaid.slice(0,30).map(function(d){
-      return {text:'<b>'+esc(d.r.client)+'</b> · '+d.e.f+': "'+esc(String(d.e.from).slice(0,30))+'" → "'+esc(String(d.e.to).slice(0,30))+'"',
+      return {text:'<b>'+cliLink(d.r.client)+'</b> · '+d.e.f+': "'+esc(String(d.e.from).slice(0,30))+'" → "'+esc(String(d.e.to).slice(0,30))+'"',
         sub:'commission paid '+fmt(d.r.paid)+' · changed '+fmt(d.e.on)+' ('+esc(d.e.by||'user')+')'+(d.n>1?' · +'+(d.n-1)+' more changes':''),
         act:'<button class="sm" onclick="rowInfo(\''+d.r.id+'\')">Full history</button>'};
     }));
@@ -10240,7 +10273,7 @@ function runChecks(){
   add('hawkBump','warn','🦅 Value raised right before commission went out',
     'The sale value went UP within three days of the commission being paid. Sometimes legitimate — always worth eyes.',
     bumpThenPaid.slice(0,20).map(function(d){
-      return {text:'<b>'+esc(d.r.client)+'</b> · '+money2(+d.e.from||0)+' → '+money2(+d.e.to||0),
+      return {text:'<b>'+cliLink(d.r.client)+'</b> · '+money2(+d.e.from||0)+' → '+money2(+d.e.to||0),
         sub:'raised '+fmt(d.e.on)+', paid '+fmt(d.r.paid)+' ('+d.gap+'d later) · '+esc(d.e.by||'user'),
         act:'<button class="sm" onclick="rowInfo(\''+d.r.id+'\')">Full history</button>'};
     }));
@@ -10248,7 +10281,7 @@ function runChecks(){
   add('hawkPaidDel','bad','🦅 A PAID sale was deleted',
     'Commission was paid on these sales and then the record was deleted. The tombstone and the audit trail both keep the proof.',
     paidDeleted.slice(0,20).map(function(t){
-      return {text:'<b>'+esc(t.client)+'</b> · '+money2(+t.value||0)+(t.srcId?' · '+esc(t.src)+' #'+esc(t.srcId):''),
+      return {text:'<b>'+cliLink(t.client)+'</b> · '+money2(+t.value||0)+(t.srcId?' · '+esc(t.src)+' #'+esc(t.srcId):''),
         sub:'commission paid '+fmt(t.paid)+' · deleted '+fmt(t.on),
         act:''};
     }));
@@ -10260,7 +10293,7 @@ function runChecks(){
   add('hawkNight','warn','🦅 Changes made in the dead of night',
     'Edits and deletions between 11pm and 5am local time. Not wrong by itself — but a burst of them is worth a look.',
     night.slice(-15).reverse().map(function(e){
-      return {text:'<b>'+esc((e.det&&e.det.client)||'?')+'</b> · '+esc(e.action)+(e.det&&e.det.f?' '+esc(e.det.f):''),
+      return {text:'<b>'+((e.det&&e.det.client)?cliLink(e.det.client):'?')+'</b> · '+esc(e.action)+(e.det&&e.det.f?' '+esc(e.det.f):''),
         sub:new Date(e.t).toLocaleString()+' · '+esc(e.user||'?')+(e.admin?' (admin: '+esc(e.admin)+')':''),
         act:''};
     }));
@@ -10274,7 +10307,7 @@ function runChecks(){
   add('hawkDupInv','warn','🦅 Identical invoice lines counted twice',
     'The invoice audit holds the exact same line more than once (same invoice #, date, description, amount). Billed totals are inflated by these.',
     dupLines.slice(0,30).map(x=>({
-      text:'<b>'+esc(x.c)+'</b> · invoice #'+esc(x.i)+' · '+money2(x.v),
+      text:'<b>'+cliLink(x.c)+'</b> · invoice '+invLink(x.i)+' · '+money2(x.v),
       sub:fmt(x.d)+(x.s?' · '+esc(x.s):'')+' — appears more than once',
       act:''
     })));
@@ -10288,7 +10321,7 @@ function runChecks(){
   add('dates','bad','Dates out of order',
     'A sale cannot be invoiced before it is sold, paid before it is invoiced, or paid with no invoice at all. These break the commission timing.',
     badDates.map(r=>({
-      text:'<b>'+esc(r.client)+'</b> · '+money(bookedValue(r)),
+      text:'<b>'+cliLink(r.client)+'</b> · '+saleLink(r.id,money(bookedValue(r))),
       sub:'sold '+fmt(r.date)+(r.completed?' · completed '+fmt(r.completed):'')+
         (r.invoiced?' · invoiced '+fmt(r.invoiced):' · never invoiced')+(r.paid?' · paid '+fmt(r.paid):''),
       act:'<button class="sm" onclick="setTab(\'pipe\');PSTAGE=\'\';document.getElementById(\'pSearch\').value='+
@@ -10299,14 +10332,14 @@ function runChecks(){
   const future=ROWS.filter(r=>r.date>today);
   add('future','warn','Sold in the future',
     'Dated after today. Usually a typo in the year, and it keeps the sale out of every window until that date arrives.',
-    future.map(r=>({text:'<b>'+esc(r.client)+'</b> · '+money(bookedValue(r)),sub:'sold '+fmtY(r.date)})));
+    future.map(r=>({text:'<b>'+cliLink(r.client)+'</b> · '+saleLink(r.id,money(bookedValue(r))),sub:'sold '+fmtY(r.date)})));
 
   /* --- nothing or negative --- */
   const zero=ROWS.filter(r=>bookedValue(r)<=0 && !r.voidType);
   add('zero','warn','No value on the sale',
     'Booked value is zero or negative, so it counts toward the client number but earns nothing and drags the window average for booked value.',
-    zero.map(r=>({text:'<b>'+esc(r.client)+'</b> · '+esc(r.service||'no service'),
-      sub:fmt(r.date)+' · '+valueLabel(r)+' · '+(person(r.rep)?person(r.rep).name:'?')})));
+    zero.map(r=>({text:'<b>'+cliLink(r.client)+'</b> · '+saleLink(r.id,r.service||'no service'),
+      sub:fmt(r.date)+' · '+valueLabel(r)+' · '+(person(r.rep)?empLink(r.rep):'?')})));
 
   /* --- per-visit figures that look like they were never multiplied --- */
   const suspect=ROWS.filter(r=>{
@@ -10316,7 +10349,7 @@ function runChecks(){
   });
   add('basis','warn','Recorded as a contract total, but it is one visit',
     'The value matches Service Autopilot\'s per-visit rate exactly while the basis says contract total. If that is a whole season, switch it to per visit and set the visit count.',
-    suspect.map(r=>({text:'<b>'+esc(r.client)+'</b> · '+esc(r.service),
+    suspect.map(r=>({text:'<b>'+cliLink(r.client)+'</b> · '+saleLink(r.id,r.service),
       sub:money2(+r.value)+' — the SA rate for one visit · sold '+fmt(r.date),
       act:'<button class="sm" onclick="fixBasis(\''+r.id+'\')">Switch to per visit</button>'})));
 
@@ -10326,16 +10359,16 @@ function runChecks(){
     const unknown=ROWS.filter(r=>!known[norm(r.client)]);
     add('unknown','warn','Not on the Service Autopilot roster',
       'No client of this name in the last sync. Either the name is spelt differently here, the sale is under a different entity, or the client was never set up in SA.',
-      unknown.slice(0,60).map(r=>({text:'<b>'+esc(r.client)+'</b> · '+money(bookedValue(r)),
-        sub:fmt(r.date)+' · '+(person(r.rep)?person(r.rep).name:'?')+' · '+esc(r.service||'')})));
+      unknown.slice(0,60).map(r=>({text:'<b>'+cliLink(r.client)+'</b> · '+saleLink(r.id,money(bookedValue(r))),
+        sub:fmt(r.date)+' · '+(person(r.rep)?empLink(r.rep):'?')+' · '+esc(r.service||'')})));
   }
 
   /* --- new client in SA, nothing logged --- */
   const missing=newClientsWithoutSales();
   add('unlogged','bad','New client in SA with no sale logged',
     'Service Autopilot shows these starting on or after a plan start date, but nobody has logged a sale. Either the commission is owed and unrecorded, or the client came in without a salesperson.',
-    missing.slice(0,60).map(c=>({text:'<b>'+esc(c.n)+'</b>'+(c.at?' · '+esc(c.at):''),
-      sub:'client since '+fmtY(c.since)+(c.sp?' · SA says sold by '+esc(c.sp):' · no salesperson in SA')+
+    missing.slice(0,60).map(c=>({text:'<b>'+cliLink(c.n)+'</b>'+(c.at?' · '+esc(c.at):''),
+      sub:'client since '+fmtY(c.since)+(c.sp?' · SA says sold by '+(clientRepId(c)?empLink(clientRepId(c),c.sp):esc(c.sp)):' · no salesperson in SA')+
         (c.liV?' · last invoice '+money(c.liV):''),
       act:'<button class="sm p" onclick="logFromClient('+JSON.stringify(c.n).replace(/"/g,'&quot;')+',\''+esc(c.sp||'')+'\')">Log a sale</button>'})));
 
@@ -10359,7 +10392,7 @@ function runChecks(){
       'Commission pays a different rate for a new client, an upsell and a renewal. These are logged as one thing '+
       'while the invoice history says another'+(money_at_stake>0?' — '+money(money_at_stake)+' of commission turns on it':'')+'.',
       wrong.slice(0,50).map(x=>({
-        text:'<b>'+esc(x.r.client)+'</b> · '+esc(x.r.service||'no service')+' · '+money(bookedValue(x.r))+
+        text:'<b>'+cliLink(x.r.client)+'</b> · '+saleLink(x.r.id,x.r.service||'no service')+' · '+money(bookedValue(x.r))+
           ' <span class="typepill '+esc(x.r.type)+'">'+esc(TYPE_LABEL[x.r.type])+'</span>'+
           ' → <span class="typepill '+esc(x.sug.type)+'">'+esc(TYPE_LABEL[x.sug.type])+'</span>',
         sub:esc(x.sug.why)+(Math.abs(x.delta)>=0.01
@@ -10377,7 +10410,7 @@ function runChecks(){
     add('srcdrift','warn','Lead source not on the master list',
       'Somebody has typed or added a source in Service Autopilot that is not one of the defined ones. Left alone it splits reporting — two spellings of the same source look like two sources.',
       Object.keys(seen).map(v=>({text:'<b>'+esc(v)+'</b> — '+seen[v].length+' record'+(seen[v].length===1?'':'s'),
-        sub:'e.g. '+esc(seen[v].slice(0,3).map(c=>c.n).join(', '))})));
+        sub:'e.g. '+seen[v].slice(0,3).map(c=>cliLink(c.n)).join(', ')})));
 
     const noSrc=CLIENTS.filter(c=>isClient(c)&&!c.gone&&!(c.src||'').trim());
     if(noSrc.length){
@@ -10406,7 +10439,7 @@ function runChecks(){
         const vals={}; g.forEach(j=>vals[j.v]=(vals[j.v]||0)+1);
         return {text:'<b>'+esc(f?f[1]:k)+'</b> — '+g.length+' client'+(g.length===1?'':'s'),
           sub:'values: '+Object.keys(vals).map(v=>esc(v)+' ×'+vals[v]).join(', ')+
-              ' · e.g. '+esc(g.slice(0,3).map(j=>j.c.n).join(', '))};
+              ' · e.g. '+g.slice(0,3).map(j=>cliLink(j.c.n)).join(', ')};
       }));
   }
 
@@ -10420,7 +10453,7 @@ function runChecks(){
     });
     add('nosize','info','Sold by size, but the size is not recorded',
       'These services are priced off a measurement that is blank in Service Autopilot. It still invoices fine — but the next quote for that property is a guess, and it cannot be compared to what the rest of the book pays.',
-      noSize.slice(0,40).map(r=>({text:'<b>'+esc(r.client)+'</b> · '+esc(r.service),
+      noSize.slice(0,40).map(r=>({text:'<b>'+cliLink(r.client)+'</b> · '+saleLink(r.id,r.service),
         sub:money(bookedValue(r))+' · needs '+esc(SIZE_UNITS[sizeDriver(r.service)][1])+' on the client record'})));
   }
 
@@ -10430,8 +10463,8 @@ function runChecks(){
     const cold=CLIENTS.filter(c=>c.ct==='Lead' && !c.gone && c.lead && c.lead<d90 && clientRepId(c));
     add('coldleads','info','Leads over 90 days old',
       'Still open in Service Autopilot and assigned to someone on a comp plan. Either work them or close them out — they make the pipeline look bigger than it is.',
-      cold.slice(0,40).map(c=>({text:'<b>'+esc(c.n)+'</b>'+(c.at?' · '+esc(c.at):''),
-        sub:'acquired '+fmtY(c.lead)+' · '+Math.round((dObj(today)-dObj(c.lead))/86400000)+' days · '+esc(c.sp)+
+      cold.slice(0,40).map(c=>({text:'<b>'+cliLink(c.n)+'</b>'+(c.at?' · '+esc(c.at):''),
+        sub:'acquired '+fmtY(c.lead)+' · '+Math.round((dObj(today)-dObj(c.lead))/86400000)+' days · '+(clientRepId(c)?empLink(clientRepId(c),c.sp):esc(c.sp))+
           (c.src?' · '+esc(c.src):'')})));
   }
 
@@ -10439,15 +10472,15 @@ function runChecks(){
   const overdue=ROWS.filter(r=>stageOf(r,today)==='due' && dueDate(r)<addDays(today,-30));
   add('stale','warn','Commission payable over a month ago',
     'Past the payable date by more than 30 days and still not marked paid. Either it was paid and never ticked off, or somebody is owed money.',
-    overdue.map(r=>({text:'<b>'+esc(r.client)+'</b> · '+money2(rowComm(r))+' commission',
-      sub:'payable '+fmtY(dueDate(r))+' · '+(person(r.rep)?person(r.rep).name:'?')})));
+    overdue.map(r=>({text:'<b>'+cliLink(r.client)+'</b> · '+saleLink(r.id,money2(rowComm(r)))+' commission',
+      sub:'payable '+fmtY(dueDate(r))+' · '+(person(r.rep)?empLink(r.rep):'?')})));
 
   /* --- sold before the plan started --- */
   const preplan=ROWS.filter(r=>{ const p=person(r.rep); return p && r.date<p.start; });
   add('preplan','info','Sold before that plan started',
     'Counted for production but earns no commission, because it predates the commission plan. Fine if deliberate.',
-    preplan.slice(0,40).map(r=>({text:'<b>'+esc(r.client)+'</b> · '+money(bookedValue(r)),
-      sub:fmt(r.date)+' · '+(person(r.rep)?person(r.rep).name+' starts '+fmtY(person(r.rep).start):'')})));
+    preplan.slice(0,40).map(r=>({text:'<b>'+cliLink(r.client)+'</b> · '+saleLink(r.id,money(bookedValue(r))),
+      sub:fmt(r.date)+' · '+(person(r.rep)?empLink(r.rep)+' starts '+fmtY(person(r.rep).start):'')})));
 
   /* ============================================================
      🦅 TEN MORE SKILLS — every one of these is a failure mode a
@@ -10465,8 +10498,8 @@ function runChecks(){
   add('hawkOvGross','bad','🦅 Manager override paid on more than the sale is worth',
     'The override on these sales was journaled on a bigger value than the sale now earns (usually gross vs net after a reversal) and no chargeback covers the difference. The manager is over-paid until a correction is recorded.',
     ovBad.slice(0,30).map(d=>({
-      text:'<b>'+esc(d.r.client)+'</b> · override '+money2(d.netPaid)+' paid, '+money2(d.should)+' earned',
-      sub:esc(empName(person(d.x.emp)))+' · sale net '+money(netValue(d.r))+' · paid '+fmt(d.x.paidOn),
+      text:'<b>'+cliLink(d.r.client)+'</b> · override '+saleLink(d.r.id,money2(d.netPaid))+' paid, '+money2(d.should)+' earned',
+      sub:empLinkN(d.x.emp)+' · sale net '+money(netValue(d.r))+' · paid '+fmt(d.x.paidOn),
       act:'<button class="sm" onclick="setTab(\'adj\')">Adjustments</button>'
     })), ovBad.reduce((a,d)=>a+(d.netPaid-d.should),0));
 
@@ -10476,12 +10509,12 @@ function runChecks(){
   add('hawkLedgerGap','bad','🦅 Paid money the ledger cannot account for',
     'A sale marked commission-paid with no payout record behind it (legacy — confirm it), or a payout entry pointing at a deleted sale or unknown employee. Until these are resolved, "who was paid what" has holes.',
     gapRows.slice(0,20).map(r=>({
-      text:'<b>'+esc(r.client)+'</b> · paid '+fmt(r.paid)+' · '+money2(paidOut(r))+' unconfirmed',
-      sub:(r.payoutReview?esc(r.payoutReview):'no ledger entry')+' · '+esc(empName(person(r.rep))),
+      text:'<b>'+cliLink(r.client)+'</b> · paid '+fmt(r.paid)+' · '+saleLink(r.id,money2(paidOut(r)))+' unconfirmed',
+      sub:(r.payoutReview?esc(r.payoutReview):'no ledger entry')+' · '+empLinkN(r.rep),
       act:ADMIN?'<button class="sm p" onclick="payoutConfirm(\''+r.id+'\')">Confirm what was paid</button>':''
     })).concat(strayPay.slice(0,10).map(x=>({
       text:'Payout '+money2(x.amount)+' · '+esc(PAYOUT_KINDS[x.kind]||x.kind),
-      sub:(person(x.emp)?esc(empName(person(x.emp))):'unknown employee '+esc(x.emp))+' · sale '+esc(x.rowId)+(ROWS.some(r=>r.id===x.rowId)?'':' (deleted)'),
+      sub:(person(x.emp)?empLink(x.emp):'unknown employee '+esc(x.emp))+' · sale '+(ROWS.some(r=>r.id===x.rowId)?saleLink(x.rowId,x.rowId):esc(x.rowId)+' (deleted)'),
       act:''
     }))), gapRows.reduce((a,r)=>a+paidOut(r),0)+strayPay.reduce((a,x)=>a+Math.abs(x.amount),0));
 
@@ -10490,8 +10523,8 @@ function runChecks(){
   add('hawkVoidDate','bad','🦅 Reversal with no effective date',
     'A cancellation or refund with no date cannot place its chargeback in any month. Paid ones sit un-recovered; unpaid ones have no anchor in history. Set the date.',
     noVD.slice(0,30).map(r=>({
-      text:'<b>'+esc(r.client)+'</b> · '+esc(VOID_LABEL[r.voidType]||r.voidType)+' · −'+money2(voidAmount(r)),
-      sub:(r.paid?'commission paid '+fmt(r.paid)+' — chargeback stuck':'not paid')+' · '+esc(empName(person(r.rep))),
+      text:'<b>'+cliLink(r.client)+'</b> · '+esc(VOID_LABEL[r.voidType]||r.voidType)+' · '+saleLink(r.id,'−'+money2(voidAmount(r))),
+      sub:(r.paid?'commission paid '+fmt(r.paid)+' — chargeback stuck':'not paid')+' · '+empLinkN(r.rep),
       act:ADMIN?'<button class="sm p" onclick="reversalSetDate(\''+r.id+'\')">Set effective date</button>':''
     })));
 
@@ -10500,8 +10533,8 @@ function runChecks(){
   add('hawkForgiven','warn','🦅 Chargebacks forgiven — economic loss on record',
     'Reversals that landed outside the recovery window. Nothing is deducted, by policy — but this is real money the company ate, and management should see the running total.',
     forgivenEv.slice(0,30).map(x=>{ const r=ROWS.find(q=>q.id===x.rowId);
-      return {text:'<b>'+esc(r?r.client:x.rowId)+'</b> · '+money2(-x.amount)+' forgiven',
-        sub:esc(empName(person(x.emp)))+' · '+esc(PAYOUT_KINDS[x.kind]||x.kind)+' · '+fmt(x.paidOn)+' · '+esc((x.reason||'').slice(0,80)),
+      return {text:'<b>'+(r?cliLink(r.client):esc(x.rowId))+'</b> · '+(r?saleLink(x.rowId,money2(-x.amount)):money2(-x.amount))+' forgiven',
+        sub:empLinkN(x.emp)+' · '+esc(PAYOUT_KINDS[x.kind]||x.kind)+' · '+fmt(x.paidOn)+' · '+esc((x.reason||'').slice(0,80)),
         act:''}; }), forgivenEv.reduce((a,x)=>a-x.amount,0));
 
   /* --- 5. paid sales whose commission no longer matches the payout --- */
@@ -10509,8 +10542,8 @@ function runChecks(){
   add('hawkVariance','warn','🦅 Paid sale drifted from its payout',
     'The sale changed after the money went out (value, rate, split or owner), so today’s commission no longer matches what was paid. The payout stays as recorded — record a correction instead.',
     varRows.slice(0,30).map(d=>({
-      text:'<b>'+esc(d.r.client)+'</b> · '+d.v.map(x=>esc(empShort(person(x.emp)))+(x.kind==='override'?' (override)':'')+' '+(x.diff>0?'under':'over')+'-paid '+money2(Math.abs(x.diff))).join(' · '),
-      sub:'paid '+fmt(d.r.paid)+' · '+money2(paidOut(d.r))+' on the ledger',
+      text:'<b>'+cliLink(d.r.client)+'</b> · '+d.v.map(x=>empLinkS(x.emp)+(x.kind==='override'?' (override)':'')+' '+(x.diff>0?'under':'over')+'-paid '+money2(Math.abs(x.diff))).join(' · '),
+      sub:'paid '+fmt(d.r.paid)+' · '+saleLink(d.r.id,money2(paidOut(d.r)))+' on the ledger',
       act:'<button class="sm" onclick="setTab(\'adj\')">Payout corrections</button>'
     })), varRows.reduce((a,d)=>a+d.v.reduce((q,x)=>q+Math.abs(x.diff),0),0));
 
@@ -10530,8 +10563,8 @@ function runChecks(){
   add('hawkNoIdDupes','warn','🦅 Probably the same sale twice (no source ID)',
     'Two sales for the same client and rep, within 1% and a week of each other, at least one with no source record ID — the classic double-import. Both are earning commission until one goes.',
     dupPairs.slice(0,20).map(d=>({
-      text:'<b>'+esc(d.a.client)+'</b> · '+money2(bookedValue(d.a))+' vs '+money2(bookedValue(d.b)),
-      sub:fmt(d.a.date)+' / '+fmt(d.b.date)+' · '+esc(empName(person(d.a.rep)))+' · '+esc(SRC_LABEL[d.a.src]||d.a.src)+' + '+esc(SRC_LABEL[d.b.src]||d.b.src),
+      text:'<b>'+cliLink(d.a.client)+'</b> · '+saleLink(d.a.id,money2(bookedValue(d.a)))+' vs '+saleLink(d.b.id,money2(bookedValue(d.b))),
+      sub:fmt(d.a.date)+' / '+fmt(d.b.date)+' · '+empLinkN(d.a.rep)+' · '+esc(SRC_LABEL[d.a.src]||d.a.src)+' + '+esc(SRC_LABEL[d.b.src]||d.b.src),
       act:'<button class="sm" onclick="rowInfo(\''+d.a.id+'\')">A</button> <button class="sm" onclick="rowInfo(\''+d.b.id+'\')">B</button>'
     })), dupPairs.reduce((a,d)=>a+Math.min(rowComm(d.a),rowComm(d.b)),0));
 
@@ -10541,12 +10574,12 @@ function runChecks(){
   add('hawkSplit','warn','🦅 Splits holding money or with odd percentages',
     'A pending split pays NOBODY until every rep and an admin sign off — money sits in limbo. And a split whose percentages do not total 100 is silently re-proportioned, which is rarely what anyone meant.',
     stuck.slice(0,20).map(r=>({
-      text:'<b>'+esc(r.client)+'</b> · '+money2(rowComm(r))+' held',
-      sub:'sold '+fmt(r.date)+' · '+rowShares(r).map(x=>esc(empShort(person(x.rep)))+' '+Math.round(x.frac*100)+'%').join(' / ')+' · waiting since '+fmt(r.date),
+      text:'<b>'+cliLink(r.client)+'</b> · '+saleLink(r.id,money2(rowComm(r)))+' held',
+      sub:'sold '+fmt(r.date)+' · '+rowShares(r).map(x=>empLinkS(x.rep)+' '+Math.round(x.frac*100)+'%').join(' / ')+' · waiting since '+fmt(r.date),
       act:'<button class="sm" onclick="rowInfo(\''+r.id+'\')">Info</button>'
     })).concat(oddPct.slice(0,10).map(r=>({
-      text:'<b>'+esc(r.client)+'</b> · split totals '+num(r.split.reduce((a,x)=>a+(+x.pct||0),0),1)+'%',
-      sub:r.split.map(x=>esc(empShort(person(x.rep)))+' '+x.pct+'%').join(' / ')+' — re-proportioned automatically',
+      text:'<b>'+cliLink(r.client)+'</b> · split totals '+num(r.split.reduce((a,x)=>a+(+x.pct||0),0),1)+'%',
+      sub:r.split.map(x=>empLinkS(x.rep)+' '+x.pct+'%').join(' / ')+' — re-proportioned automatically',
       act:'<button class="sm" onclick="editSplit(\''+r.id+'\')">Fix split</button>'
     }))));
 
@@ -10556,7 +10589,7 @@ function runChecks(){
   add('hawkPrePlan','warn','🦅 Sales earning $0 because the comp plan starts later',
     'These sales are dated before the rep’s plan start, so they earn no commission and no production credit anywhere. If these people really are selling, the plan start date is wrong on Comp plans.',
     Object.keys(ppBy).slice(0,10).map(id=>{ const p=person(id), L=ppBy[id];
-      return {text:'<b>'+esc(empName(p))+'</b> · '+L.length+' sale'+(L.length===1?'':'s')+' · '+money(L.reduce((a,r)=>a+netValue(r),0))+' earning $0',
+      return {text:'<b>'+empLinkN(id)+'</b> · '+L.length+' sale'+(L.length===1?'':'s')+' · '+money(L.reduce((a,r)=>a+netValue(r),0))+' earning $0',
         sub:'plan starts '+fmtY(p.start)+' · earliest sale '+fmt(L.map(r=>r.date).sort()[0]),
         act:ADMIN?'<button class="sm" onclick="setTab(\'plans\');selPerson(\''+id+'\')">Fix plan start</button>':''}; }));
 
@@ -10566,11 +10599,11 @@ function runChecks(){
   add('hawkFormer','warn','🦅 Former team members still in the money',
     'New sales credited to somebody after they left (probably a mis-pick or a stale import default), and former people still owed unpaid commission that should be settled or reassigned deliberately.',
     formerNew.slice(0,15).map(r=>({
-      text:'<b>'+esc(r.client)+'</b> · '+money2(bookedValue(r))+' credited to '+esc(empName(person(r.rep))),
+      text:'<b>'+cliLink(r.client)+'</b> · '+saleLink(r.id,money2(bookedValue(r)))+' credited to '+empLinkN(r.rep),
       sub:'sold '+fmt(r.date)+' · they left '+fmtY(person(r.rep).ended||person(r.rep).start),
       act:'<button class="sm" onclick="openEdit(\''+r.id+'\')">Fix rep</button>'
     })).concat(formerOwed.slice(0,10).map(x=>({
-      text:'<b>'+esc(empName(x.p))+'</b> · '+money2(x.owed)+' unpaid commission on the books',
+      text:'<b>'+empLink(x.p.id,empName(x.p))+'</b> · '+money2(x.owed)+' unpaid commission on the books',
       sub:'former team member — settle it or reassign the sales deliberately',
       act:'<button class="sm" onclick="openEmp(\''+x.p.id+'\')">Their page</button>'
     }))), formerOwed.reduce((a,x)=>a+x.owed,0));
@@ -10582,7 +10615,7 @@ function runChecks(){
   add('hawkInvNo','warn','🦅 Invoice number matches nothing in the invoice audit',
     'THE LAW says every paid sale carries its real invoice number — but these numbers do not exist in the imported invoice audit. A typo here quietly breaks the sale-to-billing link.',
     badNo.slice(0,25).map(r=>({
-      text:'<b>'+esc(r.client)+'</b> · #'+esc(r.invNo),
+      text:'<b>'+cliLink(r.client)+'</b> · #'+esc(r.invNo),
       sub:'sold '+fmt(r.date)+' · '+(r.paid?'commission PAID against this number':'invoiced '+(r.invoiced?fmt(r.invoiced):'—')),
       act:'<button class="sm" onclick="openEdit(\''+r.id+'\')">Check number</button>'
     })));
@@ -10596,7 +10629,7 @@ function runChecks(){
     add('hawkPaidOwed','bad','🦅 Invoices both PAID and STILL OWED',
       'The paid-invoices feed says the money came in; the balances snapshot says it is still outstanding. One of the two exports is stale — re-pull whichever is older, or SA itself is contradicting its own books.',
       both.slice(0,25).map(v=>{ const p=paidNo[String(v.i).trim()];
-        return {text:'<b>'+esc(v.c)+'</b> · invoice #'+esc(v.i),
+        return {text:'<b>'+cliLink(v.c)+'</b> · invoice '+invLink(v.i),
           sub:'paid '+fmt(p.p)+' ('+money2(p.v)+') per the paid feed · '+money2(+v.t||0)+' still owed per the balances snapshot of '+(lastBalSync()?fmtY(lastBalSync().on):'?'),
           act:''}; }), both.reduce((a,v)=>a+(+v.t||0),0));
   }
@@ -10629,9 +10662,9 @@ function runChecks(){
   add('hawkSrcDup','bad','🦅 One source record, two sales',
     'Two sales carry the SAME source system and record id. One real job in the CRM is counted — and commissioned — twice here.',
     srcDup.slice(0,20).map(d=>({
-      text:'<b>'+esc(d.a.client)+'</b> · '+(SRC_LABEL[d.a.src]||d.a.src)+' #'+esc(d.a.srcId),
-      sub:fmt(d.a.date)+' '+money2(bookedValue(d.a))+' and '+fmt(d.b.date)+' '+money2(bookedValue(d.b))+
-        (norm(d.a.client)!==norm(d.b.client)?' · also as “'+esc(d.b.client)+'”':''),
+      text:'<b>'+cliLink(d.a.client)+'</b> · '+(SRC_LABEL[d.a.src]||d.a.src)+' #'+esc(d.a.srcId),
+      sub:fmt(d.a.date)+' '+saleLink(d.a.id,money2(bookedValue(d.a)))+' and '+fmt(d.b.date)+' '+saleLink(d.b.id,money2(bookedValue(d.b)))+
+        (norm(d.a.client)!==norm(d.b.client)?' · also as “'+cliLink(d.b.client)+'”':''),
       act:'<button class="sm" onclick="rowInfo(\''+d.a.id+'\')">A</button> <button class="sm" onclick="rowInfo(\''+d.b.id+'\')">B</button>'
     })), srcDup.reduce((a,d)=>a+Math.min(rowComm(d.a),rowComm(d.b)),0));
 
@@ -10642,7 +10675,7 @@ function runChecks(){
   add('hawkCliDup','warn','🦅 One SA account, two roster records',
     'Two client records carry the same Service Autopilot UserName — usually a rename that re-imported as new. Sales and invoices joined by name can split between them, so each looks smaller than the truth.',
     uDup.slice(0,20).map(d=>({
-      text:'<b>'+esc(d.a.n)+'</b>'+(norm(d.a.n)!==norm(d.b.n)?' / <b>'+esc(d.b.n)+'</b>':' (twice)')+' · SA '+esc(d.a.u),
+      text:'<b>'+cliLink(d.a.n)+'</b>'+(norm(d.a.n)!==norm(d.b.n)?' / <b>'+cliLink(d.b.n)+'</b>':' (twice)')+' · SA '+esc(d.a.u),
       sub:esc(d.a.addr||'no address')+(String(d.a.addr||'')!==String(d.b.addr||'')?' vs '+esc(d.b.addr||'no address'):''),
       act:''
     })));
@@ -10655,7 +10688,7 @@ function runChecks(){
   add('hawkInvConflict','bad','🦅 Paid feed and audit lines disagree on an invoice',
     'The Paid Invoices export and the Invoice Audit lines tell different stories about the same invoice number. One export is stale, or lines were doubled. Whichever it is, any figure built on this invoice is wrong until a person decides.',
     moneyConf.slice(0,20).map(h=>({
-      text:'<b>'+esc(h.client)+'</b> · '+invLink(h.no),
+      text:'<b>'+cliLink(h.client)+'</b> · '+invLink(h.no),
       sub:'paid feed says '+money2(h.pre)+' pre-tax · the '+h.lines.length+' audit lines sum to '+money2(h.linePre),
       act:''
     })), moneyConf.reduce((a,h)=>a+Math.abs(h.linePre-h.pre),0));
@@ -10665,7 +10698,7 @@ function runChecks(){
   add('hawkInvClient','warn','🦅 CLIENT MATCH NEEDED on the invoice register',
     'These invoices name a client the roster cannot resolve to exactly one record — usually someone renamed or departed since the billing. Open the invoice and approve the match once; the app never guesses.',
     cliNeed.slice(0,25).map(h=>({
-      text:'<b>'+esc(h.client||'(no client)')+'</b> · '+invLink(h.no)+' · '+money2(h.total),
+      text:'<b>'+(h.client?cliLink(h.client):'(no client)')+'</b> · '+invLink(h.no)+' · '+money2(h.total),
       sub:(h.date?fmtY(h.date)+' · ':'')+(h.health.indexOf('client-ambiguous')>-1?'more than one roster record has this exact name':'no exact roster match'),
       act:''
     })), cliNeed.reduce((a,h)=>a+h.total,0));
@@ -10678,7 +10711,7 @@ function runChecks(){
   add('hawkInvNoRep','warn','🦅 Invoices with NO salesperson — nobody is accountable',
     'No sold-by on the paid feed, no rep on any audit line, no assignment. Open each one and assign whose billing it is; once assigned it can be claimed into a payable commission. Invoices will keep arriving without reps on them — this check is the accountability loop.',
     invNoRep.slice(0,25).map(h=>({
-      text:'<b>'+esc(h.client||'(no client)')+'</b> · '+invLink(h.no)+' · '+(h.noMoney?money2(h.bal)+' owed':money2(h.total)),
+      text:'<b>'+(h.client?cliLink(h.client):'(no client)')+'</b> · '+invLink(h.no)+' · '+(h.noMoney?money2(h.bal)+' owed':money2(h.total)),
       sub:(h.date?fmtY(h.date):h.paidOn?('paid '+fmtY(h.paidOn)):'no date')+' · '+h.status,
       act:''
     })), invNoRep.reduce((a,h)=>a+(h.pre||h.total||h.bal||0),0));
@@ -10704,8 +10737,8 @@ function runChecks(){
   add('hawkClaimDup','bad','🦅 A claimed invoice and a logged sale may be the SAME job',
     'One came from the invoice claim, the other was logged or imported without an invoice number — the id systems cannot see each other, so both earn commission until a person decides. If they are the same work: link the sale to the invoice and delete the claimed copy, or the reverse.',
     claimDup.slice(0,20).map(d=>({
-      text:'<b>'+esc(d.cr.client)+'</b> · claimed '+money2(bookedValue(d.cr))+' vs logged '+money2(bookedValue(d.r)),
-      sub:'claimed from '+invLink(d.cr.invNo)+' ('+fmt(d.cr.date)+') · logged sale '+fmt(d.r.date)+(person(d.r.rep)?' · '+esc(empShort(person(d.r.rep))):''),
+      text:'<b>'+cliLink(d.cr.client)+'</b> · claimed '+saleLink(d.cr.id,money2(bookedValue(d.cr)))+' vs logged '+saleLink(d.r.id,money2(bookedValue(d.r))),
+      sub:'claimed from '+invLink(d.cr.invNo)+' ('+fmt(d.cr.date)+') · logged sale '+fmt(d.r.date)+(person(d.r.rep)?' · '+empLinkS(d.r.rep):''),
       act:'<button class="sm" onclick="rowInfo(\''+d.cr.id+'\')">Claimed</button> <button class="sm" onclick="rowInfo(\''+d.r.id+'\')">Logged</button>'
     })), claimDup.reduce((a,d)=>a+Math.min(rowComm(d.cr),rowComm(d.r)),0));
 
@@ -11113,7 +11146,7 @@ function renderAdj(){
       x+='<tr><td class="mono">'+fmtY(d.raised)+
           (d.status==='open'?'<div class="note'+(late?' neg':'')+'">'+disputeAge(d)+' days old · respond by '+fmt(respondBy(d))+'</div>':'')+'</td>'+
         '<td><span class="dot" style="background:'+pColor(d.rep)+'"></span>'+(p?empLink(p.id,empShort(p)):'—')+'</td>'+
-        '<td>'+(row?'<b>'+esc(row.client)+'</b><div class="note">'+fmt(row.date)+' · '+money(bookedValue(row))+'</div>':'<span class="note">whole period</span>')+'</td>'+
+        '<td>'+(row?'<b>'+saleLink(row.id,row.client)+'</b><div class="note">'+fmt(row.date)+' · '+money(bookedValue(row))+'</div>':'<span class="note">whole period</span>')+'</td>'+
         '<td style="max-width:260px">'+esc(d.claim)+
           (d.resolution?'<div class="note"><b>Outcome:</b> '+esc(d.resolution)+
             (d.by?' <i>— '+esc(d.by)+'</i>':'')+'</div>':'')+'</td>'+
@@ -11141,11 +11174,11 @@ function renderAdj(){
     else {
       x='<thead><tr><th>Sale</th><th>Who</th><th class="num">Paid (ledger)</th><th class="num">Calculates now</th><th class="num">Difference</th><th></th></tr></thead><tbody>';
       vars.forEach(v=>{ const p=person(v.emp);
-        x+='<tr><td><b>'+esc(v.r.client)+'</b><div class="note">'+fmtY(v.r.date)+' · '+esc(v.r.service||'')+' · paid '+fmtY(v.r.paid)+'</div></td><td>'+(p?empLink(p.id):esc(v.emp))+(v.kind==='override'?' <span class="pill el">OVERRIDE</span>':'')+'</td>'+
+        x+='<tr><td><b>'+saleLink(v.r.id,v.r.client)+'</b><div class="note">'+fmtY(v.r.date)+' · '+esc(v.r.service||'')+' · paid '+fmtY(v.r.paid)+'</div></td><td>'+(p?empLink(p.id):esc(v.emp))+(v.kind==='override'?' <span class="pill el">OVERRIDE</span>':'')+'</td>'+
           '<td class="num mono">'+money2(v.paid)+'</td><td class="num mono">'+money2(v.now)+'</td><td class="num mono"><b style="color:'+(v.diff>0?'var(--grn-d)':'var(--red)')+'">'+(v.diff>0?'+':'−')+money2(Math.abs(v.diff))+'</b><div class="note">'+(v.diff>0?'under-paid':'over-paid')+'</div></td>'+
           '<td class="num">'+(ADMIN?'<button class="sm p" onclick="payoutCorrect(\''+v.r.id+'\',\''+v.emp+'\','+v.diff+',\''+(v.kind||'rep')+'\')">Record correction</button>':'')+'</td></tr>'; });
       rev.forEach(r=>{ const calc=r.paidCalc?r.paidCalc.amount:grossComm(r);
-        x+='<tr><td><b>'+esc(r.client)+'</b><div class="note">'+fmtY(r.date)+' · paid '+fmtY(r.paid)+' · <span class="pill no">LEGACY — confirm</span> '+esc(r.payoutReview)+'</div></td><td>'+rowShares(r).map(sx=>empLink(sx.rep)).join(', ')+'</td>'+
+        x+='<tr><td><b>'+saleLink(r.id,r.client)+'</b><div class="note">'+fmtY(r.date)+' · paid '+fmtY(r.paid)+' · <span class="pill no">LEGACY — confirm</span> '+esc(r.payoutReview)+'</div></td><td>'+rowShares(r).map(sx=>empLink(sx.rep)).join(', ')+'</td>'+
           '<td class="num mono">—</td><td class="num mono">'+money2(calc)+'<div class="note">frozen at migration</div></td><td class="num mono">?</td>'+
           '<td class="num">'+(ADMIN?'<button class="sm p" onclick="payoutConfirm(\''+r.id+'\')">Confirm what was paid</button>':'')+'</td></tr>'; });
       x+='</tbody>';
@@ -11167,19 +11200,19 @@ function renderAdj(){
       if(e.status==='applied') ded+=-e.amount; else forg+=-e.amount;
       x+='<tr'+(e.status==='forgiven'?' style="opacity:.75"':'')+'><td class="mono">'+fmt(e.paidOn)+'</td>'+
         '<td>'+(p?'<span class="dot" style="background:'+pColor(p.id)+'"></span>'+empLink(p.id,empShort(p)):esc(e.emp))+'<div class="note">'+esc(PAYOUT_KINDS[e.kind]||e.kind)+'</div></td>'+
-        '<td>'+(r?'<b>'+esc(r.client)+'</b><div class="note">sold '+fmt(r.date)+' · '+esc(VOID_LABEL[r.voidType]||r.voidType)+'</div>':esc(e.rowId))+'</td>'+
+        '<td>'+(r?'<b>'+saleLink(r.id,r.client)+'</b><div class="note">sold '+fmt(r.date)+' · '+esc(VOID_LABEL[r.voidType]||r.voidType)+'</div>':esc(e.rowId))+'</td>'+
         '<td class="note">'+esc(e.reason||'')+'</td><td class="num mono neg">−'+money2(e.basisValue)+'</td>'+
         '<td class="num mono">'+(orig?money2(orig.amount)+'<div class="note">'+fmt(orig.paidOn)+' · '+num(orig.rate,1)+'% · '+Math.round(orig.share*100)+'%</div>':'—')+'</td>'+
         '<td class="num mono neg"><b>−'+money2(-e.amount)+'</b></td>'+
         '<td>'+(e.status==='applied'?'<span class="pill no">DEDUCTED '+esc(e.period)+'</span>':'<span class="pill n" title="'+esc(e.reason)+'">FORGIVEN · OUTSIDE RECOVERY WINDOW</span>')+(e.reconstructed?' <span class="pill n">legacy</span>':'')+'</td></tr>'; });
     rev.forEach(r=>{ const p=person(r.rep);
-      x+='<tr><td class="mono">'+(r.voidDate?fmt(r.voidDate):'<span style="color:var(--red)">no date</span>')+'</td><td>'+(p?empLink(p.id,empShort(p)):'—')+'</td><td><b>'+esc(r.client)+'</b><div class="note">sold '+fmt(r.date)+' · '+esc(VOID_LABEL[r.voidType]||r.voidType)+' · commission paid '+fmt(r.paid)+'</div></td>'+
+      x+='<tr><td class="mono">'+(r.voidDate?fmt(r.voidDate):'<span style="color:var(--red)">no date</span>')+'</td><td>'+(p?empLink(p.id,empShort(p)):'—')+'</td><td><b>'+saleLink(r.id,r.client)+'</b><div class="note">sold '+fmt(r.date)+' · '+esc(VOID_LABEL[r.voidType]||r.voidType)+' · commission paid '+fmt(r.paid)+'</div></td>'+
         '<td class="note">'+(r.voidDate?'original payout not confirmed yet':'reversal has no effective date — chargeback cannot land')+'</td><td class="num mono neg">−'+money2(voidAmount(r))+'</td><td class="num mono">'+money2(paidOut(r))+'</td><td class="num mono">'+(clawback(r)>0?'−'+money2(clawback(r)):'—')+'</td>'+
         '<td><span class="pill no">NEEDS REVIEW</span> '+(ADMIN?(r.voidDate?'':'<button class="sm p" onclick="reversalSetDate(\''+r.id+'\')">Set effective date</button>'):'')+'</td></tr>'; });
     unpaidRev.forEach(r=>{ const p=person(r.rep);
-      x+='<tr style="opacity:.7"><td class="mono">'+fmt(r.voidDate)+'</td><td>'+(p?empLink(p.id,empShort(p)):'—')+'</td><td><b>'+esc(r.client)+'</b><div class="note">sold '+fmt(r.date)+' · '+esc(VOID_LABEL[r.voidType]||r.voidType)+'</div></td><td class="note">'+esc(r.voidNote||'')+'</td><td class="num mono neg">−'+money2(voidAmount(r))+'</td><td class="num mono"><span class="note">not paid</span></td><td class="num mono">—</td><td><span class="pill ok">NOTHING TO RECOVER</span><div class="note">commission recalculated on '+money2(netValue(r))+' net</div></td></tr>'; });
+      x+='<tr style="opacity:.7"><td class="mono">'+fmt(r.voidDate)+'</td><td>'+(p?empLink(p.id,empShort(p)):'—')+'</td><td><b>'+saleLink(r.id,r.client)+'</b><div class="note">sold '+fmt(r.date)+' · '+esc(VOID_LABEL[r.voidType]||r.voidType)+'</div></td><td class="note">'+esc(r.voidNote||'')+'</td><td class="num mono neg">−'+money2(voidAmount(r))+'</td><td class="num mono"><span class="note">not paid</span></td><td class="num mono">—</td><td><span class="pill ok">NOTHING TO RECOVER</span><div class="note">commission recalculated on '+money2(netValue(r))+' net</div></td></tr>'; });
     noDate.forEach(r=>{ const p=person(r.rep);
-      x+='<tr><td class="mono"><span style="color:var(--red)">no date</span></td><td>'+(p?empLink(p.id,empShort(p)):'—')+'</td><td><b>'+esc(r.client)+'</b><div class="note">'+esc(VOID_LABEL[r.voidType]||r.voidType)+' · not paid</div></td><td class="note">no effective date on the reversal</td><td class="num mono neg">−'+money2(voidAmount(r))+'</td><td class="num mono">—</td><td class="num mono">—</td><td>'+(ADMIN?'<button class="sm" onclick="reversalSetDate(\''+r.id+'\')">Set effective date</button>':'')+'</td></tr>'; });
+      x+='<tr><td class="mono"><span style="color:var(--red)">no date</span></td><td>'+(p?empLink(p.id,empShort(p)):'—')+'</td><td><b>'+saleLink(r.id,r.client)+'</b><div class="note">'+esc(VOID_LABEL[r.voidType]||r.voidType)+' · not paid</div></td><td class="note">no effective date on the reversal</td><td class="num mono neg">−'+money2(voidAmount(r))+'</td><td class="num mono">—</td><td class="num mono">—</td><td>'+(ADMIN?'<button class="sm" onclick="reversalSetDate(\''+r.id+'\')">Set effective date</button>':'')+'</td></tr>'; });
     x+='<tr class="tot"><td colspan="6">Deducted '+money2(ded)+(forg?' · forgiven (outside the '+(GLOBAL.policy.clawbackDays||180)+'-day window, not recovered) '+money2(forg):'')+'</td><td class="num neg">−'+money2(ded)+'</td><td></td></tr>';
     ct.innerHTML=x+'</tbody>';
   }
@@ -11409,7 +11442,7 @@ function renderOSC(){
               o.outcome==='held'?'mid':past?'n':'sa';
     h+='<tr><td class="mono">'+fmtY(day)+'<div class="note">'+esc(o.when.slice(11,16))+
         ' · '+o.mins+' min'+(past&&o.outcome==='booked'?' · <span style="color:var(--red)">needs an outcome</span>':'')+'</div></td>'+
-      '<td><b>'+esc(o.client)+'</b>'+(o.addr?'<div class="note">'+mapLink(o.addr)+'</div>':'')+'</td>'+
+      '<td><b>'+cliLink(o.client)+'</b>'+(o.addr?'<div class="note">'+mapLink(o.addr)+'</div>':'')+'</td>'+
       '<td><span class="dot" style="background:'+pColor(o.rep)+'"></span>'+(p?empLink(p.id,empShort(p)):'—')+'</td>'+
       '<td class="note">'+esc(o.want||'—')+'</td>'+
       '<td><select style="max-width:130px;font-size:12.5px;padding:4px 6px" onchange="setOSC(&quot;'+o.id+'&quot;,&quot;outcome&quot;,this.value)">'+
@@ -11483,7 +11516,7 @@ function renderPipe(){
     h+='<tr>'+
       '<td class="mono">'+fmt(r.date)+'</td>'+
       '<td><span class="dot" style="background:'+pColor(r.rep)+'"></span>'+(p?empLink(p.id,empShort(p)):'—')+'</td>'+
-      '<td><b>'+esc(r.client)+'</b><div class="note">'+esc(r.service||'')+'</div></td>'+
+      '<td><b>'+cliLink(r.client)+'</b><div class="note">'+saleLink(r.id,r.service||'open')+'</div></td>'+
       '<td class="num mono">'+money(bookedValue(r))+
         (basisOf(r)!=='contract'?'<div class="note">'+esc(valueLabel(r))+'</div>':'')+'</td>'+
       '<td class="num mono">'+(preplan?'<span class="pill n">pre-plan</span>'
@@ -12540,53 +12573,127 @@ function provLine(r){
 }
 // The full story of one sale: where it came from, what the source sent,
 // and every change since — human or sync.
-function rowInfo(id){
-  const r=ROWS.find(x=>x.id===id); if(!r)return;
+/* ============================================================
+   THE SALE PAGE — one sale, everything it connects to, all of
+   it clickable: client, property, salesperson, invoices, the
+   commission trail into the ledger. Deep link #sale/<id>.
+   rowInfo() stays as an alias, so every Info button in the app
+   opens this instead of the old alert dump.
+   ============================================================ */
+let SALE_ID=null;
+function saleLink(id,label){
+  const r=ROWS.find(x=>x.id===id); if(!r) return esc(label||'—');
+  return '<a class="emplink" href="#sale/'+esc(id)+'" onclick="openSale(\''+esc(id)+'\');return false" title="Open this sale">'+esc(label!=null?label:(r.service||r.client))+'</a>';
+}
+// Every invoice this sale stands behind: its own number, plus admin links.
+function invoicesOfSale(rowId){
+  const r=ROWS.find(x=>x.id===rowId); if(!r) return [];
+  const nos={};
+  const own=String(r.invNo||'').trim(); if(own) nos[own]='invoice # on the sale';
+  INVLINKS.forEach(l=>{ if(l.rowId===rowId) nos[String(l.no).trim()]=nos[String(l.no).trim()]||('linked '+(l.by?'by '+l.by:'')); });
+  return Object.keys(nos).map(no=>({no, how:nos[no], h:invoiceOf(no)}));
+}
+function openSale(id){
+  const r=ROWS.find(x=>x.id===id);
+  if(!r){ toast('No sale with that id here');
+    if(location.hash.indexOf('#sale/')===0){ try{ history.replaceState(null,'',location.pathname+location.search); }catch(e){} }
+    return false; }
+  SALE_ID=id;
+  document.getElementById('saleModal').classList.add('on');
+  try{ history.replaceState(null,'','#sale/'+encodeURIComponent(id)); }catch(e){}
+  renderSale(); return true;
+}
+function closeSale(){
+  document.getElementById('saleModal').classList.remove('on'); SALE_ID=null;
+  if(location.hash.indexOf('#sale/')===0){ try{ history.replaceState(null,'',location.pathname+location.search); }catch(e){} }
+}
+function renderSale(){
+  if(!SALE_ID) return;
+  const r=ROWS.find(x=>x.id===SALE_ID); if(!r){ closeSale(); return; }
   const o=origOf(r), p=person(r.rep);
-  let t=r.client+' · '+fmtY(r.date)+' · '+money2(bookedValue(r))+' · '+(TYPE_LABEL[r.type]||r.type)+
-    (p?' · '+p.name:'')+'\n';
-  t+='Commission: '+num(rowRate(r),1)+'% = '+money2(rowComm(r))+(r.commRate!=null&&r.commRate!==''?' (rate frozen on this sale)':' (from the comp plan)')+'\n';
+  const stg=stageOf(r);
+  document.getElementById('svTitle').textContent=(r.service||'Sale')+' · '+r.client;
+  document.getElementById('svKind').innerHTML='<span class="pill '+(stg==='paid'?'sa':stg==='reversed'?'no':stg==='due'?'mid':'n')+'">'+esc(STAGE_LABEL[stg]||stg)+'</span> <span class="pill n">'+esc(TYPE_LABEL[r.type]||r.type)+'</span>';
+  const cli=CLIENTS.find(c=>norm(c.n)===norm(r.client));
+  let x='<div class="cpgrid">';
+  const kv=(k,v)=>{ if(v!==''&&v!=null) x+='<div class="kv"><span class="k">'+k+'</span><span class="v">'+v+'</span></div>'; };
+  // who and where
+  x+='<div class="cpbox"><h5>Relationships</h5>';
+  kv('Client', cliLink(r.client)+(cli?'':' <span class="pill no" title="not on the roster">?</span>'));
+  if(cli&&cli.addr) kv('Property', mapLink(cli)+(cli.city?', '+esc(cli.city):''));
+  kv('Salesperson', p?empLink(p.id):esc(r.repOrphan||'—'));
+  if(isSplit(r)) kv('Split', rowShares(r).map(s=>{const sp=person(s.rep);
+    return (sp?empLink(sp.id,empShort(sp)):'?')+' '+num(s.frac*100,0)+'% = '+money2(rowComm(r)*s.frac);}).join(' · '));
+  kv('Sold', fmtY(r.date));
+  if(r.completed) kv('Completed', fmtY(r.completed));
+  kv('Value', money2(bookedValue(r))+(isReversed(r)?' <span style="color:var(--red)">− '+money2(voidAmount(r))+' '+esc(VOID_LABEL[r.voidType]||r.voidType)+' = '+money2(netValue(r))+' net</span>':''));
+  kv('Source', esc(provLine(r)));
+  x+='</div>';
+  // the money
+  x+='<div class="cpbox"><h5>Commission</h5>';
+  kv('Rate', num(rowRate(r),1)+'% '+(r.commRate!=null&&r.commRate!==''?'<span class="note">frozen on this sale</span>':'<span class="note">from the comp plan</span>'));
+  kv('Commission', money2(rowComm(r)));
+  if(r.invoiced) kv('Invoiced', fmtY(r.invoiced)+' · due '+fmtY(dueDate(r)));
+  if(r.paid) kv('Commission paid', fmtY(r.paid));
   if(isSplit(r)){
-    t+='Split: '+rowShares(r).map(s=>{const sp=person(s.rep);
-      return (sp?sp.name:'?')+' '+num(s.frac*100,0)+'% = '+money2(rowComm(r)*s.frac);}).join(' · ')+'\n';
     const ok=r.splitOk||{};
-    t+='Split approval: '+(splitState(r)==='ok'?'APPROVED — commission processes':
-      'PENDING — commission HELD. Still needed: '+
-      rowShares(r).filter(s=>!(ok.reps&&ok.reps[s.rep])).map(s=>person(s.rep)?person(s.rep).name:'?').concat(ok.admin?[]:['admin sign-off']).join(', '))+'\n';
+    kv('Split approval', splitState(r)==='ok'?'<span class="pill sa">APPROVED</span>'
+      :'<span class="pill no">HELD</span> <span class="note">still needed: '+
+        rowShares(r).filter(s=>!(ok.reps&&ok.reps[s.rep])).map(s=>person(s.rep)?esc(empShort(person(s.rep))):'?').concat(ok.admin?[]:['admin']).join(', ')+'</span>');
   }
-  t+='\nSource: '+provLine(r)+'\n';
-  t+='Invoice evidence: '+(hasInvoiceEvidence(r)
-    ? '#'+r.invNo+' + PDF on file ✓'
-    : '🚨 MISSING ('+((r.invNo&&String(r.invNo).trim())?'PDF upload':((r.files&&r.files.length)?'invoice #':'invoice # and PDF'))+') — cannot be invoiced or paid until fixed')+'\n';
+  const led=payoutsFor(r.id), cbs=chargebacksFor(r.id);
+  if(led.length||cbs.length){
+    x+='<div style="margin-top:7px"><b style="font-size:12px">On the ledger</b>';
+    led.forEach(pp=>{ const e2=person(pp.emp);
+      x+='<div class="kv"><span class="k">'+esc(PAYOUT_KINDS[pp.kind]||pp.kind)+' · '+fmt(pp.paidOn)+'</span><span class="v mono">'+money2(pp.amount)+(e2?' → '+empLink(e2.id,empShort(e2)):'')+'</span></div>'; });
+    cbs.forEach(cb=>{ const e2=person(cb.emp);
+      x+='<div class="kv"><span class="k">'+esc(PAYOUT_KINDS[cb.kind]||cb.kind)+' · '+esc(cb.status)+'</span><span class="v mono" style="color:var(--red)">'+money2(cb.amount)+(e2?' → '+empLink(e2.id,empShort(e2)):'')+'</span></div>'; });
+    x+='</div>';
+  } else if(r.paid) x+='<div class="note">Marked paid with no ledger entry — the Hawk lists these for confirmation.</div>';
+  x+='</div>';
+  // invoices behind it
+  const invs=invoicesOfSale(r.id);
+  x+='<div class="cpbox"><h5>Invoices</h5>';
+  kv('Evidence', hasInvoiceEvidence(r)?'<span class="pill sa">ON FILE</span> <span class="note">'+(r.files&&r.files.length?'PDF in the vault':'backed by the invoice register')+'</span>'
+    :'<span class="pill no">MISSING</span> <span class="note">'+((r.invNo&&String(r.invNo).trim())?'needs the PDF or a register-backed number':'needs the invoice number')+'</span>');
+  if(invs.length) invs.forEach(iv=>{
+    x+='<div class="svcrow"><span class="g">'+invLink(iv.no)+
+      '<div class="note">'+esc(iv.how)+'</div></span><span>'+(iv.h?invStatusPill(iv.h):'<span class="pill n">not on the register</span>')+'</span></div>'; });
+  else x+='<div class="note">No invoice number on this sale yet.</div>';
+  // billing that backs it — a lead, not proof (matched by name)
+  const bills=INVOICES.filter(b=>norm(b.c)===norm(r.client) && b.d>=r.date);
+  if(bills.length){
+    x+='<div class="note" style="margin-top:6px">Billed to this client since the sale ('+bills.length+' line'+(bills.length===1?'':'s')+', matched by name):</div>';
+    bills.slice(0,6).forEach(b=>{ x+='<div class="svcrow"><span class="g">'+(b.i?invLink(b.i):'<span class="note">no #</span>')+' · '+fmtY(b.d)+
+      '<div class="note">'+esc(b.s||'line')+'</div></span><span class="mono">'+money2(b.v)+'</span></div>'; });
+    if(bills.length>6) x+='<div class="note">and '+(bills.length-6)+' more</div>';
+  }
+  x+='</div>';
+  // provenance
+  x+='<div class="cpbox"><h5>History</h5>';
   if(r.orig){
-    const same = o.date===r.date && o.client===r.client && (+o.value||0)===(+r.value||0) &&
-                 o.type===r.type && (o.service||'')===(r.service||'') && o.rep===r.rep;
-    if(!same){
-      const op=person(o.rep);
-      t+='\nAs first recorded:\n  '+o.client+' · '+o.date+' · '+money2(+o.value||0)+' · '+(TYPE_LABEL[o.type]||o.type)+
-        (o.service?' · '+o.service:'')+(op&&o.rep!==r.rep?' · '+op.name:'')+'\n';
-    }
+    const same=o.date===r.date && o.client===r.client && (+o.value||0)===(+r.value||0) &&
+               o.type===r.type && (o.service||'')===(r.service||'') && o.rep===r.rep;
+    if(!same){ const op=person(o.rep);
+      x+='<div class="note"><b>As first recorded:</b> '+cliLink(o.client)+' · '+o.date+' · '+money2(+o.value||0)+' · '+esc(TYPE_LABEL[o.type]||o.type)+
+        (o.service?' · '+esc(o.service):'')+(op&&o.rep!==r.rep?' · '+empLink(o.rep,op.name):'')+'</div>'; }
   }
   if(r.edits&&r.edits.length){
-    t+='\nChanges since:\n'+r.edits.map(e=>'  '+e.on+' — '+e.f+': "'+e.from+'" → "'+e.to+'"'+
-      (e.by==='sync'?'  (source re-import)':'')).join('\n')+'\n';
+    r.edits.slice(-8).forEach(e=>{ x+='<div class="kv"><span class="k">'+esc(e.on)+' · '+esc(e.f)+(e.by==='sync'?' <span class="note">(re-import)</span>':'')+'</span><span class="v note">“'+esc(String(e.from))+'” → “'+esc(String(e.to))+'”</span></div>'; });
   }
-  // Billing that backs this sale — invoice audit lines for the same client,
-  // dated on or after the sale. Matched by name, so it is a lead, not proof.
-  const bills=INVOICES.filter(x=>norm(x.c)===norm(r.client) && x.d>=r.date);
-  if(bills.length){
-    t+='\nBilled to this client since the sale ('+bills.length+' line'+(bills.length===1?'':'s')+'):\n'+
-      bills.slice(0,8).map(x=>'  '+(x.i?'#'+x.i+' · ':'')+x.d+' · '+money2(x.v)+(x.s?' · '+x.s:'')).join('\n')+
-      (bills.length>8?'\n  …and '+(bills.length-8)+' more':'');
-  }
-  if(r.files&&r.files.length){
-    t+='\nAttached evidence:\n'+r.files.map(f=>'  📎 '+f.name+' ('+f.kb+' KB, vault #'+f.id+', '+f.at+')').join('\n')+'\n';
-  }
-  if(r.srcRaw&&Object.keys(r.srcRaw).length){
-    t+='\n\nExactly as the export sent it:\n'+Object.keys(r.srcRaw).map(k=>'  '+k+': '+r.srcRaw[k]).join('\n');
-  }
-  alert(t);
+  if(r.files&&r.files.length) r.files.forEach(f=>{ x+='<div class="note">📎 '+esc(f.name)+' ('+f.kb+' KB, vault #'+f.id+')</div>'; });
+  if(!(r.edits&&r.edits.length)&&!(r.files&&r.files.length)&&!r.orig) x+='<div class="note">Unchanged since it was recorded.</div>';
+  if(r.srcRaw&&Object.keys(r.srcRaw).length)
+    x+='<details style="margin-top:6px"><summary class="note">Exactly as the export sent it</summary><div class="note" style="white-space:pre-wrap">'+
+      esc(Object.keys(r.srcRaw).map(k=>k+': '+r.srcRaw[k]).join('\n'))+'</div></details>';
+  x+='</div>';
+  x+='</div>';
+  document.getElementById('svBody').innerHTML=x;
+  document.getElementById('svFoot').innerHTML=(ADMIN?'<button onclick="openEdit(\''+r.id+'\')">Edit</button>':'')+
+    '<span class="hspace"></span><button onclick="closeSale()">Close</button>';
 }
+// Every Info button in the app comes through here — the alert grew up.
+function rowInfo(id){ openSale(id); }
 function toggleType(id){
   const r=ROWS.find(x=>x.id===id); if(!r)return;
   const order=['new','upsell','renewal'];
@@ -12789,10 +12896,10 @@ function renderGearPlan(){
   plan.forEach((s,i)=>{
     const c=s.c, tel=String(c.ph||'').replace(/[^0-9+]/g,'');
     h+='<div class="gstop"><div class="rank">'+(i+1)+'</div><div class="g">'+
-      '<b>'+esc(c.n)+'</b> <span class="note">'+(gearAddr(c)?mapLink(c,gearAddr(c)):'no address on file')+'</span><br>'+
+      '<b>'+cliLink(c.n)+'</b> <span class="note">'+(gearAddr(c)?mapLink(c,gearAddr(c)):'no address on file')+'</span><br>'+
       '<span class="mono"><b>'+money(s.val)+'</b></span> <span class="note">('+esc(s.valWhy)+')</span> · '+
       '<b>'+num(s.prob*100,0)+'%</b> likely · <span class="note">'+s.time+
-      (i?' · '+num(s.leg,1)+' mi from stop '+i:'')+(c.sp?' · owner: '+esc(c.sp):'')+'</span>'+
+      (i?' · '+num(s.leg,1)+' mi from stop '+i:'')+(c.sp?' · owner: '+(clientRepId(c)?empLink(clientRepId(c),c.sp):esc(c.sp)):'')+'</span>'+
       '<div class="note" style="margin-top:3px">'+(s.why.length?s.why.join(' · '):'nothing special on file — it’s simply next-best by the numbers')+'</div>'+
       (s.tip?'<div class="tip">'+esc(s.tip)+'</div>':'')+
       '<div class="acts">'+
@@ -13762,6 +13869,10 @@ function empLink(id,label){
   const p=person(id); if(!p) return esc(label||'—');
   return '<a class="emplink" href="#emp/'+esc(p.id)+'" onclick="openEmp(\''+esc(p.id)+'\');return false" title="Open '+esc(empName(p))+'’s page">'+esc(label!=null?label:empName(p))+'</a>';
 }
+// Guarded variants the link sweeps lean on: full name / short name, degrading
+// to the same plain text the old dead-text sites showed when the id is gone.
+function empLinkN(id){ const p=person(id); return p?empLink(id,empName(p)):esc('?'); }
+function empLinkS(id){ const p=person(id); return p?empLink(id,empShort(p)):esc('?'); }
 function empMe(){ const sx=session(); if(!sx) return null; const r=resolveEmployee('','*',{email:sx.email}); return r?person(r.id):null; }
 function empCanSeeMoney(p){ return canSeeMoneyOf(p); }
 function empAccountStatus(p){
@@ -13919,9 +14030,9 @@ function renderTeamPulse(){
     rows.map(r=>'<div class="r"><span>'+esc(r[0])+'</span><div class="t"><i style="width:'+Math.round(r[1]/mx*100)+'%"></i></div><b>'+r[1]+'</b></div>').join('')+'</div>';
   // activity feed — last 10 money / identity events across the team, built straight from the records
   const T=[]; const ev=(at,p,what)=>{ if(at&&p) T.push({at:String(at),p:p,what:what}); };
-  ROWS.forEach(r=>{ const p=person(r.rep); if(!p) return; const c=esc(r.client), v=money(netValue(r));
+  ROWS.forEach(r=>{ const p=person(r.rep); if(!p) return; const c=cliLink(r.client), v=saleLink(r.id,money(netValue(r)));
     ev(r.srcAt||r.date,p,'Sale credited · <b>'+c+'</b> · '+v);
-    if(r.invoiced) ev(r.invoiced,p,'Invoiced · '+c+(r.invNo?' · #'+esc(r.invNo):''));
+    if(r.invoiced) ev(r.invoiced,p,'Invoiced · '+c+(r.invNo?' · '+invLink(r.invNo):''));
     if(r.paid) ev(r.paid,p,'Commission paid · '+c+' · '+money(paidOut(r)));
     if(r.voidType) ev(r.voidDate||r.date,p,'Sale '+esc(r.voidType)+' · '+c);
     (r.edits||[]).forEach(e=>{ if(e.f==='rep') ev(e.at||e.on,p,'Sale reassigned · '+c); });
@@ -14069,18 +14180,18 @@ function renderView(){
   const act=PEOPLE.filter(p=>p.active&&p.id!==EMP_UNASSIGNED);
   const lead=act.filter(empIsSales).map(p=>({p,v:live.filter(r=>r.date.slice(0,4)===y&&shareFor(r,p.id)>0).reduce((a,r)=>a+netValue(r)*shareFor(r,p.id),0)})).sort((a,b)=>b.v-a.v)[0];
   document.getElementById('viewPeople').innerHTML=
-    tile('Team',act.length,act.filter(empIsSales).length+' selling · '+PEOPLE.filter(p=>!p.active&&p.id!==EMP_UNASSIGNED).length+' former')+
-    tile('Top producer '+y,lead&&lead.v?empName(lead.p):'—',lead&&lead.v?money(lead.v)+' net':'')+
-    tile('Pipeline',money(pipeline),'sold, not yet invoiced')+
+    tlink(tile('Team',act.length,act.filter(empIsSales).length+' selling · '+PEOPLE.filter(p=>!p.active&&p.id!==EMP_UNASSIGNED).length+' former'),"setTab('roster')")+
+    tile('Top producer '+y,lead&&lead.v?empLinkN(lead.p.id):'—',lead&&lead.v?money(lead.v)+' net':'')+
+    tlink(tile('Pipeline',money(pipeline),'sold, not yet invoiced'),"setTab('pipe')")+
     tile('Clients / leads',CLIENTS.filter(c=>isClient(c)&&!c.gone).length.toLocaleString()+' / '+CLIENTS.filter(c=>isLead(c)&&!c.gone).length.toLocaleString(),'from the roster sync');
   // trust
   const c=hawkCached(true);
   const legacy=payoutReviewRows().length, revRev=reversalReviewRows().length, unmatched=empMatchQueue().length;
   document.getElementById('viewTrust').innerHTML=
-    tile('Hawk findings',c.total,(c.parts||[]).slice(0,2).join(' · ')||'all clear',c.total?'bad':'ok')+
-    tile('Payouts to confirm',legacy,legacy?'legacy paid sales':'ledger complete',legacy?'bad':'ok')+
-    tile('Reversals to review',revRev,revRev?'no date or unconfirmed payout':'none',revRev?'bad':'ok')+
-    tile('Unmatched names',unmatched,unmatched?'Employee match needed':'everyone resolves',unmatched?'bad':'ok');
+    tlink(tile('Hawk findings',c.total,(c.parts||[]).slice(0,2).join(' · ')||'all clear',c.total?'bad':'ok'),"setTab('hawk')","open the findings")+
+    tlink(tile('Payouts to confirm',legacy,legacy?'legacy paid sales':'ledger complete',legacy?'bad':'ok'),"setTab('adj')","open the payout corrections")+
+    tlink(tile('Reversals to review',revRev,revRev?'no date or unconfirmed payout':'none',revRev?'bad':'ok'),"setTab('adj')","open the reversals")+
+    tlink(tile('Unmatched names',unmatched,unmatched?'Employee match needed':'everyone resolves',unmatched?'bad':'ok'),"setTab('roster')","open the match queue");
   const feeds=(typeof mergeStatus==='function')?mergeStatus():[];
   document.getElementById('viewFeeds').innerHTML=feeds.length?('Feeds: '+feeds.map(x=>esc(x.f.label)+' '+(x.state==='never'?'<b style="color:var(--red)">never</b>':x.days+'d ago'+(x.state==='stale'?' <b style="color:var(--red)">overdue</b>':''))).join(' · ')):'';
 }
@@ -14695,21 +14806,21 @@ function empTimeline(D){
     ev(l.at,'id',txt+' <span class="note">· by '+esc(l.by||'')+'</span>');
   });
   D.rows.forEach(r=>{
-    const v=money(netValue(r)*shareFor(r,p.id)), c=esc(r.client), sp=isSplit(r)?' (split '+Math.round(shareFor(r,p.id)*100)+'%)':'';
+    const v=money(netValue(r)*shareFor(r,p.id)), c=cliLink(r.client), sp=isSplit(r)?' (split '+Math.round(shareFor(r,p.id)*100)+'%)':'';
     ev(r.date,'money','Sale credited · <b>'+c+'</b> · '+v+sp+' · '+esc(TYPE_LABEL[r.type]||r.type)+(r.repHow==='unmatched-default'||r.repHow==='orphan'?' <span class="pill no">NEEDS REVIEW</span>':''),rowLink(r));
     if(r.completed) ev(r.completed,'','Work completed · '+c,rowLink(r));
-    if(r.invoiced) ev(r.invoiced,'money','Invoiced · '+c+(r.invNo?' · #'+esc(r.invNo):'')+' · due '+fmtY(dueDate(r)),rowLink(r));
+    if(r.invoiced) ev(r.invoiced,'money','Invoiced · '+c+(r.invNo?' · '+invLink(r.invNo):'')+' · due '+fmtY(dueDate(r)),rowLink(r));
     if(r.paid) ev(r.paid,'money','Commission paid · '+c+' · '+money(paidOut(r)*shareFor(r,p.id)),rowLink(r));
     if(r.voidType) ev(r.voidDate||r.date,'bad','Sale '+esc(r.voidType)+' · '+c+(voidAmount(r)?' · '+money(voidAmount(r)):'')+(clawback(r)?' · clawback '+money(clawback(r)*shareFor(r,p.id)):''),rowLink(r));
     (r.edits||[]).forEach(e=>{
       if(e.f==='splitOk') ev(e.at||e.on,'id','Split approval · '+c+' · '+esc(e.to),rowLink(r));
-      else if(e.f==='rep') ev(e.at||e.on,'bad','Sale reassigned · '+c+' · '+esc(empName(person(e.from))||e.from)+' → '+esc(empName(person(e.to))||e.to)+' <span class="note">· '+esc(e.by||'user')+'</span>',rowLink(r));
+      else if(e.f==='rep') ev(e.at||e.on,'bad','Sale reassigned · '+c+' · '+(person(e.from)?empLinkN(e.from):esc(e.from))+' → '+(person(e.to)?empLinkN(e.to):esc(e.to))+' <span class="note">· '+esc(e.by||'user')+'</span>',rowLink(r));
       else if(e.f==='voidType'||e.f==='value'||e.f==='type'||e.f==='paid'||e.f==='invoiced'||e.f==='paidAmt'||e.f==='split') ev(e.at||e.on,'','Sale modified · '+c+' · '+esc(e.f)+': '+esc(e.from||'—')+' → '+esc(e.to||'—')+' <span class="note">· '+esc(e.by||'user')+'</span>',rowLink(r));
     });
   });
   D.disputes.forEach(d=>ev(d.raised,'bad','Dispute raised · '+esc(d.claim||'')+(d.status?' · '+esc(d.status):'')));
-  D.oscs.forEach(o=>ev(o.when,'','Estimate booked · '+esc(o.client||'')));
-  TAKEOVERS.forEach(t=>{ if(!(p.log||[]).some(l=>l.what==='takeover'||l.what==='handed-over')){ if(t.toId===p.id) ev(t.on,'id','Took over '+(t.moved||0)+' accounts from '+esc(t.from)); if(t.fromId===p.id) ev(t.on,'id','Accounts handed to '+esc(t.to)); } });
+  D.oscs.forEach(o=>ev(o.when,'','Estimate booked · '+(o.client?cliLink(o.client):'')));
+  TAKEOVERS.forEach(t=>{ if(!(p.log||[]).some(l=>l.what==='takeover'||l.what==='handed-over')){ if(t.toId===p.id) ev(t.on,'id','Took over '+(t.moved||0)+' accounts from '+(t.fromId&&person(t.fromId)?empLink(t.fromId,t.from):esc(t.from))); if(t.fromId===p.id) ev(t.on,'id','Accounts handed to '+(t.toId&&person(t.toId)?empLink(t.toId,t.to):esc(t.to))); } });
   if(typeof AUDIT!=='undefined'){
     const em=String(p.email||'').toLowerCase();
     AUDIT.forEach(a=>{ const d=a.det||{};
@@ -14749,28 +14860,31 @@ function renderEmp(){
 
   if(EP_SEC==='overview'){
     const u=unitOf(p);
+    // Every number is explainable: a KPI tile opens the section holding the
+    // records that make it up — the same connectedness rule as the links.
+    const epT=(sec,html)=>tlink(html,"epSec('"+sec+"')","open the records behind this number");
     if(empIsSales(p)||D.rows.length){
       h+='<div class="tiles small">'+
-        epTile('Sales today',K.today.n,money(K.today.v))+epTile('This week',K.week.n,money(K.week.v)+(K.std?' · standard '+K.std+' '+u+'/wk':''))+
-        epTile('This month',K.month.n,money(K.month.v))+epTile('Year to date',K.ytd.n,money(K.ytd.v))+
-        epTile('Since plan start',money(K.plan.v),K.plan.n+' new '+u+' · same window as the Scoreboard')+
-        epTile('Total contract value',money(K.all.v),K.all.n+' sale'+(K.all.n===1?'':'s')+' · avg '+money(K.avg))+
+        epT('sales',epTile('Sales today',K.today.n,money(K.today.v)))+epT('sales',epTile('This week',K.week.n,money(K.week.v)+(K.std?' · standard '+K.std+' '+u+'/wk':'')))+
+        epT('sales',epTile('This month',K.month.n,money(K.month.v)))+epT('sales',epTile('Year to date',K.ytd.n,money(K.ytd.v)))+
+        epT('sales',epTile('Since plan start',money(K.plan.v),K.plan.n+' new '+u+' · same window as the Scoreboard'))+
+        epT('sales',epTile('Total contract value',money(K.all.v),K.all.n+' sale'+(K.all.n===1?'':'s')+' · avg '+money(K.avg)))+
         epTile('Mix',K.newN+' / '+K.upN+' / '+K.renN,'new / upsell / renewal'+(K.cancelled?' · '+K.cancelled+' cancelled':''))+
         epTile('Invoiced (sales)',money(K.invoicedV),K.invoicedN+' of '+K.all.n+' sales have an invoice date')+
         (K.goal&&K.A&&K.A.scored?epTile('% to annual goal',Math.round(K.ytd.n/K.goal*100)+'%',K.ytd.n+' of '+K.goal+' '+u+' this year'):'')+
         (K.A&&K.A.rate!=null?epTile('Standard hit rate',Math.round(K.A.rate)+'%','rolling windows passed'):'')+
         '</div>';
       if(money$) h+='<div class="tiles small" style="margin-top:12px">'+
-        epTile('Earned',money(K.commEarned),'calculated since plan start · net of reversals')+epTile('Pending',money(K.commPending),'sold, not yet invoiced')+
-        epTile('Payable',money(K.commPayable),'invoiced, not yet paid')+epTile('Paid',money(K.commPaid),'from the payout ledger'+(K.commAdj?' · incl. '+(K.commAdj>0?'+':'−')+money(Math.abs(K.commAdj))+' corrections':'')+(K.legacyReview?' · '+K.legacyReview+' to confirm':''))+
-        (K.held?epTile('Held on splits',money(K.held),'waiting for approvals'):'')+(K.ovPaid?epTile('Override paid',money(K.ovPaid),'manager override, from the ledger'):'')+
-        epTile('Chargebacks',money(K.clawback),'deducted, from the ledger'+(K.forgiven?' · '+money(K.forgiven)+' forgiven':''))+(K.variance.length?epTile('Corrections needed',K.variance.length,'paid sales whose commission changed since payout','bad'):'')+'</div>';
+        epT('comm',epTile('Earned',money(K.commEarned),'calculated since plan start · net of reversals'))+epT('comm',epTile('Pending',money(K.commPending),'sold, not yet invoiced'))+
+        epT('comm',epTile('Payable',money(K.commPayable),'invoiced, not yet paid'))+epT('comm',epTile('Paid',money(K.commPaid),'from the payout ledger'+(K.commAdj?' · incl. '+(K.commAdj>0?'+':'−')+money(Math.abs(K.commAdj))+' corrections':'')+(K.legacyReview?' · '+K.legacyReview+' to confirm':'')))+
+        (K.held?epT('comm',epTile('Held on splits',money(K.held),'waiting for approvals')):'')+(K.ovPaid?epT('comm',epTile('Override paid',money(K.ovPaid),'manager override, from the ledger')):'')+
+        epT('comm',epTile('Chargebacks',money(K.clawback),'deducted, from the ledger'+(K.forgiven?' · '+money(K.forgiven)+' forgiven':'')))+(K.variance.length?epT('comm',epTile('Corrections needed',K.variance.length,'paid sales whose commission changed since payout','bad')):'')+'</div>';
     }
     if(K.accts||K.leads||K.invLines||K.outstanding) h+='<div class="tiles small" style="margin-top:12px">'+
-      epTile('Accounts owned',K.accts.toLocaleString(),K.leads+' open leads · from the SA salesperson field')+
-      epTile('Invoice lines',K.invLines.toLocaleString(),money(K.invBilled)+' billed pre-tax · '+money(K.invYr)+' this year')+
-      (K.collectedN?epTile('Collected',money(K.collectedV),K.collectedN.toLocaleString()+' paid invoices pre-tax · '+money(K.collectedYr)+' this year'):'')+
-      epTile('Outstanding',money(K.outstanding),'past-due balances on accounts they own')+'</div>';
+      epT('accounts',epTile('Accounts owned',K.accts.toLocaleString(),K.leads+' open leads · from the SA salesperson field'))+
+      epT('invoices',epTile('Invoice lines',K.invLines.toLocaleString(),money(K.invBilled)+' billed pre-tax · '+money(K.invYr)+' this year'))+
+      (K.collectedN?epT('invoices',epTile('Collected',money(K.collectedV),K.collectedN.toLocaleString()+' paid invoices pre-tax · '+money(K.collectedYr)+' this year')):'')+
+      epT('invoices',epTile('Outstanding',money(K.outstanding),'past-due balances on accounts they own'))+'</div>';
     const prePlan=D.rows.filter(r=>!r.voidType && r.date<(p.start||'0000'));
     if(prePlan.length) h+='<div class="warnbox" style="margin-top:10px"><b>'+prePlan.length+' sale'+(prePlan.length===1?'':'s')+' ('+money(prePlan.reduce((a,r)=>a+netValue(r)*shareFor(r,p.id),0))+') predate this comp plan</b>, which starts '+fmtY(p.start)+'. They earn $0 commission and do not count toward the standard — on this page, the Scoreboard and the Commissions tab alike. If that start date is wrong, fix it on '+(ADMIN?'<a href="#" onclick="closeEmp();setTab(&quot;plans&quot;);selPerson(&quot;'+p.id+'&quot;);return false">the comp plan</a>':'the comp plan')+'.</div>';
     if(money$ && empIsSales(p) && D.rows.length){ const R=empReconcile(p.id); if(R) h+='<div class="note" style="margin-top:8px">'+(R.ok?'✓ These figures reconcile with the Scoreboard and the Commissions tab.':'<b style="color:var(--red)">⚠ Does not reconcile</b> — page '+money(R.page.planV)+' / '+R.page.planN+' vs Scoreboard '+money(R.scoreboard.planV)+' / '+R.scoreboard.planN+'; commission page '+money(R.page.commEarned)+' vs Commissions tab '+money(R.commissionTab.earned))+'</div>'; }
@@ -14804,7 +14918,7 @@ function renderEmp(){
         '<td class="num mono">'+money(netValue(r)*sh)+(r.voidType?'<div class="note">'+esc(r.voidType)+'</div>':'')+'</td>'+
         '<td><span class="pill '+(String(r.src||'mn').toLowerCase())+'">'+esc(SRC_LABEL[r.src]||r.src||'manual')+'</span></td>'+
         '<td><span class="pill '+(st==='paid'?'ok':st==='reversed'?'no':'n')+'">'+esc(st)+'</span></td>'+
-        '<td class="note">'+(r.invoiced?fmtY(r.invoiced)+(r.invNo?' · #'+esc(r.invNo):'')+(hasInvoiceEvidence(r)?'':' <span class="pill no" title="no invoice PDF/number on file">no evidence</span>'):'—')+'</td>'+
+        '<td class="note">'+(r.invoiced?fmtY(r.invoiced)+(r.invNo?' · '+invLink(r.invNo):'')+(hasInvoiceEvidence(r)?'':' <span class="pill no" title="no invoice PDF/number on file">no evidence</span>'):'—')+'</td>'+
         (money$?'<td><span class="pill '+(cs==='paid'?'ok':cs==='held'||cs==='reversed'?'no':cs==='due'?'mid':'n')+'">'+esc(cs)+'</span> <span class="mono">'+money(empCommAmt(r,p.id))+'</span>'+(r.paid?'<div class="note">paid '+fmtY(r.paid)+'</div>':'')+'</td>':'')+
         '<td class="num"><button class="sm" onclick="rowInfo(\''+r.id+'\')">Info</button>'+(ADMIN?' <button class="sm" onclick="openEdit(\''+r.id+'\')">Edit</button>':'')+'</td></tr>';
     });
@@ -14826,7 +14940,7 @@ function renderEmp(){
       h+='<tr><td class="mono">'+fmtY(x.d)+'</td><td class="mono">'+(x.i?invLink(x.i):'')+'</td><td><a href="#" onclick="openClient('+JSON.stringify(x.c).replace(/"/g,'&quot;')+');return false">'+esc(x.c)+'</a>'+(addr?'<div class="note">'+addr+'</div>':'')+'</td>'+
         '<td class="note">'+esc(x.s||'')+'</td><td class="num mono">'+money2(+x.v||0)+(+x.t?'<div class="note">+'+money2(+x.t)+' tax</div>':'')+'</td>'+
         '<td>'+(ob?'<span class="pill '+(/past/i.test(ob.s)?'no':'mid')+'">'+esc(ob.s)+'</span>':'<span class="pill ok" title="not in the open-balances snapshot">cleared</span>')+'</td>'+
-        '<td>'+(sale?'<button class="sm" onclick="rowInfo(\''+sale.id+'\')">'+esc(TYPE_LABEL[sale.type]||sale.type)+' · '+money(netValue(sale))+'</button>'+(other?' <span class="pill no" title="this invoice line names '+esc(empShort(p))+' but the sale is credited to '+esc(empName(person(sale.rep)))+'">credited to '+esc(empShort(person(sale.rep)))+'</span>':''):'<span class="note">no logged sale</span>')+'</td></tr>';
+        '<td>'+(sale?'<button class="sm" onclick="rowInfo(\''+sale.id+'\')">'+esc(TYPE_LABEL[sale.type]||sale.type)+' · '+money(netValue(sale))+'</button>'+(other?' <span class="pill no" title="this invoice line names '+esc(empShort(p))+' but the sale is credited to '+esc(empName(person(sale.rep)))+'">credited to '+empLinkS(sale.rep)+'</span>':''):'<span class="note">no logged sale</span>')+'</td></tr>';
     });
     h+='</tbody></table></div>'+(D.inv.length>400?'<div class="note">Showing the latest 400 of '+D.inv.length.toLocaleString()+'.</div>':'');
   }
@@ -14844,7 +14958,7 @@ function renderEmp(){
     if(saleIds.length){
       h+='<h3 style="margin:8px 0 6px">How each number was reached</h3><div class="scroll"><table><thead><tr><th>Sale</th><th>Events</th><th class="num">Net</th></tr></thead><tbody>';
       saleIds.forEach(id=>{ const r=ROWS.find(q=>q.id===id), L=bySale[id]; const net=L.filter(x=>x.status!=='forgiven').reduce((a,x)=>a+x.amount,0);
-        h+='<tr><td><b>'+esc(r?r.client:id)+'</b>'+(r?'<div class="note">'+fmtY(r.date)+' · '+esc(r.service||'')+(r.voidType?' · '+esc(VOID_LABEL[r.voidType]||r.voidType):'')+'</div>':'')+'</td><td>'+
+        h+='<tr><td><b>'+(r?cliLink(r.client):esc(id))+'</b>'+(r?' <button class="sm" onclick="openSale(\''+id+'\')">Info</button><div class="note">'+fmtY(r.date)+' · '+esc(r.service||'')+(r.voidType?' · '+esc(VOID_LABEL[r.voidType]||r.voidType):'')+'</div>':'')+'</td><td>'+
           L.slice().sort((a,b)=>a.paidOn<b.paidOn?-1:1).map(x=>'<div>'+(x.status==='forgiven'?'<span class="pill n">FORGIVEN</span> ':'')+esc(PAYOUT_KINDS[x.kind]||x.kind)+': <span class="mono">'+(x.amount<0?'−':'+')+money2(Math.abs(x.amount))+'</span> <span class="note">'+fmt(x.paidOn)+(x.reason?' · '+esc(x.reason):'')+'</span></div>').join('')+'</td>'+
           '<td class="num mono"><b>'+money2(net)+'</b></td></tr>'; });
       h+='</tbody></table></div>';
@@ -14861,18 +14975,18 @@ function renderEmp(){
       h+='<div class="scroll"><table><thead><tr><th>Paid</th><th>Period</th><th>Kind</th><th>Sale</th><th class="num">Basis</th><th class="num">Rate</th><th class="num">Share</th><th class="num">Amount</th><th>Recorded by</th><th></th></tr></thead><tbody>';
       myL.forEach(x=>{ const r=ROWS.find(q=>q.id===x.rowId);
         h+='<tr'+(x.status==='void'?' style="opacity:.5;text-decoration:line-through"':'')+'><td class="mono">'+fmtY(x.paidOn)+'</td><td class="mono">'+esc(x.period)+'</td><td><span class="pill '+(x.kind==='adjustment'?'mid':OV_KINDS.indexOf(x.kind)>-1?'el':'ok')+'">'+esc(PAYOUT_KINDS[x.kind]||x.kind)+'</span>'+(x.reconstructed?' <span class="pill n" title="reconstructed from the legacy record at migration">legacy</span>':'')+'</td>'+
-          '<td>'+(r?'<b>'+esc(r.client)+'</b><div class="note">'+fmtY(r.date)+' · '+esc(r.service||'')+'</div>':'<span class="note">sale '+esc(x.rowId)+' (deleted)</span>')+(x.reason?'<div class="note">'+esc(x.reason)+'</div>':'')+(x.status==='void'?'<div class="note">voided: '+esc(x.voidReason||'')+'</div>':'')+'</td>'+
+          '<td>'+(r?'<b>'+cliLink(r.client)+'</b><div class="note">'+fmtY(r.date)+' · '+esc(r.service||'')+'</div>':'<span class="note">sale '+esc(x.rowId)+' (deleted)</span>')+(x.reason?'<div class="note">'+esc(x.reason)+'</div>':'')+(x.status==='void'?'<div class="note">voided: '+esc(x.voidReason||'')+'</div>':'')+'</td>'+
           '<td class="num mono">'+money(x.basisValue)+'</td><td class="num mono">'+num(x.rate,1)+'%</td><td class="num mono">'+Math.round(x.share*100)+'%</td><td class="num mono"><b>'+(x.amount<0?'−':'')+money(Math.abs(x.amount))+'</b></td><td class="note">'+esc(x.by||'')+'<div>'+esc(String(x.at||'').slice(0,10))+'</div></td>'+
           '<td class="num">'+(r?'<button class="sm" onclick="rowInfo(\''+r.id+'\')">Info</button>':'')+'</td></tr>'; });
       h+='</tbody></table></div>';
       if(K.variance.length) h+='<div class="warnbox" style="margin-top:10px"><b>'+K.variance.length+' paid sale'+(K.variance.length===1?'':'s')+' where today’s commission differs from what was paid.</b> The payout stays as recorded; an admin records a correction on the Adjustments tab.'+
-        '<ul style="margin:6px 0 0 18px">'+K.variance.map(v=>'<li>'+esc(v.r.client)+': paid '+money(v.paid)+', now calculates '+money(v.now)+' → '+(v.diff>0?'under-paid by ':'over-paid by ')+money(Math.abs(v.diff))+'</li>').join('')+'</ul></div>';
+        '<ul style="margin:6px 0 0 18px">'+K.variance.map(v=>'<li>'+saleLink(v.r.id,v.r.client)+': paid '+money(v.paid)+', now calculates '+money(v.now)+' → '+(v.diff>0?'under-paid by ':'over-paid by ')+money(Math.abs(v.diff))+'</li>').join('')+'</ul></div>';
     }
     h+='<div class="scroll tallscroll"><table><thead><tr><th>Period</th><th>Sale</th><th class="num">Commissionable</th><th class="num">Rate</th><th class="num">Commission</th><th>Status</th><th>Paid</th><th>Chargeback / adj.</th><th></th></tr></thead><tbody>';
     led.forEach(r=>{
       const sh=shareFor(r,p.id), pre=r.date<(p.start||'0000'), cs=pre?'pre-plan':empCommState(r), cb=clawback(r)*sh, due=dueDate(r), moved=(r.paid && !sh && ledgerPaid(r,p.id)>0);
       h+='<tr'+((r.voidType||pre)?' style="opacity:.6"':'')+'><td class="mono">'+(pre?'<span class="note">before plan</span>':due?due.slice(0,7):'<span class="note">not invoiced</span>')+'</td>'+
-        '<td><b>'+esc(r.client)+'</b><div class="note">'+fmtY(r.date)+' · '+esc(r.service||'')+' · '+esc(TYPE_LABEL[r.type]||r.type)+(isSplit(r)?' · split '+Math.round(sh*100)+'%':'')+'</div></td>'+
+        '<td><b>'+cliLink(r.client)+'</b><div class="note">'+fmtY(r.date)+' · '+esc(r.service||'')+' · '+esc(TYPE_LABEL[r.type]||r.type)+(isSplit(r)?' · split '+Math.round(sh*100)+'%':'')+'</div></td>'+
         '<td class="num mono">'+money((r.paidBasis&&r.paid?r.paidBasis.value:netValue(r))*(moved?1:sh))+'</td><td class="num mono">'+num(r.paid&&r.paidBasis?r.paidBasis.rate:rowRate(r),1)+'%'+(r.commRate!=null&&r.commRate!==''?' <span class="pill n" title="rate frozen on the sale">locked</span>':'')+'</td>'+
         '<td class="num mono"><b>'+money(empCommAmt(r,p.id))+'</b></td>'+
         '<td><span class="pill '+(cs==='paid'?'ok':cs==='held'||cs==='reversed'?'no':cs==='due'?'mid':'n')+'">'+esc(cs)+'</span>'+(moved?' <span class="pill n" title="the sale now belongs to someone else; this is what was paid to '+esc(empShort(p))+'">paid, then reassigned</span>':'')+(r.payoutReview?' <span class="pill no" title="'+esc(r.payoutReview)+'">confirm</span>':'')+'</td>'+
@@ -15399,12 +15513,16 @@ reversalMigrate();
 
 render();
 cloudInit();
-// Deep link to a team member: #emp/<employee id> — or an invoice: #inv/<number>
+// Deep links: #emp/<id> · #inv/<number> · #sale/<id> · #client/<name>
 (function(){ let m=location.hash.match(/^#emp\/(.+)$/); if(m){ openEmp(decodeURIComponent(m[1])); return; }
-  m=location.hash.match(/^#inv\/(.+)$/); if(m) openInv(decodeURIComponent(m[1])); })();
+  m=location.hash.match(/^#inv\/(.+)$/); if(m){ openInv(decodeURIComponent(m[1])); return; }
+  m=location.hash.match(/^#sale\/(.+)$/); if(m){ openSale(decodeURIComponent(m[1])); return; }
+  m=location.hash.match(/^#client\/(.+)$/); if(m) openClient(decodeURIComponent(m[1])); })();
 window.addEventListener('hashchange',function(){
   let m=location.hash.match(/^#emp\/(.+)$/); if(m && m[1]!==EP_ID){ openEmp(decodeURIComponent(m[1])); return; }
-  m=location.hash.match(/^#inv\/(.+)$/); if(m && decodeURIComponent(m[1])!==INV_ID) openInv(decodeURIComponent(m[1])); });
+  m=location.hash.match(/^#inv\/(.+)$/); if(m && decodeURIComponent(m[1])!==INV_ID){ openInv(decodeURIComponent(m[1])); return; }
+  m=location.hash.match(/^#sale\/(.+)$/); if(m && decodeURIComponent(m[1])!==SALE_ID){ openSale(decodeURIComponent(m[1])); return; }
+  m=location.hash.match(/^#client\/(.+)$/); if(m && decodeURIComponent(m[1])!==CP_NAME) openClient(decodeURIComponent(m[1])); });
 
 (function(){
   let ok=false;

@@ -1731,6 +1731,62 @@
         window.alert=alertB; window.toast=toastB; PAYOUTS=[];
       }
 
+      /* ---------- LINKS: the app is connected — entities resolve and navigate ---------- */
+      // Jeff's rule: if the app displays a known entity, it is clickable — and a
+      // link is only made where the relationship is REAL. These prove both halves.
+      if(typeof cliLink==='function' && typeof saleLink==='function' && typeof openSale==='function'){
+        checkTrue('LINK all four canonical navigators exist',
+          typeof openClient==='function'&&typeof openEmp==='function'&&typeof openInv==='function'&&typeof openSale==='function','ok');
+        var LA=mkPerson({id:'LA',name:'Link Ann'}); LA.first='Link'; LA.last='Ann'; LA.roles=['sales']; LA.aliases=[]; LA.log=[];
+        PEOPLE=[LA]; EMP_IDX=null;
+        ROWS=[mkRow({id:'lr1',rep:'LA',client:'Link Co',value:100,invNo:'LK1',date:'2026-06-01'})];
+        CLIENTS=[{n:'Link Co',u:'U-L',addr:'1 Link St',ct:'Client'}];
+        PAIDINV=[{i:'LK1',c:'Link Co',p:'2026-06-10',v:109,d:'2026-06-01',a:'1 Link St',s:100,x:9,m:'Check',f:'',pre:0,r:'Link Ann'}];
+        PAYOUTS=[{id:'lp1',emp:'LA',rowId:'lr1',kind:'rep',amount:10,status:'paid',paidOn:'2026-07-01'}];
+        INVOICES=[]; OPENINV=[]; INVLINKS=[]; INVCLIMAP=[]; INVASSIGN=[]; invDirty();
+        // the relationship chain resolves in BOTH directions, by ids
+        check('LINK sale → employee resolves', 'Link Ann', (person(ROWS[0].rep)||{}).name);
+        check('LINK payout → employee resolves', 'Link Ann', (person(PAYOUTS[0].emp)||{}).name);
+        checkTrue('LINK payout → sale resolves', ROWS.some(function(r){return r.id===PAYOUTS[0].rowId;}), true);
+        checkTrue('LINK sale → invoice resolves on the register', !!invoiceOf(ROWS[0].invNo), true);
+        checkTrue('LINK invoice → client resolves', !!(invoiceOf('LK1').cli), invoiceOf('LK1').cliHow);
+        check('LINK invoice → sale resolves back', 'lr1', (invSales(invoiceOf('LK1'))[0]||{r:{}}).r.id);
+        // helpers emit real anchors wired to the canonical openers
+        checkTrue('LINK cliLink navigates via openClient', /openClient/.test(cliLink('Link Co')), 'ok');
+        checkTrue('LINK empLink navigates via openEmp', /openEmp/.test(empLink('LA')), 'ok');
+        checkTrue('LINK invLink navigates via openInv', /openInv/.test(invLink('LK1')), 'ok');
+        checkTrue('LINK saleLink navigates via openSale', /openSale/.test(saleLink('lr1')), 'ok');
+        // and NEVER fabricate: unknowns degrade to plain text, no dead ends
+        check('LINK an unknown employee degrades to plain text', '—', empLink('NOPE'));
+        checkTrue('LINK an unknown sale degrades to plain text', !/openSale/.test(saleLink('NOPE','x')), saleLink('NOPE','x'));
+        // a Hawk finding carries its entities as links, not dead names
+        ROWS=[mkRow({id:'ld1',rep:'LA',client:'Dup Co',value:500,service:'S',date:'2026-06-05'}),
+              mkRow({id:'ld2',rep:'LA',client:'Dup Co',value:500,service:'S',date:'2026-06-08'})];
+        var dchk=runChecks().find(function(c){return c.id==='dupes';});
+        checkTrue('LINK a Hawk finding links its client', !!dchk&&/openClient/.test(dchk.items[0].text), dchk?dchk.items[0].text.slice(0,60):'no check');
+        checkTrue('LINK and its sale', /openSale/.test(dchk.items[0].text+dchk.items[0].act), 'ok');
+        checkTrue('LINK and its rep', /openEmp/.test(dchk.items[0].sub), dchk.items[0].sub.slice(0,60));
+        // link-wrapping did not break Hawk mute keys: stripped text is stable
+        checkTrue('LINK mute keys survive the link wrap',
+          hawkItemKey('dupes',dchk.items[0]).indexOf(norm('Dup Co'))>-1, hawkItemKey('dupes',dchk.items[0]));
+        // the sale page opens, connects, and cleans up its deep link
+        ROWS=[mkRow({id:'lr1',rep:'LA',client:'Link Co',value:100,invNo:'LK1',date:'2026-06-01'})]; invDirty();
+        var hashWas=location.hash;
+        checkTrue('LINK openSale opens the sale page', openSale('lr1')===true &&
+          document.getElementById('saleModal').classList.contains('on'), 'ok');
+        check('LINK the deep link is set', '#sale/lr1', location.hash);
+        var body=document.getElementById('svBody').innerHTML;
+        checkTrue('LINK the sale page links its client', /openClient/.test(body), 'ok');
+        checkTrue('LINK the sale page links its employee', /openEmp/.test(body), 'ok');
+        checkTrue('LINK the sale page links its invoice', /openInv/.test(body), 'ok');
+        closeSale();
+        checkTrue('LINK closing clears the deep link', location.hash.indexOf('#sale/')<0, location.hash);
+        try{ history.replaceState(null,'',location.pathname+location.search+hashWas); }catch(e){}
+        PAYOUTS=[]; PAIDINV=[]; CLIENTS=[]; ROWS=[]; invDirty();
+      } else {
+        results.push({name:'LINK navigation helpers exist (cliLink/saleLink/openSale)', expected:true, actual:false, pass:false});
+      }
+
       /* ---------- NAV: seven areas on top, everything reachable underneath ---------- */
       if(typeof NAV_PRIMARY!=='undefined'){
         var navAll={}; TABS.forEach(function(t){navAll[t[0]]=1;});
