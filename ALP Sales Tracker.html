@@ -2594,7 +2594,16 @@ function journalPaid(r,paidOn){
   r.paidBasis={value:basis,rate:rate,period:period,on:paidOn};
   delete r.payoutReview; delete r.paidCalc;
 }
-function unjournalPaid(r,reason){ PAYOUTS.filter(x=>x.rowId===r.id&&x.status==='paid').forEach(x=>voidPayout(x.id,reason||'payment un-marked')); }
+// Clearing a paid date undoes the whole payment, including everything raised against it.
+// This used to void only the entries with status 'paid', leaving the chargebacks from a
+// reversal still 'applied' — so un-paying a reversed sale left the rep owing money for a
+// payment that was no longer on the ledger (a $1,000 sale came out at -$100). Every entry
+// against a sale exists only because that sale was paid, so they all go together. Nothing
+// is deleted: they are voided, and stay on the ledger with their reason.
+function unjournalPaid(r,reason){
+  PAYOUTS.filter(x=>x.rowId===r.id && x.status!=='void')
+    .forEach(x=>voidPayout(x.id,reason||'payment un-marked'));
+}
 // The one commission function every screen uses for a sale × person.
 //   paid   → the ledger (what was actually handed over), never the current plan
 //   held   → 0 while a split awaits approval

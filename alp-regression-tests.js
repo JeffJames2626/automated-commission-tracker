@@ -1506,6 +1506,39 @@
         window.alert=alertP; window.toast=toastP; PAYOUTS=[];
       }
 
+
+      /* ---------- LEDGER: clearing a paid date undoes the WHOLE payment ---------- */
+      // unjournalPaid used to void only the entries with status 'paid'. On a reversed
+      // sale that left the chargebacks still 'applied', so clearing the paid date left
+      // the rep owing money for a payment no longer on the ledger.
+      if(typeof unjournalPaid==='function' && typeof journalReversal==='function'){
+        var alertU=window.alert, toastU=window.toast; window.alert=function(){}; window.toast=function(){};
+        var UA=mkPerson({id:'UA',name:'Un Ann'}); UA.first='Un'; UA.last='Ann'; UA.roles=['sales'];
+        UA.start='2026-01-01'; UA.commNew=10; UA.mgr='UM'; UA.aliases=[]; UA.log=[];
+        var UM=mkPerson({id:'UM',name:'Un Mia'}); UM.first='Un'; UM.last='Mia'; UM.roles=['manager'];
+        UM.start='2026-01-01'; UM.commOv=5; UM.commNew=0; UM.commUp=0; UM.aliases=[]; UM.log=[];
+        PEOPLE=[UA,UM]; PAYOUTS=[]; EMP_IDX=null; GLOBAL.payLag=30; GLOBAL.policy.clawbackDays=180;
+        var ur=mkRow({rep:'UA',value:1000,type:'new',date:'2026-06-05',invoiced:'2026-06-10',client:'Undo Co'});
+        ROWS=[ur]; freezeDueLag(ur); ur.commRate=rowRate(ur);
+        ur.paid='2026-07-15'; journalPaid(ur,'2026-07-15');
+        check('UNPAY the rep is paid', 100, round2(ledgerRepNet(ur,'UA')));
+        check('UNPAY the manager override is paid', 50, round2(ledgerOverridePaid(ur,'UM')));
+        ur.voidType='cancelled'; ur.voidAmt=1000; ur.voidDate='2026-08-05'; journalReversal(ur);
+        check('UNPAY a cancellation claws both back to zero', '0/0',
+          round2(ledgerRepNet(ur,'UA'))+'/'+round2(ledgerOverridePaid(ur,'UM')));
+        unjournalPaid(ur,'paid date cleared'); ur.paid='';
+        check('UNPAY clearing the paid date leaves the rep owing nothing', 0, round2(ledgerRepNet(ur,'UA')));
+        check('UNPAY clearing the paid date leaves the manager owing nothing', 0, round2(ledgerOverridePaid(ur,'UM')));
+        checkTrue('UNPAY nothing is deleted - every entry is kept, voided',
+          PAYOUTS.length===4 && PAYOUTS.every(function(x){return x.status==='void';}), PAYOUTS.length+' entries');
+        // and it can be paid again afterwards, exactly once
+        ur.voidType=''; ur.voidAmt=0; ur.voidDate=''; ur.paid='2026-08-20';
+        journalPaid(ur,'2026-08-20');
+        check('UNPAY the sale can be paid again after the clear', 100, round2(ledgerRepNet(ur,'UA')));
+        check('UNPAY and the override comes back with it', 50, round2(ledgerOverridePaid(ur,'UM')));
+        window.alert=alertU; window.toast=toastU; PAYOUTS=[];
+      }
+
       /* ---------- C2: tombstones stop deleted records resurrecting ---------- */
       if(typeof addTombstone==='function' && typeof isTombstoned==='function'){
         TOMBSTONES=[];
