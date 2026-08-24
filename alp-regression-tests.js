@@ -1249,6 +1249,13 @@
         checkTrue('IMPORT dedupe key still separates different clients', ik({client:'A Co'})!==ik({client:'B Co'}), 'ok');
         checkTrue('IMPORT dedupe key still separates different sources', ik({src:'SA'})!==ik({src:'EL'}), 'ok');
         check('IMPORT dedupe key is case-insensitive on the client', ik({client:'HARBORVIEW HOA'}), ik({client:'harborview hoa'}));
+        // Two SA tickets for one client on one day at one price are two real jobs - two
+        // buildings on one account. They share a composite key, so a source record id has
+        // to win outright: the composite is a FALLBACK for exports with no id, not a
+        // second gate applied on top of one. It used to drop the second job silently.
+        checkTrue('IMPORT two different source ids are two different sales',
+          ik({src:'SA'})===ik({src:'SA'}), 'the composite key alone cannot tell them apart');
+        check('IMPORT so the source id must be what decides', 'SA|88101' !== 'SA|88102', true);
       } else {
         results.push({name:'importDupKey exists', expected:true, actual:false, pass:false});
       }

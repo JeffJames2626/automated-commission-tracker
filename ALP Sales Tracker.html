@@ -11584,7 +11584,14 @@ function doImport(){
         } else dupes++;
         return;
       }
+      // A source record id IS the identity. This one is new, so the sale is new —
+      // take it and skip the composite fallback below, which exists only for exports
+      // that carry no id of their own. Falling through used to lose real work: two SA
+      // tickets for one client on one day at one price (two buildings on one account)
+      // matched each other on source+date+client+value and the second was dropped.
       byId[r.src+'|'+r.srcId]=r;
+      const ik=key(r); seen.add(ik); byKey[ik]=r;
+      ROWS.push(r); added++; return;
     }
     const k=key(r);
     if(seen.has(k)){
