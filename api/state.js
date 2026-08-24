@@ -182,7 +182,7 @@ function projectState(raw, email) {
   // Client billing: invoices, payments and open balances are money owed to the
   // company, not to a rep. Only billing, managers and the owner get them.
   if (!ctx.financial) {
-    ['invoices','payments','openinv','invsyncs','paysyncs','balsyncs'].forEach(k => {
+    ['invoices','payments','openinv','paidinv','invsyncs','paysyncs','balsyncs','pdisyncs'].forEach(k => {
       if (Array.isArray(doc[k])) doc[k] = [];
     });
   }
@@ -277,7 +277,7 @@ function mergeProtected(incomingRaw, storedRaw, email) {
   // $1,300 -> $2,600 -> $5,200. They are whole-collection documents, replaced wholesale
   // by their importers, so they are taken wholesale here too: from the caller if they
   // were sent them, from storage if they were not.
-  ['invoices', 'payments', 'openinv', 'invsyncs', 'paysyncs', 'balsyncs'].forEach(k => {
+  ['invoices', 'payments', 'openinv', 'paidinv', 'invsyncs', 'paysyncs', 'balsyncs', 'pdisyncs'].forEach(k => {
     inc[k] = ctx.financial ? (Array.isArray(inc[k]) ? inc[k] : (stored[k] || []))
                            : (stored[k] || []);
   });

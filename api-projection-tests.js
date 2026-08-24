@@ -56,7 +56,8 @@
       invoices:[{id:'i1',client:'Acme',total:900}],
       payments:[{id:'y1',inv:'i1',amt:900}],
       openinv:[{id:'o1',client:'Acme',t:400}],
-      invsyncs:[{id:'s1'}], paysyncs:[{id:'s2'}], balsyncs:[{id:'s3'}],
+      paidinv:[{i:'12328',c:'Acme',p:'2026-08-14',v:523.68,r:'Rep Person'}],
+      invsyncs:[{id:'s1'}], paysyncs:[{id:'s2'}], balsyncs:[{id:'s3'}], pdisyncs:[{id:'s4'}],
       tombstones:[], oscs:[], global:{payLag:30,policy:{clawbackDays:180}}};
   }
   var EM={jeff:'jeff@automatedlawnandpest.com', mgr:'mgr@automatedlawnandpest.com',
@@ -88,8 +89,8 @@
     check('READ ledger is their own only','p1',ids(asRep.payouts));
     check('READ disputes are their own only','d1',ids(asRep.disputes));
     check('READ hours are their own only','h1',ids(asRep.hours));
-    check('READ company billing is withheld from a rep','0/0/0',
-      [asRep.invoices.length,asRep.payments.length,asRep.openinv.length].join('/'));
+    check('READ company billing is withheld from a rep','0/0/0/0',
+      [asRep.invoices.length,asRep.payments.length,asRep.openinv.length,asRep.paidinv.length].join('/'));
     ok('READ the client roster still arrives (they need it to work)', asRep.clients.length===1, asRep.clients.length);
     ok('READ no manager override entry leaks to the rep it was earned on',
       !asRep.payouts.some(function(x){return x.kind==='override';}), ids(asRep.payouts));
@@ -106,9 +107,9 @@
 
     var asBil=see(EM.bil);
     check('READ billing gets no sales rows at all','',ids(asBil.rows));
-    ok('READ billing gets invoices, payments and open balances',
-      asBil.invoices.length===1&&asBil.payments.length===1&&asBil.openinv.length===1,
-      [asBil.invoices.length,asBil.payments.length,asBil.openinv.length].join('/'));
+    ok('READ billing gets invoices, payments, open balances and paid invoices',
+      asBil.invoices.length===1&&asBil.payments.length===1&&asBil.openinv.length===1&&asBil.paidinv.length===1,
+      [asBil.invoices.length,asBil.payments.length,asBil.openinv.length,asBil.paidinv.length].join('/'));
     ok('READ billing gets nobody’s pay rate', find(asBil,'REP').commNew===undefined&&find(asBil,'MGR').rate===undefined, 'ok');
     check('READ billing gets no payout ledger','',ids(asBil.payouts));
 
@@ -192,6 +193,8 @@
     check('WRITE a rep cannot raise a dispute in a colleague’s name','d1,d2',
       ids(back(function(d){ d.disputes.push({id:'d8',rep:'REP2',amount:75}); }).disputes));
     check('WRITE a rep cannot wipe company billing','i1',ids(back(function(d){ d.invoices=[]; }).invoices));
+    check('WRITE a rep cannot wipe the paid-invoices feed',1,
+      back(function(d){ d.paidinv=[]; }).paidinv.length);
     check('WRITE a rep cannot invent an invoice','i1',
       ids(back(function(d){ d.invoices.push({id:'i9',client:'Acme',total:-900}); }).invoices));
     /* ---- id-less collections must not multiply on every save ---- */
@@ -207,15 +210,15 @@
       }
       var d=JSON.parse(cur);
       return {inv:(d.invoices||[]).length, pay:(d.payments||[]).length,
-              open:(d.openinv||[]).length, syn:(d.invsyncs||[]).length,
+              open:(d.openinv||[]).length, syn:(d.invsyncs||[]).length, pdi:(d.paidinv||[]).length,
               total:(d.invoices||[]).reduce(function(a,x){return a+(+x.total||+x.v||0);},0)};
     };
-    check('IDLESS billing saving three times does not multiply the invoice audit','1/1/1/1',
-      (function(){ var r=idless(EM.bil,3); return [r.inv,r.pay,r.open,r.syn].join('/'); })());
-    check('IDLESS a manager saving three times does not multiply it either','1/1/1/1',
-      (function(){ var r=idless(EM.mgr,3); return [r.inv,r.pay,r.open,r.syn].join('/'); })());
-    check('IDLESS a rep saving three times leaves it exactly as stored','1/1/1/1',
-      (function(){ var r=idless(EM.rep,3); return [r.inv,r.pay,r.open,r.syn].join('/'); })());
+    check('IDLESS billing saving three times does not multiply the invoice audit','1/1/1/1/1',
+      (function(){ var r=idless(EM.bil,3); return [r.inv,r.pay,r.open,r.syn,r.pdi].join('/'); })());
+    check('IDLESS a manager saving three times does not multiply it either','1/1/1/1/1',
+      (function(){ var r=idless(EM.mgr,3); return [r.inv,r.pay,r.open,r.syn,r.pdi].join('/'); })());
+    check('IDLESS a rep saving three times leaves it exactly as stored','1/1/1/1/1',
+      (function(){ var r=idless(EM.rep,3); return [r.inv,r.pay,r.open,r.syn,r.pdi].join('/'); })());
     check('IDLESS the billed total is unchanged after three saves',900,idless(EM.bil,3).total);
 
     check('WRITE billing CAN add an invoice','i1,i9',

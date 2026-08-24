@@ -60,7 +60,11 @@
                HOURS:(typeof HOURS!=='undefined'?HOURS:undefined),
                TOMBSTONES:(typeof TOMBSTONES!=='undefined'?TOMBSTONES:undefined),
                AUDIT:(typeof AUDIT!=='undefined'?AUDIT:undefined),
-               AUDITQ:(typeof AUDITQ!=='undefined'?AUDITQ:undefined) };
+               AUDITQ:(typeof AUDITQ!=='undefined'?AUDITQ:undefined),
+               PAIDINV:(typeof PAIDINV!=='undefined'?PAIDINV:undefined),
+               PDISYNC:(typeof PDISYNC!=='undefined'?PDISYNC:undefined),
+               OPENINV:(typeof OPENINV!=='undefined'?OPENINV:undefined),
+               PAYMENTS:(typeof PAYMENTS!=='undefined'?PAYMENTS:undefined) };
     try{
       // Nothing a test does may reach localStorage: the app's save() is a no-op while tests run.
       if(typeof save==='function') save=function(){};
@@ -1695,6 +1699,114 @@
         window.alert=alertB; window.toast=toastB; PAYOUTS=[];
       }
 
+      /* ---------- PAID INVOICES: the feed that puts names on collected money ---------- */
+      // One row per settled invoice. Records merge by invoice number and are never
+      // deleted by an import; the salesperson resolves at runtime through the same
+      // employee matcher as every other feed; and the Hawk cross-examines it against
+      // the balances snapshot and the deposits feed.
+      if(typeof pdiParse==='function'){
+        var PD=mkPerson({id:'PD',name:'Paid Ann'}); PD.first='Paid'; PD.last='Ann'; PD.roles=['sales'];
+        PD.aliases=[]; PD.log=[];
+        PEOPLE=[PD]; EMP_IDX=null; ROWS=[]; PAYOUTS=[];
+        if(typeof CLIENTS!=='undefined') CLIENTS=[];
+        if(typeof INVOICES!=='undefined') INVOICES=[];
+        if(typeof HOURS!=='undefined') HOURS=[];
+        PAIDINV=[]; PDISYNC=[]; OPENINV=[]; PAYMENTS=[];
+
+        // parsing SA's own headers, and the row discipline
+        var pdiCsv='InvoiceDate,InvoiceNumber,ClientName,Address,Frequency,PaymentType,InvoiceTotal,InvoiceBalance,InvoiceSubTotal,SalesTaxAmount,SalesTaxRate,IsPrePayment,PrePaymentDate,DatePaid,SalesPerson\n'+
+          '7/31/2026,12328,Kehoe Place,5313 N Regal St,Invoice Monthly,Check,523.68,0,480,43.68,0.091,N,,8/14/2026,Paid Ann\n'+   // clean row
+          '4/8/2026,10904,Beeman,317 E Eaton Ave,Invoice Daily,Credit Card,161.66,0,148.18,13.48,0.091,N,,5/7/2026,Nobody Known\n'+ // unmatched rep
+          '8/7/2026,12799,Comped Co,4227 N Lincoln St,Invoice Daily,Check,0,0,0,0,0.091,N,,8/7/2026,Paid Ann\n'+                   // $0 invoice — kept
+          '4/1/2026,10788,Owes Still,18225 N Hardesty Rd,Invoice Daily,Check,71.51,50,66.15,5.36,0.081,N,,4/1/2026,Paid Ann\n'+    // balance>0 — excluded
+          '4/10/2026,10934,No Paid Date,428 S Neyland Ave,Invoice Daily,Check,70.82,0,64.97,5.85,0.09,N,,,Paid Ann';               // no DatePaid — excluded
+        var pp=pdiParse(pdiCsv);
+        check('PDI parse keeps the settled rows', 3, pp.rows.length);
+        check('PDI parse excludes a row still carrying a balance', 1, pp.stillOwed);
+        check('PDI parse excludes a row with no paid date', 1, pp.noPaid);
+        check('PDI parse counts the $0 invoices it keeps', 1, pp.zeroes);
+        var k1=pp.rows.filter(function(x){return x.i==='12328';})[0];
+        check('PDI parse reads the invoice date', '2026-07-31', k1.d);
+        check('PDI parse reads the paid date', '2026-08-14', k1.p);
+        check('PDI parse reads the total', 523.68, k1.v);
+        check('PDI parse reads the subtotal', 480, k1.s);
+        check('PDI parse keeps the salesperson as a source value', 'Paid Ann', k1.r);
+
+        // pre-tax: subtotal first, total minus tax second, total last
+        check('PDI pre-tax prefers the subtotal', 480, paidInvPre({v:523.68,s:480,x:43.68}));
+        check('PDI pre-tax falls back to total minus tax', 480, paidInvPre({v:523.68,s:0,x:43.68}));
+        check('PDI pre-tax falls back to the total', 523.68, paidInvPre({v:523.68,s:0,x:0}));
+
+        // merge: the invoice number wins outright, nothing is deleted
+        var m1=pdiMerge(pp.rows);
+        check('PDI first import adds every record', 3, m1.added);
+        var again=pdiParse('InvoiceDate,InvoiceNumber,ClientName,InvoiceTotal,InvoiceBalance,InvoiceSubTotal,SalesTaxAmount,DatePaid,SalesPerson\n'+
+          '7/31/2026,12328,Kehoe Place,600.00,0,550,50,8/20/2026,Paid Ann');
+        var m2=pdiMerge(again.rows);
+        check('PDI re-import updates the number it names', 1, m2.updated);
+        check('PDI re-import adds nothing else', 0, m2.added);
+        check('PDI nothing was deleted by the partial re-import', 3, PAIDINV.length);
+        check('PDI the named record now carries the new total',
+          600, PAIDINV.filter(function(x){return x.i==='12328';})[0].v);
+        check('PDI the named record moved to the new paid date',
+          '2026-08-20', PAIDINV.filter(function(x){return x.i==='12328';})[0].p);
+
+        // the salesperson resolves at runtime, through the real matcher
+        check('PDI a known name resolves to the employee id', 'PD', paidInvRepId(k1));
+        check('PDI an unknown name resolves to nobody', '',
+          String(paidInvRepId(PAIDINV.filter(function(x){return x.i==='10904';})[0])||''));
+        if(typeof empMatchQueue==='function'){
+          var q=empMatchQueue().filter(function(e){return e.kinds['paid invoices'];});
+          check('PDI the unknown name waits in the employee match queue', 1, q.length);
+          check('PDI the queue names it', 'Nobody Known', q.length?q[0].raw:'');
+        }
+
+        // the Hawk: an invoice both paid and still owed
+        OPENINV=[{i:'12328',d:'2026-07-31',c:'Kehoe Place',t:600,s:'Past Due'}];
+        if(typeof runChecks==='function'){
+          var po=function(){ var c=runChecks().find(function(x){return x.id==='hawkPaidOwed';}); return c||{items:[],impact:0}; };
+          check('PDI HAWK an invoice both paid and still owed is reported', 1, po().items.length);
+          check('PDI HAWK it names the money at stake', 600, round2(po().impact));
+          OPENINV=[{i:'99999',d:'2026-07-31',c:'Someone Else',t:600,s:'Open'}];
+          check('PDI HAWK a different open invoice says nothing', 0, po().items.length);
+
+          // the Hawk: deposits vs settled drift, month by month
+          OPENINV=[];
+          PAIDINV=[{i:'A1',c:'A',p:'2026-06-05',v:10000,s:10000,x:0,r:''}];
+          PAYMENTS=[{c:'',d:'2026-06-10',a:2000,i:'',m:'Check',r:''}];
+          var dr=function(){ var c=runChecks().find(function(x){return x.id==='hawkPaidDrift';}); return c||{items:[],impact:0}; };
+          check('PDI HAWK a big monthly gap between settled and deposited is reported', 1, dr().items.length);
+          check('PDI HAWK the gap is the impact', 8000, round2(dr().impact));
+          PAYMENTS=[{c:'',d:'2026-06-10',a:9900,i:'',m:'Check',r:''}];
+          check('PDI HAWK a small gap is normal and says nothing', 0, dr().items.length);
+          PAYMENTS=[{c:'',d:'2026-07-10',a:100,i:'',m:'Check',r:''}];
+          check('PDI HAWK months only one feed covers are not compared', 0, dr().items.length);
+        }
+
+        // collected lands on the employee page, pre-tax, attributed through the matcher
+        if(typeof empData==='function' && typeof empKpis==='function'){
+          PAIDINV=[{i:'B1',c:'A',d:'2026-05-01',p:'2026-06-05',v:1091,s:1000,x:91,r:'Paid Ann'},
+                   {i:'B2',c:'B',d:'2025-11-01',p:'2025-12-05',v:545.50,s:500,x:45.50,r:'Paid Ann'},
+                   {i:'B3',c:'C',d:'2026-05-01',p:'2026-06-05',v:2182,s:2000,x:182,r:'Nobody Known'}];
+          ROWS=[]; if(typeof CLIENTS!=='undefined') CLIENTS=[];
+          var ek=empKpis(empData('PD'));
+          check('PDI collected counts only this person’s settled invoices', 2, ek.collectedN);
+          check('PDI collected is pre-tax', 1500, round2(ek.collectedV));
+          check('PDI collected-this-year goes by the paid date', 1000, round2(ek.collectedYr));
+        }
+
+        // the backup carries the feed
+        if(typeof stateSnapshot==='function'){
+          var snapPdi=stateSnapshot();
+          checkTrue('PDI the backup carries paid invoices', Array.isArray(snapPdi.paidinv), Array.isArray(snapPdi.paidinv));
+          checkTrue('PDI the backup carries the import log', Array.isArray(snapPdi.pdisyncs), Array.isArray(snapPdi.pdisyncs));
+        }
+
+        PAIDINV=[]; PDISYNC=[]; OPENINV=[]; PAYMENTS=[];
+      } else {
+        results.push({name:'PDI paid-invoices importer exists (pdiParse)', expected:true, actual:false, pass:false});
+      }
+
       /* ---------- C2: tombstones stop deleted records resurrecting ---------- */
       if(typeof addTombstone==='function' && typeof isTombstoned==='function'){
         TOMBSTONES=[];
@@ -1728,6 +1840,10 @@
       if(typeof TOMBSTONES!=='undefined' && snap.TOMBSTONES!==undefined) TOMBSTONES=snap.TOMBSTONES;
       if(typeof AUDIT!=='undefined' && snap.AUDIT!==undefined) AUDIT=snap.AUDIT;
       if(typeof AUDITQ!=='undefined' && snap.AUDITQ!==undefined) AUDITQ=snap.AUDITQ;
+      if(typeof PAIDINV!=='undefined' && snap.PAIDINV!==undefined) PAIDINV=snap.PAIDINV;
+      if(typeof PDISYNC!=='undefined' && snap.PDISYNC!==undefined) PDISYNC=snap.PDISYNC;
+      if(typeof OPENINV!=='undefined' && snap.OPENINV!==undefined) OPENINV=snap.OPENINV;
+      if(typeof PAYMENTS!=='undefined' && snap.PAYMENTS!==undefined) PAYMENTS=snap.PAYMENTS;
     }
 
     var pass=results.filter(function(r){return r.pass;}).length;

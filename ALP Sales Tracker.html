@@ -1407,6 +1407,43 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
   <section>
     <div class="card">
       <div class="pad">
+        <div class="sechead"><h3>Paid invoices import</h3>
+          <span class="hint">Service Autopilot → Paid Invoices — every settled invoice, with who paid, when, and whose sale it was.</span></div>
+        <div class="warnbox" style="margin-bottom:13px">
+          This is the one export that puts a <b>name and a salesperson</b> on collected money — the payments
+          import above only knows days and tender types. SA hands you a real <b>.xls</b>, so open it in Excel
+          once and <b>Save As → CSV</b> first. Records match by invoice number: re-importing updates what the
+          file names and never deletes anything, so partial or overlapping exports are always safe.
+        </div>
+        <div class="frow" style="margin-bottom:12px">
+          <div><label>Choose the CSV</label><input type="file" id="pdiFile" accept=".csv,.txt" onchange="pdiRead(event)"></div>
+        </div>
+        <label>…or paste the rows</label>
+        <textarea id="pdiText" placeholder="InvoiceDate,InvoiceNumber,ClientName,Address,…,DatePaid,SalesPerson" oninput="pdiPreview()"></textarea>
+        <div id="pdiDiff"></div>
+      </div>
+      <details>
+        <summary>Import history</summary>
+        <div class="dbody"><div class="scroll"><table id="pdiSyncTable"></table></div></div>
+      </details>
+    </div>
+  </section>
+
+  <section>
+    <div class="sechead"><h2>Collected — with names on it</h2>
+      <span class="hint" id="pdiHint"></span></div>
+    <div class="tiles" id="pdiTiles"></div>
+  </section>
+
+  <section><div class="card">
+    <div class="pad" style="padding-bottom:6px"><div class="sechead"><h3>Collected by salesperson</h3>
+      <span class="hint">whose sold work the settled invoices trace back to</span></div></div>
+    <div class="scroll"><table id="pdiRepTable"></table></div>
+  </div></section>
+
+  <section>
+    <div class="card">
+      <div class="pad">
         <div class="sechead"><h3>Weekly balances import</h3>
           <span class="hint">Service Autopilot → Invoices with Balances — every invoice still owed, exported to CSV.</span></div>
         <div class="warnbox" style="margin-bottom:13px">
@@ -2375,6 +2412,8 @@ const K_TOMB='alp_tombstones_v1';
 const K_TKO='alp_takeover_v1';
 const K_BAL='alp_openinv_v1';
 const K_BALSYNC='alp_balsync_v1';
+const K_PDI='alp_paidinv_v1';
+const K_PDISYNC='alp_pdisync_v1';
 // People who have left. Accounts still carrying their name get flagged for takeover.
 const FORMER_DEFAULT=['Russanne','Malisa','Jaron','Alina','Erbie','Crystal','Michael'];
 const K_ADMIN='alp_admin_v1';
@@ -2425,6 +2464,8 @@ let TOMBSTONES = load(K_TOMB,[]);    // deliberately-deleted imported sales; re-
 let TAKEOVERS= load(K_TKO,[]);       // former rep -> who inherited, re-applied on every sync
 let OPENINV  = load(K_BAL,[]);       // snapshot of unpaid invoices — SA's Invoices with Balances
 let BALSYNC  = load(K_BALSYNC,[]);   // one entry per balances import, newest last
+let PAIDINV  = load(K_PDI,[]);       // settled invoices — SA's Paid Invoices export, one record per invoice #
+let PDISYNC  = load(K_PDISYNC,[]);   // one entry per paid-invoices import, newest last
 let OSCS     = load(K_OSC,[]);       // on-site estimates and consultations
 const POLICY_DEFAULT={
   raiseDays:30,       // rep has this long to dispute a figure
@@ -3097,6 +3138,7 @@ function empMatchQueue(){
     const e=q[k]||(q[k]={key:k,raw:raw,sys:{},n:0,kinds:{}}); e.n++; e.sys[sys]=1; e.kinds[kind]=(e.kinds[kind]||0)+1; };
   CLIENTS.forEach(c=>add('SA',c.sp,'accounts'));
   INVOICES.forEach(x=>add('INV',x.r,'invoice lines'));
+  PAIDINV.forEach(x=>add('SA',x.r,'paid invoices'));
   ROWS.forEach(r=>{ if(r.repRaw && (r.repHow==='unmatched-default'||r.rep===EMP_UNASSIGNED)) add(r.src||'MN',r.repRaw,'sales'); });
   HOURS.forEach(h=>{ if(h.repRaw && h.repHow==='unmatched-default') add('MN',h.repRaw,'hours'); });
   (window.__TEAMLOGINS||[]).forEach(u=>{ if(u.email && !resolveEmployee('','*',{email:u.email})) add('GOOGLE',u.email,'login'); });
@@ -3106,6 +3148,10 @@ function empOrphanRows(){ return ROWS.filter(r=>r.rep===EMP_UNASSIGNED || r.repH
 // The employee behind the free-text fields other systems hand us.
 function clientRepId(c){ if(!c) return null; const t=(typeof tkoRuleFor==='function')?tkoRuleFor(c.sp):null; if(t&&t.toId) return t.toId; const r=resolveEmployee(c.sp,'SA'); return r?r.id:null; }
 function invoiceRepId(x){ if(!x||!x.r) return null; const r=resolveEmployee(x.r,'INV'); return r?r.id:null; }
+function paidInvRepId(x){ if(!x||!x.r) return null; const r=resolveEmployee(x.r,'SA'); return r?r.id:null; }
+// Collected money is compared against billed money, and billed is pre-tax — so
+// pre-tax is the honest figure here too. Falls back total-minus-tax, then total.
+function paidInvPre(x){ if(!x) return 0; const s=+x.s||0; if(s) return s; const v=+x.v||0, t=+x.x||0; return Math.round((v-t)*100)/100; }
 // One-time and additive: first/last/roles/log for people that predate this. Nothing renamed or removed.
 function empMigrate(){
   let dirty=false;
@@ -3999,7 +4045,7 @@ function render(){
 
   renderTeam(); renderScore(); renderPlanList(); planToForm(); renderScenarios(); renderHours();
   renderData(); renderSeason(); renderHoursTab(); renderPipe(); renderOSC(); renderAdj(); renderComm();
-  renderClients(); renderTakeover(); renderProperty(); renderMap(); renderRevenue(); renderPayments(); renderBalances(); renderAlerts(); renderAIStatus();
+  renderClients(); renderTakeover(); renderProperty(); renderMap(); renderRevenue(); renderPayments(); renderPaidInv(); renderBalances(); renderAlerts(); renderAIStatus();
   renderRoster(); renderServices(); renderHdrTools();
   if(TAB==='view') renderView(); if(TAB==='hawk') renderChecks();
   if(TAB==='me') renderMeHome(); if(TAB==='mgr') renderMgrHome(); if(TAB==='cx') renderCxHome();
@@ -7754,6 +7800,202 @@ function renderPayments(){
 }
 
 /* ============================================================
+   PAID INVOICES
+   SA's Paid Invoices export: one row per settled invoice, and the
+   only feed that says WHO paid, WHEN, and WHOSE sale it was —
+   the payments feed above is deposits by day and tender, with no
+   names on it. Records merge by invoice number: a re-import
+   updates what it names and never deletes anything, so a partial
+   export can only ever add history.
+   ============================================================ */
+let PDI_PARSED=null;
+const PDI_COLS=[
+  ['i',['invoicenumber','invoice #','invoice no','invoice'],true],
+  ['c',['clientname','client','customer name','customer','account name','account'],true],
+  ['p',['datepaid','date paid','paid date','paid on'],true],
+  ['v',['invoicetotal','invoice total','total','amount'],true],
+  ['d',['invoicedate','invoice date'],false],
+  ['a',['address','client address'],false],
+  ['s',['invoicesubtotal','invoice subtotal','subtotal','sub total'],false],
+  ['x',['salestaxamount','sales tax amount','sales tax','tax'],false],
+  ['m',['paymenttype','payment type','payment method','method','tender'],false],
+  ['f',['frequency'],false],
+  ['pre',['isprepayment','prepayment'],false],
+  ['r',['salesperson','sales person','sales rep','sold by','rep'],false],
+  ['bal',['invoicebalance','invoice balance','balance'],false]
+];
+function pdiRead(e){
+  const f=e.target.files[0]; if(!f)return;
+  const fr=new FileReader();
+  fr.onload=ev=>{
+    const t=String(ev.target.result);
+    if(t.charCodeAt(0)===0xD0){
+      document.getElementById('pdiDiff').innerHTML='<div class="warnbox" style="margin-top:12px">'+
+        '<b>That is a real .xls.</b> Open it in Excel and Save As → CSV first.</div>';
+      return;
+    }
+    document.getElementById('pdiText').value=t; pdiPreview();
+  };
+  fr.readAsText(f); e.target.value='';
+}
+function pdiParse(text){
+  const rows=parseCSV(text);
+  if(rows.length<2) return null;
+  const head=rows[0].map(h=>norm(h));
+  const find=names=>{ for(const w of names){ const i=head.indexOf(norm(w)); if(i>=0) return i; } return -1; };
+  const ix={}; PDI_COLS.forEach(f=>ix[f[0]]=find(f[1]));
+  const missing=PDI_COLS.filter(f=>f[2]&&ix[f[0]]<0).map(f=>f[1][0]);
+  if(missing.length)
+    return {error:'This does not look like the Paid Invoices export — no '+missing.join(', ')+
+      ' column. Found: '+rows[0].filter(Boolean).slice(0,8).join(', ')};
+  const out=[]; let skipped=0, noPaid=0, stillOwed=0, stillOwedT=0, zeroes=0;
+  rows.slice(1).forEach(r=>{
+    const c=String(r[ix.c]||'').trim();
+    if(!c||isTotalsRow(c)){ if(c)skipped++; return; }
+    const i=String(r[ix.i]||'').trim();
+    if(!i){ skipped++; return; }
+    const p=excelDate(r[ix.p]);
+    if(!p){ noPaid++; return; }
+    // A row still carrying a balance is not a paid invoice, whatever report it rode in on.
+    const bal=ix.bal>=0?pNum(r[ix.bal]):0;
+    if(bal>0.005){ stillOwed++; stillOwedT+=bal; return; }
+    const v=ix.v>=0?pNum(r[ix.v]):0;
+    if(!v) zeroes++;   // $0 invoices are real (comped work) — kept, but counted for the preview
+    out.push({i, c, p, v:Math.round(v*100)/100,
+      d:ix.d>=0?(excelDate(r[ix.d])||''):'',
+      a:ix.a>=0?String(r[ix.a]||'').trim():'',
+      s:ix.s>=0?Math.round(pNum(r[ix.s])*100)/100:0,
+      x:ix.x>=0?Math.round(pNum(r[ix.x])*100)/100:0,
+      m:ix.m>=0?String(r[ix.m]||'').trim():'',
+      f:ix.f>=0?String(r[ix.f]||'').trim():'',
+      pre:ix.pre>=0&&/^y/i.test(String(r[ix.pre]||'').trim())?1:0,
+      r:ix.r>=0?String(r[ix.r]||'').trim():''});
+  });
+  return {rows:out, skipped, noPaid, stillOwed, stillOwedT:Math.round(stillOwedT*100)/100, zeroes};
+}
+function pdiPreview(){
+  const t=document.getElementById('pdiText').value.trim();
+  const box=document.getElementById('pdiDiff');
+  if(!t){ box.innerHTML=''; PDI_PARSED=null; return; }
+  const p=pdiParse(t);
+  if(!p){ box.innerHTML=''; PDI_PARSED=null; return; }
+  if(p.error){ box.innerHTML='<div class="warnbox" style="margin-top:12px">'+esc(p.error)+'</div>'; PDI_PARSED=null; return; }
+  PDI_PARSED=p;
+  const dates=p.rows.map(x=>x.p).sort();
+  const from=dates[0], to=dates[dates.length-1];
+  const total=p.rows.reduce((a,x)=>a+x.v,0);
+  const pre=p.rows.reduce((a,x)=>a+paidInvPre(x),0);
+  const have={}; PAIDINV.forEach(x=>have[String(x.i)]=1);
+  const updating=p.rows.filter(x=>have[String(x.i)]).length;
+  const noRep=p.rows.filter(x=>x.r&&!paidInvRepId(x));
+  const blankRep=p.rows.filter(x=>!x.r);
+  // Days from invoice to payment — the collection speed this file can prove.
+  const lags=p.rows.filter(x=>x.d&&x.p>=x.d).map(x=>Math.round((dObj(x.p)-dObj(x.d))/86400000)).sort((a,b)=>a-b);
+  let h='<div class="found" style="margin-top:14px"><h5>What this file holds</h5>';
+  h+='<div class="li"><span class="g"><b>'+p.rows.length.toLocaleString()+'</b> paid invoices · settled '+fmtY(from)+' to '+fmtY(to)+'</span></div>';
+  h+='<div class="li"><span class="g"><b>'+money(total)+'</b> collected ('+money(pre)+' before tax)</span></div>';
+  if(lags.length) h+='<div class="li"><span class="g">Typical wait for the money: <b>'+lags[Math.floor(lags.length/2)]+' days</b> from invoice to payment</span></div>';
+  if(updating) h+='<div class="li"><span class="g"><b>'+updating.toLocaleString()+'</b> invoice number'+(updating===1?'':'s')+' already held — those records update in place, nothing is deleted</span></div>';
+  if(noRep.length) h+='<div class="li"><span class="g" style="color:var(--red)"><b>'+noRep.length+'</b> name a salesperson this tracker cannot match ('+money(noRep.reduce((a,x)=>a+x.v,0))+') — they will wait in Admin → Employee match</span></div>';
+  if(blankRep.length) h+='<div class="li"><span class="g"><b>'+blankRep.length+'</b> carry no salesperson at all ('+money(blankRep.reduce((a,x)=>a+x.v,0))+' unattributed)</span></div>';
+  if(p.zeroes) h+='<div class="li"><span class="g"><b>'+p.zeroes+'</b> are $0 invoices — kept, they are real settled records</span></div>';
+  if(p.stillOwed) h+='<div class="li"><span class="g" style="color:var(--red)"><b>'+p.stillOwed+'</b> row'+(p.stillOwed===1?'':'s')+' still carr'+(p.stillOwed===1?'ies':'y')+' a balance ('+money(p.stillOwedT)+') — not actually paid, left out</span></div>';
+  if(p.noPaid) h+='<div class="li"><span class="g" style="color:var(--red)"><b>'+p.noPaid+'</b> row'+(p.noPaid===1?'':'s')+' had no readable paid date and were left out</span></div>';
+  if(p.skipped) h+='<div class="li"><span class="g" style="color:var(--red)"><b>'+p.skipped+'</b> row'+(p.skipped===1?'':'s')+' had no client or invoice number and were left out</span></div>';
+  h+='<div style="margin-top:12px;display:flex;gap:9px;flex-wrap:wrap">'+
+     '<button class="p" onclick="pdiApply()">Import</button>'+
+     '<button onclick="pdiClear()">Cancel</button></div></div>';
+  box.innerHTML=h;
+}
+// The merge itself — by invoice number, the source record id winning outright.
+// A number we hold is updated in place; a new one is added; nothing is ever
+// deleted here, so overlapping or partial exports are always safe.
+function pdiMerge(rows){
+  const byNo={}; PAIDINV.forEach(x=>byNo[String(x.i)]=x);
+  let added=0, updated=0;
+  rows.forEach(nr=>{
+    const old=byNo[String(nr.i)];
+    if(old){ Object.assign(old,nr); updated++; }
+    else { PAIDINV.push(nr); byNo[String(nr.i)]=nr; added++; }
+  });
+  PAIDINV.sort((a,b)=>a.p<b.p?-1:1);
+  return {added,updated};
+}
+function pdiApply(){
+  if(!PDI_PARSED) return;
+  const rows=PDI_PARSED.rows;
+  const m=pdiMerge(rows);
+  const added=m.added, updated=m.updated;
+  try{ save(K_PDI,PAIDINV); }
+  catch(e){
+    alert('That is more paid-invoice history than this browser will store.\n\nNothing was saved. Import a shorter date range.');
+    PAIDINV=load(K_PDI,[]); return;
+  }
+  const dates=rows.map(x=>x.p).sort();
+  PDISYNC.push({on:todayISO(),at:new Date().toISOString().slice(11,16),
+    lines:rows.length, from:dates[0], to:dates[dates.length-1],
+    total:Math.round(rows.reduce((a,x)=>a+x.v,0)), added, updated});
+  if(PDISYNC.length>60) PDISYNC=PDISYNC.slice(-60);
+  save(K_PDISYNC,PDISYNC);
+  pdiClear(); render();
+  alert('Imported '+rows.length.toLocaleString()+' paid invoices — '+added.toLocaleString()+' new, '+
+    updated.toLocaleString()+' updated in place.');
+}
+function pdiClear(){
+  document.getElementById('pdiText').value='';
+  document.getElementById('pdiDiff').innerHTML='';
+  PDI_PARSED=null;
+}
+function lastPdiSync(){ return PDISYNC.length?PDISYNC[PDISYNC.length-1]:null; }
+
+function renderPaidInv(){
+  const tiles=document.getElementById('pdiTiles'), hint=document.getElementById('pdiHint');
+  if(!tiles) return;
+  const hist=document.getElementById('pdiSyncTable');
+  if(hist) hist.innerHTML = PDISYNC.length
+    ? '<thead><tr><th>When</th><th class="num">Invoices</th><th>Covers</th><th class="num">Collected</th><th class="num">New</th><th class="num">Updated</th></tr></thead><tbody>'+
+      PDISYNC.slice().reverse().map(s=>'<tr><td>'+fmtY(s.on)+' '+s.at+'</td><td class="num">'+s.lines.toLocaleString()+
+      '</td><td>'+fmt(s.from)+' – '+fmt(s.to)+'</td><td class="num mono">'+money(s.total)+'</td><td class="num">'+
+      (s.added||'—')+'</td><td class="num">'+(s.updated||'—')+'</td></tr>').join('')+'</tbody>'
+    : '<tbody><tr><td class="empty">No paid invoices imported yet.</td></tr></tbody>';
+  const repTable=document.getElementById('pdiRepTable');
+  if(!PAIDINV.length){
+    hint.textContent='Nothing imported yet — this section fills in from SA’s Paid Invoices export.';
+    tiles.innerHTML='';
+    if(repTable) repTable.innerHTML='<tbody><tr><td class="empty">Import the paid-invoices file to see who the collected money traces back to.</td></tr></tbody>';
+    return;
+  }
+  const yr=todayISO().slice(0,4);
+  const ytd=PAIDINV.filter(x=>String(x.p).slice(0,4)===yr);
+  const total=PAIDINV.reduce((a,x)=>a+x.v,0);
+  const ytdT=ytd.reduce((a,x)=>a+x.v,0);
+  const dates=PAIDINV.map(x=>x.p).sort();
+  const lags=PAIDINV.filter(x=>x.d&&x.p>=x.d).map(x=>Math.round((dObj(x.p)-dObj(x.d))/86400000)).sort((a,b)=>a-b);
+  const unattr=PAIDINV.filter(x=>!paidInvRepId(x));
+  hint.innerHTML=PAIDINV.length.toLocaleString()+' paid invoices · '+fmtY(dates[0])+' to '+fmtY(dates[dates.length-1])+
+    (lastPdiSync()?' · imported '+fmtY(lastPdiSync().on):'');
+  tiles.innerHTML=
+    tile('Collected',money(total),PAIDINV.length.toLocaleString()+' settled invoices, tax included')+
+    tile('Collected '+yr,money(ytdT),money(ytd.reduce((a,x)=>a+paidInvPre(x),0))+' before tax')+
+    (lags.length?tile('Invoice to money',lags[Math.floor(lags.length/2)]+' days','typical wait · slowest tenth waits '+lags[Math.floor(lags.length*0.9)]+'+ days'):'')+
+    tile('Unattributed',money(unattr.reduce((a,x)=>a+x.v,0)),unattr.length+' invoices with no matchable salesperson',unattr.length/PAIDINV.length>0.25?'bad':'ok');
+  if(repTable){
+    const byRep={};
+    PAIDINV.forEach(x=>{
+      const id=paidInvRepId(x)||'';
+      const k=id||'(unattributed)';
+      (byRep[k]=byRep[k]||{id,n:0,t:0,pre:0}); byRep[k].n++; byRep[k].t+=x.v; byRep[k].pre+=paidInvPre(x);
+    });
+    repTable.innerHTML='<thead><tr><th>Salesperson</th><th class="num">Invoices</th><th class="num">Collected</th><th class="num">Before tax</th></tr></thead><tbody>'+
+      Object.keys(byRep).sort((a,b)=>byRep[b].t-byRep[a].t).map(k=>{
+        const e=byRep[k], p=e.id?person(e.id):null;
+        return '<tr><td>'+(p?empLink(p.id):esc(k))+'</td><td class="num">'+e.n.toLocaleString()+
+          '</td><td class="num mono">'+money(e.t)+'</td><td class="num mono">'+money(e.pre)+'</td></tr>';
+      }).join('')+'</tbody>';
+  }
+}
+
+/* ============================================================
    INVOICES WITH BALANCES
    SA's snapshot of every invoice still owed. Unlike the other
    imports this is not a date range — each import REPLACES the
@@ -8011,7 +8253,8 @@ const FEEDS=[
   {id:'leads',   label:'Lead list',     tab:'clients', last:()=>{const s=SYNCLOG.filter(x=>x.kind==='Lead'); return s.length?s[s.length-1].on:'';}},
   {id:'invoices',label:'Invoice audit', tab:'rev',     last:()=>{const s=lastInvSync(); return s?s.on:'';}},
   {id:'payments',label:'Payments',      tab:'rev',     last:()=>{const s=lastPaySync(); return s?s.on:'';}},
-  {id:'balances',label:'Invoices with balances', tab:'rev', last:()=>{const s=lastBalSync(); return s?s.on:'';}}
+  {id:'balances',label:'Invoices with balances', tab:'rev', last:()=>{const s=lastBalSync(); return s?s.on:'';}},
+  {id:'paidinv', label:'Paid invoices', tab:'rev', last:()=>{const s=lastPdiSync(); return s?s.on:'';}}
 ];
 const PAUSE_ALLOWED=['clients','rev','import','admin'];
 function mergeStatus(){
@@ -8128,7 +8371,8 @@ function hawkCounts(){
     hawkVoidDate:'reversals with no effective date', hawkForgiven:'chargebacks forgiven',
     hawkVariance:'paid sales drifted from their payout', hawkNoIdDupes:'probable duplicate sales',
     hawkSplit:'splits holding money', hawkSplitRate:'splits paid at one person’s rate', hawkPrePlan:'sales earning $0 (plan starts later)',
-    hawkFormer:'former team members still in the money', hawkInvNo:'invoice numbers matching nothing'};
+    hawkFormer:'former team members still in the money', hawkInvNo:'invoice numbers matching nothing',
+    hawkPaidOwed:'invoices both paid and still owed', hawkPaidDrift:'deposits vs settled drift'};
   const out={total:0,parts:[],items:{}};
   runChecks().forEach(c=>{
     if(HAWK_IDS[c.id] && c.items.length){
@@ -8203,14 +8447,22 @@ function jobFactsFor(name){
       ? 'No unpaid invoices — everything billed to them was settled as of the balances snapshot ('+(lastBalSync()?lastBalSync().on:'?')+').'
       : 'Nothing owed per the balances snapshot ('+(lastBalSync()?lastBalSync().on:'?')+').');
   }
+  const paid=PAIDINV.filter(x=>norm(x.c)===nk);
+  if(paid.length){
+    L.push('PAID invoices ('+paid.length+', '+money2(paid.reduce((a,x)=>a+x.v,0))+' collected, per the paid-invoices feed), most recent:');
+    paid.slice(-8).reverse().forEach(x=>L.push('- invoice #'+x.i+(x.d?' · billed '+x.d:'')+' · '+money2(x.v)+' · paid '+x.p+(x.m?' by '+x.m:'')+(x.r?' · sold by '+x.r:'')));
+  } else if(PAIDINV.length){
+    L.push('Nothing under this name in the paid-invoices feed (which covers '+
+      (lastPdiSync()?'through '+lastPdiSync().to:'an imported range')+').');
+  }
   const pays=PAYMENTS.filter(x=>norm(x.c)===nk);
   if(pays.length){
     L.push('Payments received ('+pays.length+', '+money2(pays.reduce((a,x)=>a+x.a,0))+' total), most recent:');
     pays.slice(-5).reverse().forEach(x=>L.push('- '+x.d+' · '+money2(x.a)+(x.i?' · against invoice #'+x.i:'')+(x.m?' · '+x.m:'')));
   } else if(PAYMENTS.length && PAYMENTS.every(x=>!x.c&&!x.i)) {
-    L.push('Payments are held as daily summaries only (the Daily Payment Audit Summary Report has no client detail), so this client’s own payments cannot be listed. Their account balance from the roster'+
+    if(!paid.length) L.push('Payments are held as daily summaries only (the Daily Payment Audit Summary Report has no client detail), so this client’s own payments cannot be listed. Their account balance from the roster'+
       (c&&c.bal?' — '+money2(c.bal)+' outstanding —':'')+' is the best owed-money signal held here.');
-  } else L.push(PAYMENTS.length?'No payments on file under this name.':'No payments imported yet, so collection status is not known here.');
+  } else if(!paid.length) L.push(PAYMENTS.length?'No payments on file under this name.':'No payments imported yet, so collection status is not known here.');
   const oscs=OSCS.filter(o=>norm(o.client)===nk);
   oscs.forEach(o=>L.push('On-site estimate '+o.when.slice(0,10)+' · '+(OSC_LABEL[o.outcome]||o.outcome)));
   return L.join('\n');
@@ -9310,6 +9562,39 @@ function runChecks(){
       sub:'sold '+fmt(r.date)+' · '+(r.paid?'commission PAID against this number':'invoiced '+(r.invoiced?fmt(r.invoiced):'—')),
       act:'<button class="sm" onclick="openEdit(\''+r.id+'\')">Check number</button>'
     })));
+
+  /* --- 11. an invoice both feeds claim, in opposite directions --- */
+  // The balances snapshot says it is still owed; the paid-invoices feed says the
+  // money came in. Both cannot be right — one of the two exports is stale.
+  if(PAIDINV.length && OPENINV.length){
+    const paidNo={}; PAIDINV.forEach(x=>{ if(x.i) paidNo[String(x.i).trim()]=x; });
+    const both=OPENINV.filter(v=>v.i && paidNo[String(v.i).trim()]);
+    add('hawkPaidOwed','bad','🦅 Invoices both PAID and STILL OWED',
+      'The paid-invoices feed says the money came in; the balances snapshot says it is still outstanding. One of the two exports is stale — re-pull whichever is older, or SA itself is contradicting its own books.',
+      both.slice(0,25).map(v=>{ const p=paidNo[String(v.i).trim()];
+        return {text:'<b>'+esc(v.c)+'</b> · invoice #'+esc(v.i),
+          sub:'paid '+fmt(p.p)+' ('+money2(p.v)+') per the paid feed · '+money2(+v.t||0)+' still owed per the balances snapshot of '+(lastBalSync()?fmtY(lastBalSync().on):'?'),
+          act:''}; }), both.reduce((a,v)=>a+(+v.t||0),0));
+  }
+
+  /* --- 12. deposits and settled invoices telling different monthly stories --- */
+  // Same month, both feeds present: money deposited vs invoices marked paid. They
+  // never match to the penny (unapplied cash, prepayments) — but a big gap means a
+  // missing export, and a missing export means every collected figure is quietly low.
+  if(PAIDINV.length && PAYMENTS.length){
+    const pdiM={}, payM={};
+    PAIDINV.forEach(x=>{ const m=String(x.p).slice(0,7); pdiM[m]=(pdiM[m]||0)+(+x.v||0); });
+    PAYMENTS.forEach(x=>{ const m=String(x.d).slice(0,7); payM[m]=(payM[m]||0)+(+x.a||0); });
+    const drift=Object.keys(pdiM).filter(m=>payM[m]!=null).map(m=>({m,pdi:pdiM[m],pay:payM[m],diff:pdiM[m]-payM[m]}))
+      .filter(d=>Math.abs(d.diff)>Math.max(Math.max(d.pdi,d.pay)*0.05,250))
+      .sort((a,b)=>Math.abs(b.diff)-Math.abs(a.diff));
+    add('hawkPaidDrift','warn','🦅 Deposits vs settled invoices — monthly drift',
+      'Months where the payments feed (money deposited) and the paid-invoices feed (invoices marked settled) disagree by more than 5%. Small drift is normal — prepayments and unapplied cash cross month lines. Large drift usually means one export is incomplete for that month.',
+      drift.slice(0,12).map(d=>({
+        text:'<b>'+d.m+'</b> · '+(d.diff>0?'settled exceeds deposits by ':'deposits exceed settled by ')+money(Math.abs(d.diff)),
+        sub:money(d.pay)+' deposited · '+money(d.pdi)+' in invoices marked paid',
+        act:''})), drift.reduce((a,d)=>a+Math.abs(d.diff),0));
+  }
 
   return out;
 }
@@ -11789,7 +12074,8 @@ function stateSnapshot(){   // v6: employee identity fields (first/last/photo/al
   return {v:7,saved:todayISO(),payouts:PAYOUTS,people:PEOPLE,rows:ROWS,hours:HOURS,disputes:DISPUTES,
     clients:CLIENTS,syncs:SYNCLOG,conversions:CONVERSIONS,knocked:KNOCKED,invoices:INVOICES,
     invsyncs:INVSYNC,implog:IMPLOG,gear:GEAR,payments:PAYMENTS,paysyncs:PAYSYNC,
-    takeovers:TAKEOVERS,openinv:OPENINV,balsyncs:BALSYNC,tombstones:TOMBSTONES,oscs:OSCS,global:GLOBAL};
+    takeovers:TAKEOVERS,openinv:OPENINV,balsyncs:BALSYNC,paidinv:PAIDINV,pdisyncs:PDISYNC,
+    tombstones:TOMBSTONES,oscs:OSCS,global:GLOBAL};
 }
 function backup(){
   // Gated in the header too, but the guard belongs in the function: a whole-state
@@ -11906,6 +12192,8 @@ function restore(e){
     if(Array.isArray(d.takeovers) && !TAKEOVERS.length){ TAKEOVERS=d.takeovers; save(K_TKO,TAKEOVERS); }
     if(Array.isArray(d.openinv) && !OPENINV.length){ OPENINV=d.openinv; save(K_BAL,OPENINV); }
     if(Array.isArray(d.balsyncs) && !BALSYNC.length){ BALSYNC=d.balsyncs; save(K_BALSYNC,BALSYNC); }
+    if(Array.isArray(d.paidinv) && !PAIDINV.length){ PAIDINV=d.paidinv; save(K_PDI,PAIDINV); }
+    if(Array.isArray(d.pdisyncs) && !PDISYNC.length){ PDISYNC=d.pdisyncs; save(K_PDISYNC,PDISYNC); }
     // Tombstones merge (never overwrite) so restoring a backup can't resurrect deleted records.
     if(Array.isArray(d.tombstones)){
       const have=new Set(TOMBSTONES.map(t=>t.srcKey+'~'+t.compKey));
@@ -12284,7 +12572,12 @@ function renderView(){
   const netYTD=live.filter(r=>r.date.slice(0,4)===y).reduce((a,r)=>a+netValue(r),0);
   const netPrevSame=ROWS.filter(r=>!isReversed(r)&&r.date>=lastY+'-01-01'&&r.date<=lastY+t.slice(4)).reduce((a,r)=>a+netValue(r),0);
   const billedYTD=INVOICES.filter(x=>String(x.d).slice(0,4)===y).reduce((a,x)=>a+(+x.v||0),0);
-  const collectedYTD=PAYMENTS.filter(x=>String(x.d).slice(0,4)===y).reduce((a,x)=>a+(+x.a||0),0);
+  // Deposits are the collected authority when they're imported; the paid-invoices
+  // feed stands in when they're not, so this page never claims $0 came in.
+  const usePdi=!PAYMENTS.length&&PAIDINV.length>0;
+  const collectedYTD=usePdi
+    ? PAIDINV.filter(x=>String(x.p).slice(0,4)===y).reduce((a,x)=>a+(+x.v||0),0)
+    : PAYMENTS.filter(x=>String(x.d).slice(0,4)===y).reduce((a,x)=>a+(+x.a||0),0);
   const owedNow=OPENINV.reduce((a,x)=>a+(+x.t||0),0);
   const pipeline=live.filter(r=>!r.invoiced&&!r.voidType).reduce((a,r)=>a+netValue(r),0);
   document.getElementById('viewHint').textContent='as of '+fmtY(t);
@@ -12354,7 +12647,7 @@ function renderView(){
   document.getElementById('viewFlow').innerHTML=
     F('Sold (net)',money(netYTD),y+' · from logged sales')+
     F('Billed',money(billedYTD),'invoice audit · pre-tax')+
-    F('Collected',money(collectedYTD),'payments feed'+(PAYMENTS.length?'':' — not imported'))+
+    F('Collected',money(collectedYTD),usePdi?'paid invoices · tax included':'payments feed'+(PAYMENTS.length?'':' — not imported'))+
     F('Still owed',money(owedNow),OPENINV.length?OPENINV.length.toLocaleString()+' open invoices':'balances not imported');
   // commission liability — ledger + balance engine
   const paidAll=PAYOUTS.filter(x=>x.status==='paid').reduce((a,x)=>a+x.amount,0);
@@ -12372,7 +12665,9 @@ function renderView(){
   const months=monthsBack(12);
   const S={booked:months.map(m=>ROWS.filter(r=>!isReversed(r)&&r.date.slice(0,7)===m&&r.date<=t).reduce((a,r)=>a+netValue(r),0)),
            billed:months.map(m=>INVOICES.filter(x=>String(x.d).slice(0,7)===m).reduce((a,x)=>a+(+x.v||0),0)),
-           collected:months.map(m=>PAYMENTS.filter(x=>String(x.d).slice(0,7)===m).reduce((a,x)=>a+(+x.a||0),0))};
+           collected:months.map(m=>usePdi
+             ? PAIDINV.filter(x=>String(x.p).slice(0,7)===m).reduce((a,x)=>a+(+x.v||0),0)
+             : PAYMENTS.filter(x=>String(x.d).slice(0,7)===m).reduce((a,x)=>a+(+x.a||0),0))};
   const mx=Math.max(1,...S.booked,...S.billed,...S.collected);
   const W=760,Hh=220,padL=8,padR=8,padT=12,padB=26;
   const X=i=>padL+(W-padL-padR)*i/(months.length-1);
@@ -12387,7 +12682,7 @@ function renderView(){
   months.forEach((m,i)=>{ if(i%2===(months.length%2?0:1)) svg+='<text x="'+X(i).toFixed(1)+'" y="'+(Hh-8)+'" text-anchor="middle" font-size="10" fill="var(--muted)">'+MON[+m.slice(5,7)-1]+'</text>'; });
   svg+='</svg>';
   document.getElementById('viewChart').innerHTML=svg;
-  document.getElementById('viewLegend').innerHTML=[['booked','Net booked (sales)'],['billed','Billed (pre-tax)'],['collected','Collected (payments)']].map(x=>'<span><i style="background:'+VIEW_COLORS[x[0]]+'"></i>'+x[1]+'</span>').join('')+
+  document.getElementById('viewLegend').innerHTML=[['booked','Net booked (sales)'],['billed','Billed (pre-tax)'],['collected',usePdi?'Collected (paid invoices)':'Collected (payments)']].map(x=>'<span><i style="background:'+VIEW_COLORS[x[0]]+'"></i>'+x[1]+'</span>').join('')+
     '<span class="note" style="margin-left:auto">peak month '+money(mx)+'</span>';
   // people & pipeline
   const act=PEOPLE.filter(p=>p.active&&p.id!==EMP_UNASSIGNED);
@@ -12558,7 +12853,10 @@ function renderBillHome(){
   const box=document.getElementById('billBody'); if(!box) return;
   const t=todayISO(), y=t.slice(0,4);
   const billedYTD=INVOICES.filter(x=>String(x.d).slice(0,4)===y).reduce((a,x)=>a+(+x.v||0),0);
-  const collectedYTD=PAYMENTS.filter(x=>String(x.d).slice(0,4)===y).reduce((a,x)=>a+(+x.a||0),0);
+  const usePdi=!PAYMENTS.length&&PAIDINV.length>0;
+  const collectedYTD=usePdi
+    ? PAIDINV.filter(x=>String(x.p).slice(0,4)===y).reduce((a,x)=>a+(+x.v||0),0)
+    : PAYMENTS.filter(x=>String(x.d).slice(0,4)===y).reduce((a,x)=>a+(+x.a||0),0);
   const arB={c:0,'30':0,'60':0,'90':0};
   OPENINV.forEach(v=>{ const age=Math.round((dObj(t)-dObj(v.d))/86400000), b=+v.t||0;
     if(age<=30)arB.c+=b; else if(age<=60)arB['30']+=b; else if(age<=90)arB['60']+=b; else arB['90']+=b; });
@@ -12569,7 +12867,7 @@ function renderBillHome(){
     tile('Owed now',money(arTot),OPENINV.length.toLocaleString()+' open invoices',arTot?'':'ok')+
     tile('Over 60 days',money(arB['60']+arB['90']),arTot?Math.round((arB['60']+arB['90'])/arTot*100)+'% of what is owed':'',(arB['60']+arB['90'])>arTot*0.25?'bad':'ok')+
     tile('Billed '+y,money(billedYTD),'pre-tax, invoice audit')+
-    tile('Collected '+y,money(collectedYTD),PAYMENTS.length?'payments feed':'payments not imported')+
+    tile('Collected '+y,money(collectedYTD),usePdi?'paid invoices · tax included':PAYMENTS.length?'payments feed':'payments not imported')+
     '</div>';
   h+='<div class="pulsegrid" style="margin-top:14px"><div class="card pad"><div class="sechead"><h3>Aging</h3></div><div class="mk">'+
     [['Current (≤30d)',arB.c],['31–60 days',arB['30']],['61–90 days',arB['60']],['Over 90 days',arB['90']]].map(r=>
@@ -12937,8 +13235,9 @@ function empData(id){
   const p=person(id);
   const rows=ROWS.filter(r=>shareFor(r,id)>0 || (r.paid && payoutsFor(r.id,id,['rep','adjustment']).length>0)).sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:0);
   const inv=INVOICES.filter(x=>invoiceRepId(x)===id);
+  const pinv=PAIDINV.filter(x=>paidInvRepId(x)===id);
   const accts=CLIENTS.filter(c=>!c.gone && clientRepId(c)===id);
-  return {p, rows, inv, accts, hours:HOURS.filter(h=>h.rep===id), disputes:DISPUTES.filter(d=>d.rep===id), oscs:OSCS.filter(o=>o.rep===id)};
+  return {p, rows, inv, pinv, accts, hours:HOURS.filter(h=>h.rep===id), disputes:DISPUTES.filter(d=>d.rep===id), oscs:OSCS.filter(o=>o.rep===id)};
 }
 function empKpis(D){
   const p=D.p, today=todayISO(), wk=weekStart(today), mo=today.slice(0,7), yr=today.slice(0,4);
@@ -12970,6 +13269,11 @@ function empKpis(D){
   K.cancelled=D.rows.filter(r=>r.voidType).length;
   K.invLines=D.inv.length; K.invBilled=D.inv.reduce((a,x)=>a+(+x.v||0),0);
   K.invYr=D.inv.filter(x=>String(x.d).slice(0,4)===yr).reduce((a,x)=>a+(+x.v||0),0);
+  // Collected: settled invoices whose salesperson resolves to this person. Pre-tax,
+  // like the billed figure beside it — collected-with-tax is a bank number, not a rep number.
+  K.collectedN=D.pinv.length;
+  K.collectedV=D.pinv.reduce((a,x)=>a+paidInvPre(x),0);
+  K.collectedYr=D.pinv.filter(x=>String(x.p).slice(0,4)===yr).reduce((a,x)=>a+paidInvPre(x),0);
   const mine=new Set(D.accts.map(c=>norm(c.n)));
   K.outstanding=OPENINV.filter(v=>mine.has(norm(v.c))).reduce((a,v)=>a+(+v.t||0),0);
   K.accts=D.accts.filter(c=>c.ct!=='Lead').length; K.leads=D.accts.filter(c=>c.ct==='Lead').length;
@@ -13084,6 +13388,7 @@ function renderEmp(){
     if(K.accts||K.leads||K.invLines||K.outstanding) h+='<div class="tiles small" style="margin-top:12px">'+
       epTile('Accounts owned',K.accts.toLocaleString(),K.leads+' open leads · from the SA salesperson field')+
       epTile('Invoice lines',K.invLines.toLocaleString(),money(K.invBilled)+' billed pre-tax · '+money(K.invYr)+' this year')+
+      (K.collectedN?epTile('Collected',money(K.collectedV),K.collectedN.toLocaleString()+' paid invoices pre-tax · '+money(K.collectedYr)+' this year'):'')+
       epTile('Outstanding',money(K.outstanding),'past-due balances on accounts they own')+'</div>';
     const prePlan=D.rows.filter(r=>!r.voidType && r.date<(p.start||'0000'));
     if(prePlan.length) h+='<div class="warnbox" style="margin-top:10px"><b>'+prePlan.length+' sale'+(prePlan.length===1?'':'s')+' ('+money(prePlan.reduce((a,r)=>a+netValue(r)*shareFor(r,p.id),0))+') predate this comp plan</b>, which starts '+fmtY(p.start)+'. They earn $0 commission and do not count toward the standard — on this page, the Scoreboard and the Commissions tab alike. If that start date is wrong, fix it on '+(ADMIN?'<a href="#" onclick="closeEmp();setTab(&quot;plans&quot;);selPerson(&quot;'+p.id+'&quot;);return false">the comp plan</a>':'the comp plan')+'.</div>';
@@ -13538,6 +13843,8 @@ function cloudApply(d){
   TAKEOVERS=A(d.takeovers,TAKEOVERS); put(K_TKO,TAKEOVERS);
   OPENINV=A(d.openinv,OPENINV); put(K_BAL,OPENINV);
   BALSYNC=A(d.balsyncs,BALSYNC); put(K_BALSYNC,BALSYNC);
+  PAIDINV=A(d.paidinv,PAIDINV); put(K_PDI,PAIDINV);
+  PDISYNC=A(d.pdisyncs,PDISYNC); put(K_PDISYNC,PDISYNC);
   TOMBSTONES=A(d.tombstones,TOMBSTONES); put(K_TOMB,TOMBSTONES);
   OSCS=A(d.oscs,OSCS); put(K_OSC,OSCS);
   if(d.global&&typeof d.global==='object'){ GLOBAL=d.global; if(!GLOBAL.policy)GLOBAL.policy=Object.assign({},POLICY_DEFAULT); put(K_GLOBAL,GLOBAL); }
