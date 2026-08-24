@@ -5195,23 +5195,36 @@ function renderComm(){
            (basis==='due'?'<th>Invoiced</th><th>Payable</th>':'<th>Source</th>')+
            '<th class="num">Contract value</th><th class="num">Rate</th><th class="num">Commission</th>'+
            '</tr></thead><tbody>';
-        let sv=0;
+        // Every figure on this page is the one the engine pays: commFor() reads the payout
+        // ledger once a sale is paid, and otherwise nets off reversals, applies the rate
+        // frozen on the row, and takes only this person's share of a split. This table
+        // used to print bookedValue x the person's CURRENT plan rate, so on a 50/50 split
+        // it showed the FULL commission on BOTH reps' sheets - and this is the page that
+        // carries the "approved for payroll" signature line.
+        let sv=0, sc=0;
         g[1].forEach(row=>{
-          sv+=bookedValue(row);
+          const sh=shareFor(row,p.id), gross=bookedValue(row), netv=netValue(row);
+          const val=netv*sh, comm=commFor(row,p.id), rrate=rowRate(row);
+          sv+=val; sc+=comm;
           h+='<tr><td class="mono">'+fmt(row.date)+'</td><td>'+esc(row.client)+'</td>'+
             '<td>'+esc(row.service||'—')+'</td>'+
             (basis==='due'
               ? '<td class="mono">'+(row.invoiced?fmt(row.invoiced):'—')+'</td>'+
                 '<td class="mono">'+(dueDate(row)?fmt(dueDate(row)):'—')+'</td>'
               : '<td>'+esc(SRC_LABEL[row.src]||row.src)+'</td>')+
-            '<td class="num mono">'+money2(bookedValue(row))+
+            '<td class="num mono">'+money2(val)+
+              (netv!==gross?'<div class="note">'+money2(gross)+' less '+money2(gross-netv)+' reversed</div>':'')+
+              (sh<1?'<div class="note">'+num(sh*100,0)+'% share of '+money2(netv)+'</div>':'')+
               (basisOf(row)!=='contract'?'<div class="note">'+esc(valueLabel(row))+'</div>':'')+'</td>'+
-            '<td class="num">'+num(g[2],1)+'%</td>'+
-            '<td class="num mono">'+money2(bookedValue(row)*g[2]/100)+'</td></tr>';
+            '<td class="num">'+num(rrate,1)+'%'+
+              (rrate!==g[2]?'<div class="note">rate on the sale</div>':'')+'</td>'+
+            '<td class="num mono">'+money2(comm)+
+              (row.paid&&rowHasLedger(row)?'<div class="note">from the payout ledger</div>':'')+
+              (splitPending(row)?'<div class="note">held — split not approved</div>':'')+'</td></tr>';
         });
         h+='<tr class="tot"><td colspan="'+(basis==='due'?5:4)+'">'+g[1].length+' '+(g[1].length===1?'sale':'sales')+'</td>'+
            '<td class="num">'+money2(sv)+'</td><td class="num">'+num(g[2],1)+'%</td>'+
-           '<td class="num">'+money2(sv*g[2]/100)+'</td></tr></tbody></table></div></div>';
+           '<td class="num">'+money2(sc)+'</td></tr></tbody></table></div></div>';
       });
 
       if(r.team.length){

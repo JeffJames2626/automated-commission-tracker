@@ -1465,6 +1465,47 @@
         check('PERIOD a sale dated today counts this month', 250, round2(k2.month.v));
       }
 
+
+      /* ---------- PAYROLL: the printed sheet must equal what the engine pays ---------- */
+      // The per-sale detail on the commission report used to print bookedValue x the
+      // person's CURRENT plan rate. On a 50/50 split that showed the FULL commission on
+      // BOTH reps' sheets, it ignored reversals, and it ignored the rate frozen on the
+      // sale. This is the page carrying the "approved for payroll" signature line.
+      if(typeof commFor==='function'){
+        var PA=mkPerson({id:'PA',name:'Pay Ann'}); PA.first='Pay'; PA.last='Ann'; PA.roles=['sales'];
+        PA.start='2026-01-01'; PA.commNew=10; PA.commUp=5; PA.aliases=[]; PA.log=[];
+        var PB=mkPerson({id:'PB',name:'Pay Bob'}); PB.first='Pay'; PB.last='Bob'; PB.roles=['sales'];
+        PB.start='2026-01-01'; PB.commNew=10; PB.commUp=5; PB.aliases=[]; PB.log=[];
+        PEOPLE=[PA,PB]; PAYOUTS=[]; EMP_IDX=null; GLOBAL.payLag=30;
+        // a 50/50 split
+        var sp=mkRow({rep:'PA',value:4000,type:'new',date:'2026-06-05',invoiced:'2026-06-10',client:'Split Co'});
+        sp.split=[{rep:'PA',pct:50},{rep:'PB',pct:50}];
+        // a partly refunded sale
+        var rf=mkRow({rep:'PA',value:10000,type:'new',date:'2026-06-07',invoiced:'2026-06-10',client:'Refund Co'});
+        rf.voidType='refunded'; rf.voidAmt=2000; rf.voidDate='2026-06-20';
+        // a sale whose rate was frozen lower than the plan says today
+        var fz=mkRow({rep:'PA',value:1000,type:'new',date:'2026-06-09',invoiced:'2026-06-10',client:'Rate Co'});
+        ROWS=[sp,rf,fz];
+        ROWS.forEach(function(r){ freezeDueLag(r); r.commRate=rowRate(r); });
+        fz.commRate=7;
+        check('PAYROLL a split pays each rep their share, never the whole', 200, round2(netValue(sp)*shareFor(sp,'PA')*rowRate(sp)/100));
+        check('PAYROLL the two halves of a split add up to the whole commission', 400,
+          round2(netValue(sp)*shareFor(sp,'PA')*rowRate(sp)/100 + netValue(sp)*shareFor(sp,'PB')*rowRate(sp)/100));
+        check('PAYROLL a refunded sale is billed on what is left', 8000, netValue(rf));
+        check('PAYROLL commission follows the net, not the gross', 800, round2(commFor(rf,'PA')));
+        check('PAYROLL the rate frozen on the sale wins over the current plan', 7, rowRate(fz));
+        check('PAYROLL commission uses the frozen rate', 70, round2(commFor(fz,'PA')));
+        checkTrue('PAYROLL a rep with no share of a sale earns nothing on it', commFor(rf,'PB')===0, commFor(rf,'PB'));
+        // once paid, the sheet must read the ledger, not recompute
+        var alertP=window.alert, toastP=window.toast; window.alert=function(){}; window.toast=function(){};
+        ROWS=[fz]; PAYOUTS=[]; fz.paid='2026-07-10'; journalPaid(fz,'2026-07-10');
+        var beforeRateChange=round2(commFor(fz,'PA'));
+        PA.commNew=25;
+        check('PAYROLL a plan change never rewrites a paid sale on the sheet', beforeRateChange, round2(commFor(fz,'PA')));
+        PA.commNew=10;
+        window.alert=alertP; window.toast=toastP; PAYOUTS=[];
+      }
+
       /* ---------- C2: tombstones stop deleted records resurrecting ---------- */
       if(typeof addTombstone==='function' && typeof isTombstoned==='function'){
         TOMBSTONES=[];
