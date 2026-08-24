@@ -119,7 +119,11 @@ a.emplink:hover{color:var(--grn-d);border-bottom-color:var(--grn)}
 .rcard:hover{border-color:#b9c2b2;box-shadow:0 5px 18px rgba(28,33,25,.13);transform:translateY(-1px)}
 .rcard.off{opacity:.6}
 .rcard .nm{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rcard .meta{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Two lines before it gives up: a job title's meaning usually lives past the first line. */
+.rcard .meta{font-size:12px;color:var(--muted);line-height:1.35;overflow:hidden;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}
+.rcard{align-items:flex-start}
+.rcard .nm{overflow-wrap:anywhere}
 .rcard .pills{margin-top:6px;display:flex;gap:4px;flex-wrap:wrap}
 .rcard .nmrow{display:flex;align-items:center;gap:7px;min-width:0}
 /* team pulse */
@@ -337,10 +341,12 @@ details.fold > .foldbody{padding:2px 16px 16px}
 .tiles.small .tile .val{font-size:22px}
 .alinks{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
 .alink{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--paper);
-  cursor:pointer;transition:.12s;text-align:left}
+  cursor:pointer;transition:.12s;text-align:left;
+  white-space:normal}                       /* buttons default to nowrap - these hold a sentence */
+.alink .d{overflow-wrap:anywhere}           /* a long unbroken word cannot push the card open */
 .alink:hover{border-color:var(--grn);background:var(--grn-l)}
 .alink .t{font-weight:700;font-size:14px}
-.alink .d{font-size:12.5px;color:var(--muted);margin-top:3px;line-height:1.45}
+.alink .d{font-size:12.5px;color:var(--muted);margin-top:3px;line-height:1.45;white-space:normal}
 .adminbadge{background:var(--gold);color:var(--ink);border-radius:20px;padding:1px 8px;
   font-size:10.5px;font-weight:800;letter-spacing:.05em;margin-left:7px;vertical-align:2px}
 
@@ -474,6 +480,10 @@ details.fold > .foldbody{padding:2px 16px 16px}
     font-size:12.5px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .fab:hover{transform:none}
   .fab kbd{display:none}
+  /* At a third of a 375px screen there is room for the words or the emoji, not both.
+     The words win: "AI assistant" was being cut to "AI assista...". */
+  .fab .fabicon{display:none}
+  .fab{font-size:12px;letter-spacing:-.01em}
   .fab-left{left:0;right:auto}
   .fab-mid{left:33.33%;right:auto;transform:none}
   .fab-mid:hover{transform:none}
@@ -2084,8 +2094,8 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
 </div>
 
 <button class="fab" onclick="openQuick()">+ Add sale <kbd>A</kbd></button>
-<button class="fab fab-left" onclick="openGear()" title="The most valuable doors to be at next, in driving order">&#9881;&#65039; Next stops <kbd>G</kbd></button>
-<button class="fab fab-mid" onclick="openAsk()" title="Ask anything about the status of a sold or invoiced job">&#10024; AI assistant</button>
+<button class="fab fab-left" onclick="openGear()" title="The most valuable doors to be at next, in driving order"><span class="fabicon">&#9881;&#65039;</span> Next stops <kbd>G</kbd></button>
+<button class="fab fab-mid" onclick="openAsk()" title="Ask anything about the status of a sold or invoiced job"><span class="fabicon">&#10024;</span> AI assistant</button>
 
 <div class="modal" id="editModal" onclick="if(event.target===this)closeEdit()">
   <div class="sheet">
