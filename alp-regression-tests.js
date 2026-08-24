@@ -1645,6 +1645,49 @@
         window.alert=alertX; window.toast=toastX; PAYOUTS=[];
       }
 
+
+      /* ---------- BALANCE: a correction must settle, not sit there for ever ---------- */
+      // commFor reads ledgerPaid, which already sums rep AND adjustment entries, so a
+      // correction is inside `earned` the moment it is written. compPosition added it to
+      // the earn side a second time, so it never cleared: an over-payment correction left
+      // a permanent debt, and an under-payment correction showed money still owed that
+      // had already been handed over.
+      if(typeof compPosition==='function' && typeof recordCorrection==='function'){
+        var alertB=window.alert, toastB=window.toast; window.alert=function(){}; window.toast=function(){};
+        var BA=mkPerson({id:'BA',name:'Bal Ann'}); BA.first='Bal'; BA.last='Ann'; BA.roles=['sales'];
+        BA.start='2026-01-01'; BA.commNew=10; BA.aliases=[]; BA.log=[];
+        var setupBal=function(){
+          PEOPLE=[BA]; PAYOUTS=[]; DISPUTES=[]; EMP_IDX=null; GLOBAL.payLag=30;
+          var br=mkRow({rep:'BA',value:5000,type:'new',date:'2026-06-05',invoiced:'2026-06-10',client:'Bal Co'});
+          ROWS=[br]; freezeDueLag(br); br.commRate=rowRate(br);
+          br.paid='2026-07-10'; journalPaid(br,'2026-07-10');
+          return br;
+        };
+        // over-paid: she keeps 400 of the 500 already handed over, so she is square
+        var b1=setupBal();
+        check('BALANCE the sale pays 500 before any correction', 500, round2(ledgerRepNet(b1,'BA')));
+        recordCorrection(b1.id,'BA',-100,'over-paid on review',{kind:'rep'});
+        check('BALANCE the ledger nets to 400 after the correction', 400, round2(ledgerRepNet(b1,'BA')));
+        check('BALANCE an over-payment correction settles and does not linger', 0,
+          round2(compPosition(BA,'2026-11').closing));
+        // under-paid: she is given another 100, so she is square again
+        var b2=setupBal();
+        recordCorrection(b2.id,'BA',100,'under-paid on review',{kind:'rep'});
+        check('BALANCE the ledger nets to 600 after a top-up', 600, round2(ledgerRepNet(b2,'BA')));
+        check('BALANCE an under-payment correction does not leave money looking owed', 0,
+          round2(compPosition(BA,'2026-11').closing));
+        // and it must still show REAL money owed on an unpaid sale
+        PEOPLE=[BA]; PAYOUTS=[]; EMP_IDX=null;
+        var b3=mkRow({rep:'BA',value:5000,type:'new',date:'2026-06-05',invoiced:'2026-06-10',client:'Owed Co'});
+        ROWS=[b3]; freezeDueLag(b3); b3.commRate=rowRate(b3);
+        check('BALANCE an unpaid commission is still owed', 500, round2(compPosition(BA,'2026-11').closing));
+        // the balance identity still holds
+        var pos=compPosition(BA,'2026-11');
+        check('BALANCE the identity holds', round2(pos.closing),
+          round2(pos.opening+pos.earned+pos.override+pos.adjust-pos.chargebacks-pos.paid));
+        window.alert=alertB; window.toast=toastB; PAYOUTS=[];
+      }
+
       /* ---------- C2: tombstones stop deleted records resurrecting ---------- */
       if(typeof addTombstone==='function' && typeof isTombstoned==='function'){
         TOMBSTONES=[];

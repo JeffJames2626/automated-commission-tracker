@@ -2856,7 +2856,14 @@ function compPosition(p,ym){
   const start=String(p.start||ym).slice(0,7); let m=start<ym?start:ym, opening=0, cur=null, guard=0;
   while(m<=ym && guard++<600){
     const C=commissionFor(p,m,'due',{noBalance:true});
-    const earned=C.newC+C.upC, ov=C.ovC, adj=C.adjTotal+C.ledgerAdj, cb=C.cbTotal, paid=C.ledgerRep+C.ledgerOv+C.ledgerAdj+C.legacyPaid;
+    // `adj` is dispute money only. A ledger correction (kind 'adjustment') must NOT be
+    // added here as well: commFor reads ledgerPaid, which already sums rep AND adjustment
+    // entries, so the correction is inside `earned` from the moment it is written. Adding
+    // it again on the earn side left the correction sitting in the balance for ever —
+    // an over-payment correction showed a permanent debt, and an UNDER-payment correction
+    // showed money still owed that had already been handed over. It stays on the paid
+    // side, where the ledger actually recorded it.
+    const earned=C.newC+C.upC, ov=C.ovC, adj=C.adjTotal, cb=C.cbTotal, paid=C.ledgerRep+C.ledgerOv+C.ledgerAdj+C.legacyPaid;
     const closing=round2(opening+earned+ov+adj-cb-paid);
     cur={ym:m,opening:round2(opening),earned:round2(earned),override:round2(ov),adjust:round2(adj),chargebacks:round2(cb),paid:round2(paid),closing,payable:Math.max(0,closing),carry:Math.max(0,-closing)};
     opening=closing; m=nextYm(m);
