@@ -2563,6 +2563,59 @@
       } else {
         results.push({name:'HRHAWK hawk exists', expected:true, actual:false, pass:false});
       }
+
+      /* ---------- BIZROOT: the business is the root entity ---------- */
+      if(typeof bizEnsure==='function'){
+        ADMIN=true; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+        // migration: one permanent id, idempotent forever
+        BIZ=null; bizDirty();
+        PEOPLE=[mkPerson({id:'BZ1', dept:'Irrigation', email:'z1@x.com'}),
+                mkPerson({id:'BZ2', name:'Two', dept:'Office'}),
+                mkPerson({id:'BZ3', name:'Three', dept:'irrigation '})];
+        var bid1=bizEnsure();
+        checkTrue('BIZROOT the business gets a permanent id', /^biz/.test(bid1), bid1);
+        check('BIZROOT status defaults to active', 'active', bizGet().status);
+        check('BIZROOT divisions seed from recorded departments, deduped', 2, bizDivisions().length);
+        var dvn=bizDivisions().map(function(d){return d.name;}).sort().join('|');
+        check('BIZROOT rerunning the migration keeps the same id', bid1, bizEnsure());
+        check('BIZROOT …and the same divisions', dvn, bizDivisions().map(function(d){return d.name;}).sort().join('|'));
+        // no departments recorded = an honest empty list — nothing invented
+        BIZ=null; bizDirty(); PEOPLE=[mkPerson({id:'BZ4', dept:''})];
+        bizEnsure();
+        check('BIZROOT no departments means no invented divisions', 0, bizDivisions().length);
+        // BUSINESS → DIVISION → EMPLOYEE
+        BIZ=null; bizDirty();
+        PEOPLE=[mkPerson({id:'BZ5', dept:'Spray'}), mkPerson({id:'BZ6', name:'Six', dept:'Spray'}), mkPerson({id:'BZ7', name:'Seven', dept:'Office'})];
+        bizEnsure();
+        var spr=bizDivisions().filter(function(d){return d.name==='Spray';})[0];
+        check('BIZROOT an employee resolves to their division', 'Spray', (empDivision(PEOPLE[0])||{}).name);
+        check('BIZROOT a division resolves its members', 2, divisionMembers(spr).length);
+        // ownership: business data, independent of every employee record
+        CLIENTS=[{u:'c1',n:'A Client',ct:'Client'},{u:'c2',n:'A Lead',ct:'Lead'},{u:'c3',n:'B Client',ct:'Client'}];
+        check('BIZROOT the business counts its clients', 2, bizClients().length);
+        check('BIZROOT the business counts its leads', 1, bizLeads().length);
+        // targets: business + period, replaced not duplicated, audited, gated
+        var aT=AUDIT.length;
+        checkTrue('BIZROOT a target can be set', bizTargetSet('revenue','2027',600000), 'set');
+        bizTargetSet('revenue','2027',650000);
+        check('BIZROOT same metric+period replaces, never duplicates', 1, bizTargetsFor('revenue','2027').length);
+        check('BIZROOT …with the newer value', 650000, bizTargetsFor('revenue','2027')[0].value);
+        checkTrue('BIZROOT target changes are audited', AUDIT.length>aT, AUDIT.length-aT);
+        var pj=JSON.stringify(PEOPLE);
+        bizTargetSet('leads','2027-09',120);
+        check('BIZROOT business numbers never land on an employee record', pj, JSON.stringify(PEOPLE));
+        ADMIN=false; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+        check('BIZROOT non-admin cannot set targets', false, bizTargetSet('revenue','2028',1));
+        ADMIN=true; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+        // the root survives backup and cloud
+        checkTrue('BIZROOT the id rides in the backup snapshot', stateSnapshot().biz&&stateSnapshot().biz.id===bizId(), bizId());
+        ROWS=[]; PAYOUTS=[];
+        cloudApply({biz:{name:'Pulled Without Id'}});
+        checkTrue('BIZROOT a pulled doc from before the root existed still gets an id', /^biz/.test(bizId()), bizId());
+        check('BIZROOT …while keeping the pulled details', 'Pulled Without Id', bizGet().name);
+      } else {
+        results.push({name:'BIZROOT business root exists', expected:true, actual:false, pass:false});
+      }
     } catch(e){
       results.push({name:'HARNESS ERROR', expected:'no throw', actual:String(e&&e.message||e), pass:false});
     } finally {

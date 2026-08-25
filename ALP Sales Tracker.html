@@ -1903,8 +1903,9 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
       <div class="statestrip" id="adminState"></div>
     </section>
     <section class="adminsec">
-      <div class="hdr"><h3>🏢 Business details</h3>
-        <span class="hint">The one canonical company record. The Business Clock, week boundaries, reports, and every future integration read from here — nothing else in the app should hard-code who or where the business is.</span></div>
+      <div class="hdr"><h3>🏢 Business</h3>
+        <span class="hint">The root of everything. One permanent business id; employees, clients, leads, divisions, settings, and the clock all belong to it — nothing else in the app should hard-code who or where the business is.</span></div>
+      <div class="note" id="bizIdLine" style="margin-bottom:10px"></div>
       <div class="frow">
         <div><label>Business name</label><input id="bizName"></div>
         <div><label>Legal name (if different)</label><input id="bizLegal"></div>
@@ -1929,6 +1930,10 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
         <div><label>Week starts</label><select id="bizWeekStart"><option value="mon">Monday</option><option value="sun">Sunday</option></select></div>
         <div style="align-self:end"><span class="note" id="bizClockNote"></span></div>
       </div>
+      <div style="margin-top:10px"><b style="font-size:12px">Divisions</b>
+        <span class="hint">the service lines this business operates — one per line; employees link through the Department on their record</span></div>
+      <textarea id="bizDivs" rows="4" style="width:100%;max-width:340px;margin-top:5px;font:inherit"></textarea>
+      <div class="note" id="bizDivList" style="margin-top:5px"></div>
       <div style="margin-top:10px"><b style="font-size:12px">Business hours</b>
         <span class="hint">leave a day blank if you have not decided — the app answers “unknown” rather than guessing</span></div>
       <div id="bizHoursGrid" style="margin-top:6px"></div>
@@ -3653,6 +3658,7 @@ function pNum(s){
    YYYY-MM-DD strings handled by pure string arithmetic — they never shift.
    ============================================================ */
 function bizDefaults(){ return {
+  id:'', status:'active', divisions:[], targets:[],   // root fields — bizEnsure() stamps the permanent id
   name:'Automated Lawn & Pest', appName:'ALP Sales Tracker', legal:'', email:'', phone:'', website:'',
   addr1:'', addr2:'', city:'Spokane', state:'WA', zip:'', country:'US',
   tz:'America/Los_Angeles',    // IANA — Intl handles PST/PDT itself, never a raw offset
@@ -3675,6 +3681,7 @@ function bizSet(patch){
   if(!can('admin_security')){ toast('That is not part of your access'); return false; }
   const cur=bizGet(), next=Object.assign({},cur,patch||{});
   if(patch&&patch.hours) next.hours=Object.assign({},cur.hours,patch.hours);
+  Object.keys(next).forEach(k=>{ if(k.charAt(0)==='_') delete next[k]; });   // runtime caches never persist
   let changed=0;
   Object.keys(next).forEach(k=>{
     const was=JSON.stringify(cur[k]), now=JSON.stringify(next[k]);
@@ -3736,6 +3743,76 @@ function bizNextOpen(){ const n=bizNow();
   const todayH=bizHoursFor(n.date); if(todayH==null) return null;
   if(!todayH.closed&&todayH.open&&n.hm<todayH.open) return {date:n.date, open:todayH.open};
   const d=bizNextBusinessDay(n.date); if(!d) return null; const h=bizHoursFor(d); return {date:d, open:h.open}; }
+
+/* ============================================================
+   THE BUSINESS — the root organizational entity.
+   Everything in this tracker belongs to ONE business: the whole state
+   document IS that business's data (ownership by containment, not a
+   business_id sprayed onto five thousand client records — the server
+   already keys state documents by id, so a second business tomorrow is
+   a second document, not a schema rewrite). What the root itself needs:
+   a PERMANENT id (never the name, never the address, never an employee),
+   a status, the divisions it operates, and a home for targets.
+   ============================================================ */
+// Idempotent migration: gives the existing Business Details record its root
+// fields exactly once. Safe to rerun forever — an id is never regenerated,
+// divisions are never re-seeded, nothing existing is touched.
+function bizEnsure(){
+  const cur=(BIZ&&typeof BIZ==='object')?BIZ:{};
+  let born=false, changed=false;
+  if(!cur.id){ cur.id=uid('biz'); born=true; changed=true; }
+  if(!cur.status){ cur.status='active'; changed=true; }
+  if(!Array.isArray(cur.divisions)){
+    // Seed from data the business already recorded (employee departments) —
+    // nothing is invented. No departments = an honest empty list.
+    const seen={}, dv=[];
+    (typeof PEOPLE!=='undefined'?PEOPLE:[]).forEach(p=>{
+      if(!p||!p.active||p.id===EMP_UNASSIGNED) return;
+      const d=String(p.dept||'').trim(); if(!d) return;
+      const k=norm(d); if(seen[k]) return; seen[k]=1; dv.push({id:uid('dv'), name:d});
+    });
+    cur.divisions=dv; changed=true;
+  }
+  if(!Array.isArray(cur.targets)){ cur.targets=[]; changed=true; }
+  if(changed){
+    BIZ=cur; save(K_BIZ,BIZ); bizDirty();
+    if(born) auditRecord('biz-migrate',{id:cur.id, divisions:cur.divisions.length});
+  }
+  return cur.id;
+}
+// Ownership, queryable. The business resolves its people, clients and leads;
+// none of these ever hang off an employee record.
+function bizId(){ return bizGet().id||''; }
+function bizEmployees(){ return PEOPLE.filter(p=>p.id!==EMP_UNASSIGNED); }
+function bizClients(){ return CLIENTS.filter(c=>!isLead(c)); }
+function bizLeads(){ return CLIENTS.filter(c=>isLead(c)); }
+// BUSINESS → DIVISION → EMPLOYEE. Divisions are business data (bizGet().divisions);
+// an employee links through their recorded department — canonical text today,
+// deliberately not normalized to ids until the Team/Profile work needs it.
+function bizDivisions(){ return bizGet().divisions||[]; }
+function empDivision(p){ const k=norm(p&&p.dept||''); if(!k) return null;
+  return bizDivisions().find(d=>norm(d.name)===k)||null; }
+function divisionMembers(d){ const k=norm(d&&d.name||''); if(!k) return [];
+  return PEOPLE.filter(p=>p.active&&p.id!==EMP_UNASSIGNED&&norm(p.dept||'')===k); }
+/* Business targets — the future home of goals/budgets/projections.
+   One record per metric+period, replaced in place, audited. The foundation
+   only: no forecasting engine, no dashboard wiring, by design. */
+function bizTargetsFor(metric,period){
+  return (bizGet().targets||[]).filter(t=>(!metric||t.metric===metric)&&(!period||t.period===period));
+}
+function bizTargetSet(metric,period,value){
+  if(!can('admin_security')){ toast('That is not part of your access'); return false; }
+  metric=String(metric||'').trim(); period=String(period||'').trim();
+  if(!metric||!period||!isFinite(+value)){ toast('A target needs a metric, a period, and a number'); return false; }
+  const cur=bizGet(); const t=(cur.targets||[]).slice();
+  const old=t.find(x=>x.metric===metric&&x.period===period);
+  const rec={id:old?old.id:uid('bt'), metric, period, value:+value, by:empWho()||'', on:todayISO()};
+  BIZ=Object.assign({},cur,{targets:t.filter(x=>x!==old).concat([rec])});
+  Object.keys(BIZ).forEach(k=>{ if(k.charAt(0)==='_') delete BIZ[k]; });
+  save(K_BIZ,BIZ); bizDirty();
+  auditRecord('biz-target',{metric, period, value:+value, was:old?old.value:null});
+  return true;
+}
 // weekStart honours the configured week start (Monday is the standing rule).
 function weekStart(s){ const d=dObj(s); const ws=bizGet().weekStart==='sun'?0:1;
   d.setDate(d.getDate()-((d.getDay()-ws+7)%7)); return iso(d.getFullYear(),d.getMonth()+1,d.getDate()); }
@@ -4714,6 +4791,25 @@ function renderBiz(){
   });
   const n=document.getElementById('bizClockNote');
   if(n){ const now=bizNow(); n.textContent='Business clock: '+fmtY(now.date)+' · '+now.hm+' ('+b.tz+')'; }
+  // the root line: permanent id, status, and the relationships it owns — provable, not decorative
+  const idl=document.getElementById('bizIdLine');
+  if(idl){
+    const emps=bizEmployees().filter(p=>p.active).length, cls=bizClients().length, lds=bizLeads().length;
+    idl.innerHTML='Business ID <code>'+esc(b.id||'(stamped on first load)')+'</code> · '+
+      '<span class="pill '+(b.status==='active'?'ok':'no')+'">'+esc((b.status||'active').toUpperCase())+'</span> · '+
+      '<a href="#" onclick="setTab(\'roster\');return false">'+emps+' on the team</a> · '+
+      '<a href="#" onclick="setTab(\'clients\');return false">'+cls.toLocaleString()+' clients</a> · '+
+      '<a href="#" onclick="setTab(\'clients\');return false">'+lds.toLocaleString()+' leads</a> · '+
+      bizDivisions().length+' division'+(bizDivisions().length===1?'':'s')+
+      ((b.targets||[]).length?' · '+(b.targets||[]).length+' target'+((b.targets||[]).length===1?'':'s'):'');
+  }
+  const dt=document.getElementById('bizDivs');
+  if(dt&&document.activeElement!==dt) dt.value=bizDivisions().map(d=>d.name).join('\n');
+  const dl=document.getElementById('bizDivList');
+  if(dl) dl.innerHTML=bizDivisions().length
+    ? bizDivisions().map(d=>{ const n2=divisionMembers(d).length;
+        return esc(d.name)+' — <a href="#" onclick="setTab(\'roster\');return false">'+n2+' member'+(n2===1?'':'s')+'</a>'; }).join(' · ')
+    : 'No divisions yet — add one per line above, or set Departments on employee records and they seed themselves.';
 }
 function bizSave(){
   if(!can('admin_security')){ toast('That is not part of your access'); return; }
@@ -4730,6 +4826,14 @@ function bizSave(){
     else hours[d[0]]=null;
   });
   patch.hours=hours;
+  // divisions: one per line; names that match existing divisions keep their ids
+  const dt=document.getElementById('bizDivs');
+  if(dt){
+    const cur=bizDivisions();
+    patch.divisions=dt.value.split('\n').map(x=>x.trim()).filter(Boolean)
+      .filter((x,i,a)=>a.findIndex(y=>norm(y)===norm(x))===i)
+      .map(nm=>{ const old=cur.find(d=>norm(d.name)===norm(nm)); return old?{id:old.id,name:nm}:{id:uid('dv'),name:nm}; });
+  }
   if(bizSet(patch)){ const n=document.getElementById('bizSavedNote'); if(n) n.textContent='Saved · the clock and week boundaries now follow these settings'; render(); }
 }
 
@@ -14085,6 +14189,7 @@ function restore(e){
     // Business Details: adopt the backup's copy only when this browser has none
     // (a backup from before Business Details existed simply leaves the defaults).
     if(d.biz&&typeof d.biz==='object'&&!BIZ){ BIZ=d.biz; save(K_BIZ,BIZ); bizDirty(); }
+    bizEnsure();
     const key=r=>r.rep+'|'+r.date+'|'+String(r.client).toLowerCase()+'|'+bookedValue(r).toFixed(2);
     // Restored sales are given fresh ids, so the payout ledger has to be told where each
     // one went. Without this map, every restored payout still pointed at the backup's old
@@ -15863,6 +15968,7 @@ function cloudApply(d){
   if(d.global&&typeof d.global==='object'){ GLOBAL=d.global; if(!GLOBAL.policy)GLOBAL.policy=Object.assign({},POLICY_DEFAULT); put(K_GLOBAL,GLOBAL); }
   // Business Details sync across devices like settings do — replace-style.
   if(d.biz&&typeof d.biz==='object'){ BIZ=d.biz; put(K_BIZ,BIZ); bizDirty(); }
+  bizEnsure();   // a pulled doc from before the business root existed still gets its id
   histDirty(); geoDirty(); invDirty();
   CLOUD.applying=false;
 }
@@ -16013,6 +16119,7 @@ document.getElementById('cMonth').value=defaultReportMonth();
 // entries, so they run here — after every collection and constant exists.
 payoutMigrate();
 reversalMigrate();
+bizEnsure();   // the business gets its permanent root id exactly once
 
 render();
 cloudInit();
