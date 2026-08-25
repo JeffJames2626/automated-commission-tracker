@@ -2402,6 +2402,33 @@
       } else {
         results.push({name:'BIZ business config exists (bizGet/bizDateAtTz)', expected:true, actual:false, pass:false});
       }
+
+      /* ---------- RPTMO: the commission report opens on months that happened ---------- */
+      if(typeof defaultReportMonth==='function'&&typeof commMonthIsFuture==='function'){
+        // The wipe scenario: no sales anywhere, every plan starts in the future.
+        // The report must open on LAST MONTH (honest zeros), never skip forward
+        // to a future month full of projected base pay.
+        // window.lastMonth: an old H-B test's `var lastMonth` (a string) hoists
+        // function-wide and shadows the page's function inside this suite.
+        ROWS=[]; PEOPLE=[mkPerson({start:'2099-01-01', payFrom:''})];
+        check('RPTMO no sales + future plans opens LAST month, not the future', window.lastMonth(), defaultReportMonth());
+        // With sales, the newest month that has any is still the pick.
+        ROWS=[mkRow({date:'2026-05-10'}), mkRow({date:'2026-03-02'})];
+        check('RPTMO newest month with sales wins', '2026-05', defaultReportMonth());
+        // The future flag itself.
+        check('RPTMO last month is not future', 'false', String(commMonthIsFuture(window.lastMonth())));
+        check('RPTMO the current month is not future', 'false', String(commMonthIsFuture(todayISO().slice(0,7))));
+        check('RPTMO 2099 is future', 'true', String(commMonthIsFuture('2099-01')));
+        // Deliberately navigating to a future month still shows the plan's
+        // guaranteed projection — the data layer is unchanged, only labeled.
+        var FP=mkPerson({start:'2099-01-01', payFrom:''});
+        PEOPLE=[FP]; ROWS=[];
+        checkTrue('RPTMO future month still projects base pay when asked',
+          commissionFor(FP,'2099-07','due').base>0, commissionFor(FP,'2099-07','due').base);
+        check('RPTMO …with zero commission in it', 0, commissionFor(FP,'2099-07','due').commission);
+      } else {
+        results.push({name:'RPTMO report-month guards exist', expected:true, actual:false, pass:false});
+      }
     } catch(e){
       results.push({name:'HARNESS ERROR', expected:'no throw', actual:String(e&&e.message||e), pass:false});
     } finally {

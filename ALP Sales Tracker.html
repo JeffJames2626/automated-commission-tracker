@@ -5842,11 +5842,16 @@ function defaultReportMonth(){
   const prev=lastMonth();
   const withSales=ROWS.map(r=>r.date.slice(0,7)).filter(m=>m<=prev).sort();
   if(withSales.length) return withSales[withSales.length-1];
-  if(!PEOPLE.length) return prev;
-  const anyLive=PEOPLE.some(p=>payStart(p).slice(0,7)<=prev);
-  if(anyLive) return prev;
-  return PEOPLE.map(p=>payStart(p).slice(0,7)).sort()[0];
+  // Always open on a month that has HAPPENED. This used to skip forward to the
+  // first live plan month "rather than a page of zeros" — but after a data wipe
+  // that meant the report opened on a FUTURE month showing projected base pay,
+  // which reads as "we deleted the sales and people still have pay". An honest
+  // empty month beats a confident projection nobody asked for.
+  return prev;
 }
+// Is this report month still in the future for the business? (Pure, testable —
+// the banner in renderComm hangs off this.)
+function commMonthIsFuture(ym){ return String(ym||'')>todayISO().slice(0,7); }
 function monthBounds(ym){
   const y=+ym.slice(0,4), m=+ym.slice(5,7);
   return {from:iso(y,m,1), to:iso(y,m,daysInMonth(y,m-1)), label:MON[m-1]+' '+y};
@@ -6009,6 +6014,11 @@ function renderComm(){
        : 'Sales closed in this period')+'</div></div>'+
      '<div class="per"><b>'+b.label+'</b>'+fmtY(b.from)+' – '+fmtY(b.to)+
      '<br>Prepared '+fmtY(todayISO())+(currentAdmin()?' by '+esc(currentAdmin().name):'')+'</div></div>';
+
+  if(commMonthIsFuture(ym)) h+='<div class="warnbox" style="margin:10px 0">'+
+    '<b>'+b.label+' has not happened yet.</b> Nothing on this page is money that moved — '+
+    'base pay figures are the comp plan’s guaranteed projection for this future month, '+
+    'and commission cannot exist until sales are invoiced. The report is here for planning, not payroll.</div>';
 
   /* ---- summary ---- */
   h+='<div class="repsec"><h4>Summary</h4><div class="scroll"><table><thead><tr>'+
