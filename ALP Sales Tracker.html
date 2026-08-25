@@ -1357,6 +1357,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
           <span class="hint" id="srcHint"></span></div>
       </div>
       <div class="scroll"><table id="srcTable"></table></div>
+      <div id="srcUnused"></div>
       <details>
         <summary>What "converted" means here, and what it does not</summary>
         <div class="dbody note">
@@ -7542,32 +7543,39 @@ function renderSources(){
   const byCat={}; list.forEach(g=>{ (byCat[g.cat]=byCat[g.cat]||[]).push(g); });
   const cats=SRC_CATS.filter(c=>byCat[c]).concat(Object.keys(byCat).filter(c=>SRC_CATS.indexOf(c)<0));
 
+  // Sales columns only earn their width once a logged sale ties to a source.
+  const hasSales=list.some(g=>g.sales);
   let h='<thead><tr><th>Source</th><th class="num">Open leads</th><th class="num">Clients</th>'+
-    '<th class="num">New in a year</th><th class="num">Converted</th><th class="num">Sales logged</th>'+
-    '<th class="num">Booked</th></tr></thead><tbody>';
+    '<th class="num">New in a year</th><th class="num">Converted</th>'+
+    (hasSales?'<th class="num">Sales logged</th><th class="num">Booked</th>':'')+'</tr></thead><tbody>';
   cats.forEach(cat=>{
     const g=byCat[cat].slice().sort((a,b)=>(b.clients+b.leads)-(a.clients+a.leads));
     const cc=g.reduce((a,x)=>a+x.clients,0), cl=g.reduce((a,x)=>a+x.leads,0);
     const ccv=(cc+cl)?cc/(cc+cl)*100:null;
-    h+='<tr class="tot"><td>'+esc(cat)+'</td><td class="num">'+cl.toLocaleString()+'</td>'+
+    const open=!!SRC_OPEN[cat];
+    const jsCat=JSON.stringify(cat).replace(/"/g,'&quot;');
+    h+='<tr class="tot" style="cursor:pointer" onclick="srcToggleCat('+jsCat+')" title="'+(open?'collapse':'show the '+g.length+' source'+(g.length===1?'':'s')+' behind this')+'">'+
+      '<td><span style="display:inline-block;width:14px;color:var(--muted)">'+(open?'▾':'▸')+'</span>'+esc(cat)+
+      (open?'':' <span class="note">'+g.length+'</span>')+'</td>'+
+      '<td class="num">'+cl.toLocaleString()+'</td>'+
       '<td class="num">'+cc.toLocaleString()+'</td>'+
       '<td class="num">'+g.reduce((a,x)=>a+x.recent,0)+'</td>'+
       '<td class="num">'+(ccv==null?'—':num(ccv,0)+'%')+'</td>'+
-      '<td class="num">'+g.reduce((a,x)=>a+x.sales,0)+'</td>'+
-      '<td class="num">'+money(g.reduce((a,x)=>a+x.booked,0))+'</td></tr>';
-    g.forEach(x=>{
+      (hasSales?'<td class="num">'+g.reduce((a,x)=>a+x.sales,0)+'</td>'+
+      '<td class="num">'+money(g.reduce((a,x)=>a+x.booked,0))+'</td>':'')+'</tr>';
+    if(open) g.forEach(x=>{
       const m=srcMaster(x.name);
       const conv=x.conv;
       const cls=conv==null?'n':(conv>=70?'ok':conv>=45?'mid':'no');
-      h+='<tr><td style="padding-left:22px">'+esc(srcName(x.name))+
+      h+='<tr><td style="padding-left:30px">'+esc(srcName(x.name))+
         (m&&m[1]?'<span class="note"> '+esc(m[1])+'</span>':'')+
         (!m&&x.name!==NO_SRC?' <span class="pill no">NOT ON THE LIST</span>':'')+'</td>'+
         '<td class="num">'+x.leads.toLocaleString()+'</td>'+
         '<td class="num">'+x.clients.toLocaleString()+'</td>'+
         '<td class="num">'+(x.recent||'—')+'</td>'+
         '<td class="num">'+(conv==null?'—':'<span class="pill '+cls+'">'+num(conv,0)+'%</span>')+'</td>'+
-        '<td class="num">'+(x.sales||'—')+'</td>'+
-        '<td class="num mono">'+(x.booked?money(x.booked):'—')+'</td></tr>';
+        (hasSales?'<td class="num">'+(x.sales||'—')+'</td>'+
+        '<td class="num mono">'+(x.booked?money(x.booked):'—')+'</td>':'')+'</tr>';
     });
   });
   // anything on the master list nobody has used
@@ -7576,11 +7584,16 @@ function renderSources(){
   h+='</tbody>';
   t.innerHTML=h;
 
-  const note=unused.length
-    ? '<div class="pad note">On the Service Autopilot list but not attached to anybody yet: '+
+  // Fixed slot, replaced wholesale each render — appending next to the table
+  // is how this note used to multiply down the page.
+  const slot=document.getElementById('srcUnused');
+  if(slot) slot.innerHTML=unused.length
+    ? '<div class="pad note" style="padding-top:0">On the Service Autopilot list but not attached to anybody yet: '+
       unused.map(x=>'<b>'+esc(x[0])+'</b>').join(', ')+'.</div>' : '';
-  if(note && !t.nextElementSibling){ t.parentNode.insertAdjacentHTML('afterend', note); }
 }
+// Which source categories are expanded — session-only, collapsed by default.
+let SRC_OPEN={};
+function srcToggleCat(cat){ SRC_OPEN[cat]=!SRC_OPEN[cat]; renderSources(); }
 
 /* ============================================================
    PROPERTY DATA
