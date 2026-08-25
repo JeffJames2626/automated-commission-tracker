@@ -1997,6 +1997,10 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
         <div><label>Week starts</label><select id="bizWeekStart"><option value="mon">Monday</option><option value="sun">Sunday</option></select></div>
         <div style="align-self:end"><span class="note" id="bizClockNote"></span></div>
       </div>
+      <div style="margin-top:10px"><b style="font-size:12px">Operating system</b>
+        <span class="hint">product experience only — never permissions, identity, or money. Turning EOS off hides the experience; it deletes nothing.</span></div>
+      <label style="display:flex;gap:7px;align-items:center;margin-top:5px;font-size:13px">
+        <input type="checkbox" id="bizEos"> EOS / Traction — Roles, Accountability and Scorecard features</label>
       <div style="margin-top:10px"><b style="font-size:12px">Divisions</b>
         <span class="hint">the service lines this business operates — one per line; employees link through the Department on their record</span></div>
       <textarea id="bizDivs" rows="4" style="width:100%;max-width:340px;margin-top:5px;font:inherit"></textarea>
@@ -3785,6 +3789,7 @@ function pNum(s){
    ============================================================ */
 function bizDefaults(){ return {
   id:'', status:'active', divisions:[], targets:[],   // root fields — bizEnsure() stamps the permanent id
+  ops:{eos:false},   // operating-system choices — product experience, never permissions or identity
   name:'Automated Lawn & Pest', appName:'ALP Sales Tracker', legal:'', email:'', phone:'', website:'',
   addr1:'', addr2:'', city:'Spokane', state:'WA', zip:'', country:'US',
   tz:'America/Los_Angeles',    // IANA — Intl handles PST/PDT itself, never a raw offset
@@ -3801,7 +3806,8 @@ function bizDirty(){ BIZ_CACHE=null; }
 function bizGet(){ if(BIZ_CACHE) return BIZ_CACHE;
   const d=bizDefaults(); let out;
   if(!BIZ||typeof BIZ!=='object') out=d;
-  else { out=Object.assign({},d,BIZ); out.hours=Object.assign({},d.hours,BIZ.hours||{}); }
+  else { out=Object.assign({},d,BIZ); out.hours=Object.assign({},d.hours,BIZ.hours||{});
+    out.ops=Object.assign({},d.ops,BIZ.ops||{}); }
   BIZ_CACHE=out; return out; }
 function bizSet(patch){
   if(!can('admin_security')){ toast('That is not part of your access'); return false; }
@@ -3819,6 +3825,7 @@ function bizSet(patch){
   return true;
 }
 function BIZ_TZ(){ return bizGet().tz||'America/Los_Angeles'; }
+function businessUsesEOS(){ return !!(bizGet().ops&&bizGet().ops.eos); }
 // The clock. Pure at the core: give it any instant and any IANA zone and it
 // answers what date/time that instant is THERE. Intl owns the DST rules.
 function bizPartsAtTz(d,tz){
@@ -3900,6 +3907,10 @@ function bizEnsure(){
     cur.divisions=dv; changed=true;
   }
   if(!Array.isArray(cur.targets)){ cur.targets=[]; changed=true; }
+  if(!cur.ops||typeof cur.ops.eos==='undefined'){
+    cur.ops=Object.assign({},cur.ops||{},{eos:!born});   // existing record → on; fresh install → setup asks
+    changed=true;
+  }
   if(changed){
     BIZ=cur; save(K_BIZ,BIZ); bizDirty();
     if(born) auditRecord('biz-migrate',{id:cur.id, divisions:cur.divisions.length});
@@ -4027,6 +4038,8 @@ function renderCompanyGate(){
     '<div style="flex:0 1 80px"><label>State</label><input id="csState"></div>'+
     '<div style="flex:0 1 100px"><label>ZIP</label><input id="csZip"></div>'+
     '<div style="flex:0 1 90px"><label>Country</label><input id="csCountry"></div></div>'+
+    '<div class="frow" style="align-items:center"><div><label>Do you use EOS / Traction?</label>'+
+    '<label style="text-transform:none;letter-spacing:0;font-size:13px;font-weight:500;display:flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" id="csEos"> Yes — enable EOS Roles, Accountability and Scorecard features</label></div></div>'+
     '<div class="frow"><div><label>Timezone (IANA)</label><input id="csTz" list="bizTzList"></div>'+
     '<div style="flex:0 1 150px"><label>Week starts</label><select id="csWeekStart"><option value="mon">Monday</option><option value="sun">Sunday</option></select></div></div>'+
     '<div style="margin-top:12px"><label style="margin-bottom:4px">Business hours <span class="note" style="text-transform:none;letter-spacing:0;font-weight:400">— leave a day blank if undecided; the app answers “unknown” rather than guessing</span></label><div id="csHours"></div></div>'+
@@ -4060,6 +4073,7 @@ function companySetupSave(){
     else if(o.value&&x.value) hours[d[0]]={closed:false,open:o.value,close:x.value};
     else hours[d[0]]=null; });
   patch.hours=hours;
+  patch.ops=Object.assign({},bizGet().ops,{eos:!!(document.getElementById('csEos')||{}).checked});
   const s=session();
   const next=Object.assign({},bizGet(),patch);
   Object.keys(next).forEach(k=>{ if(k.charAt(0)==='_') delete next[k]; });
@@ -5497,6 +5511,8 @@ function renderBiz(){
       bizDivisions().length+' division'+(bizDivisions().length===1?'':'s')+
       ((b.targets||[]).length?' · '+(b.targets||[]).length+' target'+((b.targets||[]).length===1?'':'s'):'');
   }
+  const eo=document.getElementById('bizEos');
+  if(eo) eo.checked=businessUsesEOS();
   const dt=document.getElementById('bizDivs');
   if(dt&&document.activeElement!==dt) dt.value=bizDivisions().map(d=>d.name).join('\n');
   const dl=document.getElementById('bizDivList');
@@ -5532,6 +5548,8 @@ function bizSave(){
     else hours[d[0]]=null;
   });
   patch.hours=hours;
+  const eo=document.getElementById('bizEos');
+  if(eo) patch.ops=Object.assign({},bizGet().ops,{eos:eo.checked});
   // divisions: one per line; names that match existing divisions keep their ids
   const dt=document.getElementById('bizDivs');
   if(dt){
@@ -5571,7 +5589,9 @@ function renderAdmin(){
     return;
   }
   renderBiz();
-  renderEos();
+  const eosCard=document.getElementById('eosCard');
+  if(eosCard) eosCard.style.display=businessUsesEOS()?'':'none';
+  if(businessUsesEOS()) renderEos();
   const ot=document.getElementById('ownershipTable');
   if(ot&&!ot.dataset.built){ ot.dataset.built='1';
     ot.innerHTML='<thead><tr><th>Domain</th><th>Canonical store</th><th>Owner</th><th>Inbound</th><th>Conflict rule</th></tr></thead><tbody>'+
@@ -11789,7 +11809,7 @@ function runChecks(){
       sub:'ended '+fmtY(p.ended)+' but still active — pick one, the roster and reports disagree until then'});
   });
   const eosdrift=[];
-  PEOPLE.filter(p=>p.active&&p.id!==EMP_UNASSIGNED).forEach(p=>{
+  if(businessUsesEOS()) PEOPLE.filter(p=>p.active&&p.id!==EMP_UNASSIGNED).forEach(p=>{
     const held=empEosRoles(p.id); if(!held.length||!p.title) return;
     const t=norm(p.title);
     if(!held.some(r=>t.indexOf(norm(r.name))>-1||norm(r.name).indexOf(t)>-1))
@@ -16561,7 +16581,7 @@ function renderEmp(){
   h+='<div class="epsecs">'+secs.map(x=>'<button class="sm'+(EP_SEC===x[0]?' on':'')+'" onclick="epSec(\''+x[0]+'\')">'+esc(x[1])+'</button>').join('')+'</div>';
 
   if(EP_SEC==='overview'){
-    const myRolesEos=empEosRoles(p.id);
+    const myRolesEos=businessUsesEOS()?empEosRoles(p.id):[];
     if(myRolesEos.length) h+='<div class="note" style="margin:2px 0 10px"><b>EOS Role:</b> '+
       myRolesEos.map(r=>'<a href="#" onclick="closeEmp();eosJump();return false"><b>'+esc(r.name)+'</b></a>').join(' · ')+
       ' <span class="hint">canonical seat — the job title above is a separate fact</span></div>';

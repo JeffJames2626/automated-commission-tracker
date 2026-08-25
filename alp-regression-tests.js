@@ -2856,6 +2856,7 @@
                 mkPerson({id:'EO2', name:'New Hire', title:'', roles:[]})];
         if(typeof EMP_IDX!=='undefined') EMP_IDX=null;
         bizEnsure();
+        bizSet({ops:{eos:true}});   // fresh fixtures default EOS off — these are EOS tests
         var er=eosRoleCreate('Estimator', (bizDivisions()[0]||{}).id);
         checkTrue('EOSROLE a seat gets a permanent id', /^er/.test(er.id), er.id);
         check('EOSROLE the seat belongs to the business', bizId(), er.biz);
@@ -2916,6 +2917,47 @@
         check('EOSROLE cloud sync preserves the ids', er.id, (EOSROLES.filter(function(r){return r.name==='Project Estimator';})[0]||{}).id);
       } else {
         results.push({name:'EOSROLE entity exists', expected:true, actual:false, pass:false});
+      }
+
+      /* ---------- EOSTOGGLE: EOS is a business choice, never a destroyer ---------- */
+      if(typeof businessUsesEOS==='function'){
+        ADMIN=true; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+        PEOPLE=[mkPerson({id:'ET1', name:'Seat Holder', title:'Ops', roles:['sales']})];
+        if(typeof EMP_IDX!=='undefined') EMP_IDX=null;
+        // a brand-new business decides at setup — default off
+        BIZ=null; bizDirty(); bizEnsure();
+        check('EOSTOGGLE a fresh business starts with EOS off until setup asks', false, businessUsesEOS());
+        var freshId=bizId();
+        // the EXISTING business (record already present) is grandfathered ON
+        BIZ={id:'biz-existing', status:'active', divisions:[], targets:[], name:'ALP'}; bizDirty();
+        bizEnsure();
+        check('EOSTOGGLE an existing business keeps the EOS it was building', true, businessUsesEOS());
+        check('EOSTOGGLE …with its id untouched', 'biz-existing', bizId());
+        // seat data exists; disabling hides, deletes nothing
+        EOSROLES=[]; EOSASSIGN=[];
+        var tr=eosRoleCreate('Integrator');
+        eosAssign('ET1', tr.id);
+        var rolesJson=JSON.stringify(EOSROLES), assignJson=JSON.stringify(EOSASSIGN);
+        var capsB4=JSON.stringify(empRoleKeys(PEOPLE[0]));
+        var rowsB4=JSON.stringify(ROWS), payoutsB4=JSON.stringify(PAYOUTS);
+        bizSet({ops:{eos:false}});
+        check('EOSTOGGLE EOS can be turned off later', false, businessUsesEOS());
+        check('EOSTOGGLE turning it off deletes no roles', rolesJson, JSON.stringify(EOSROLES));
+        check('EOSTOGGLE …and no assignment history', assignJson, JSON.stringify(EOSASSIGN));
+        checkTrue('EOSTOGGLE the drift check goes quiet while off',
+          !runChecks().some(function(c){return c.id==='eosdrift';}), 'quiet');
+        check('EOSTOGGLE the setting never touches permissions', capsB4, JSON.stringify(empRoleKeys(PEOPLE[0])));
+        check('EOSTOGGLE …or financial data', rowsB4+'|'+payoutsB4, JSON.stringify(ROWS)+'|'+JSON.stringify(PAYOUTS));
+        bizSet({ops:{eos:true}});
+        check('EOSTOGGLE re-enabling restores access to the same data', 1, empEosRoles('ET1').length);
+        // the choice persists through storage and backup
+        check('EOSTOGGLE the setting lives on the business record', true, !!(BIZ.ops&&BIZ.ops.eos));
+        checkTrue('EOSTOGGLE backup carries the choice', stateSnapshot().biz.ops.eos===true, 'ok');
+        ROWS=[]; PAYOUTS=[];
+        cloudApply({biz:Object.assign(JSON.parse(JSON.stringify(BIZ)),{ops:{eos:false}})});
+        check('EOSTOGGLE cloud sync carries the choice both ways', false, businessUsesEOS());
+      } else {
+        results.push({name:'EOSTOGGLE resolver exists', expected:true, actual:false, pass:false});
       }
     } catch(e){
       results.push({name:'HARNESS ERROR', expected:'no throw', actual:String(e&&e.message||e), pass:false});
