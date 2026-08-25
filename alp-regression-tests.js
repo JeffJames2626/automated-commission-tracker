@@ -2616,6 +2616,81 @@
       } else {
         results.push({name:'BIZROOT business root exists', expected:true, actual:false, pass:false});
       }
+
+      /* ---------- BIZSETUP: the company is user-facing ---------- */
+      if(typeof companyGateState==='function'){
+        var sessWas=localStorage.getItem('alp_session_v1');
+        try{
+          // a technically-migrated record is NOT a confirmed company
+          BIZ=null; bizDirty(); PEOPLE=[mkPerson({id:'CG1', email:'own@x.com'})]; ROWS=[];
+          localStorage.removeItem('alp_session_v1');
+          bizEnsure();
+          check('BIZSETUP a migrated record is not a confirmed company', false, bizSetupComplete());
+          // CASE A: the admin is routed to setup; a plain user is never trapped by it
+          ADMIN=true; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+          check('BIZSETUP admin with an unconfirmed company is routed to setup', 'setup', companyGateState());
+          ADMIN=false; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+          check('BIZSETUP a non-admin is not walled by unconfirmed setup', 'ok', companyGateState());
+          // the setup screen pre-fills what the business already knows
+          ADMIN=true; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+          localStorage.setItem('alp_session_v1', JSON.stringify({token:'t1',email:'own@x.com',name:'Owner',role:'admin'}));
+          renderCompanyGate();
+          check('BIZSETUP setup pre-fills the existing company name', 'Automated Lawn & Pest',
+            (document.getElementById('csName')||{}).value);
+          check('BIZSETUP …and the existing timezone', 'America/Los_Angeles', (document.getElementById('csTz')||{}).value);
+          // completing setup confirms the SAME record — id untouched, owner membership recorded
+          var idBefore=bizId();
+          document.getElementById('csCity').value='Spokane';
+          checkTrue('BIZSETUP setup completes', companySetupSave(), 'save');
+          check('BIZSETUP the business id survives setup unchanged', idBefore, bizId());
+          check('BIZSETUP the company is now confirmed', true, bizSetupComplete());
+          check('BIZSETUP the creator becomes the owner member', 'owner', (bizMembership('own@x.com')||{}).role);
+          check('BIZSETUP …linked to their employee record', 'CG1', (bizMembership('own@x.com')||{}).empId);
+          // double-submit and re-runs create nothing
+          var mN=bizMembers().length;
+          companySetupSave(); companySetupSave();
+          check('BIZSETUP double-submit creates no duplicates', mN, bizMembers().length);
+          check('BIZSETUP …and never a second business', idBefore, bizId());
+          // CASE C: a member with an employee record auto-links and enters
+          PEOPLE.push(mkPerson({id:'CG2', name:'Member Two', email:'m2@x.com'}));
+          if(typeof EMP_IDX!=='undefined') EMP_IDX=null;
+          ADMIN=false; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+          localStorage.setItem('alp_session_v1', JSON.stringify({token:'t2',email:'m2@x.com',name:'M2',role:'member'}));
+          companyMemberEnsure();
+          check('BIZSETUP an employee login auto-links as a member', 'member', (bizMembership('m2@x.com')||{}).role);
+          check('BIZSETUP …and enters the company', 'ok', companyGateState());
+          // CASE D: authorized domain, no employee record — pending, never ALP #2
+          localStorage.setItem('alp_session_v1', JSON.stringify({token:'t3',email:'stranger@x.com',name:'S',role:'member'}));
+          if(typeof EMP_IDX!=='undefined') EMP_IDX=null;
+          companyMemberEnsure();
+          check('BIZSETUP an unlinked login waits at the door', 'pending', companyGateState());
+          check('BIZSETUP …with no membership invented', 'null', String(bizMembership('stranger@x.com')));
+          check('BIZSETUP …and no second company', idBefore, bizId());
+          // id permanence: identity edits never touch the id, tz edits move the clock
+          ADMIN=true; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+          bizSet({name:'Renamed Co', city:'Elsewhere', tz:'America/New_York'});
+          check('BIZSETUP name/address/timezone changes never change the id', idBefore, bizId());
+          check('BIZSETUP the clock follows the company timezone setting',
+            bizDateAtTz(new Date(),'America/New_York'), todayISO());
+          bizSet({tz:'America/Los_Angeles'});
+          // backup + cloud carry the confirmed company
+          checkTrue('BIZSETUP backup carries setup and id',
+            stateSnapshot().biz.setup.complete===true&&stateSnapshot().biz.id===idBefore, idBefore);
+          ROWS=[]; PAYOUTS=[];
+          var bizNow2=JSON.parse(JSON.stringify(BIZ));
+          cloudApply({biz:bizNow2});
+          check('BIZSETUP cloud sync preserves the confirmed company', true, bizSetupComplete());
+          check('BIZSETUP …and its id', idBefore, bizId());
+        } finally {
+          if(sessWas===null) localStorage.removeItem('alp_session_v1');
+          else localStorage.setItem('alp_session_v1', sessWas);
+          document.body.classList.remove('cwalled');
+          var cg=document.getElementById('companyGate');
+          if(cg){ cg.style.display='none'; cg.innerHTML=''; cg.dataset.built=''; }
+        }
+      } else {
+        results.push({name:'BIZSETUP company gate exists', expected:true, actual:false, pass:false});
+      }
     } catch(e){
       results.push({name:'HARNESS ERROR', expected:'no throw', actual:String(e&&e.message||e), pass:false});
     } finally {

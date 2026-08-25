@@ -291,8 +291,26 @@ function mergeProtected(incomingRaw, storedRaw, email) {
       : (stored[k] || []);
   });
   // Business Details are the ORG's record — everyone reads them, only an admin
-  // save (which skips this merge entirely) can write or seed them.
-  if (stored.biz !== undefined) inc.biz = stored.biz; else delete inc.biz;
+  // save (which skips this merge entirely) can write or seed them. One narrow
+  // exception: a signed-in member may record their OWN first membership row
+  // (their email, role 'member' — the auto-link a login performs). They cannot
+  // change roles, touch anyone else's row, or edit anything else on the record.
+  if (stored.biz !== undefined) {
+    let merged = stored.biz;
+    try {
+      const em = String(email || '').toLowerCase().trim();
+      const incM = inc.biz && Array.isArray(inc.biz.members) ? inc.biz.members : [];
+      const mine = incM.find(m => m && String(m.email || '').toLowerCase().trim() === em && m.role === 'member');
+      const have = stored.biz && Array.isArray(stored.biz.members) ? stored.biz.members : [];
+      if (em && mine && stored.biz.setup && stored.biz.setup.complete &&
+          !have.some(m => m && String(m.email || '').toLowerCase().trim() === em)) {
+        merged = JSON.parse(JSON.stringify(stored.biz));
+        merged.members = (merged.members || []).concat([{ email: em, role: 'member',
+          empId: String(mine.empId || ''), on: String(mine.on || ''), by: 'self-link' }]);
+      }
+    } catch (e) {}
+    inc.biz = merged;
+  } else delete inc.biz;
   return JSON.stringify(inc);
 }
 

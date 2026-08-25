@@ -505,8 +505,17 @@ footer{padding:24px 0 40px;font-size:12px;color:var(--muted);text-align:center}
 #lockGoogle .or{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;margin:14px 0 4px}
 #lockGoogle .or:before,#lockGoogle .or:after{content:"";flex:1;border-top:1px solid var(--line)}
 /* Login wall: on the hosted site nothing shows until a company Google account is signed in. */
-#loginWall{position:fixed;inset:0;z-index:9000;background:var(--sand);display:flex;align-items:center;justify-content:center;padding:24px}
-#loginWall .card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:34px 30px;max-width:440px;width:100%;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.08)}
+#loginWall,#companyGate{position:fixed;inset:0;z-index:9000;background:var(--sand);display:flex;align-items:center;justify-content:center;padding:24px;overflow:auto}
+#loginWall .card,#companyGate .card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:34px 30px;max-width:440px;width:100%;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.08)}
+/* Company setup is a form, not a lock screen: wider, left-aligned, scrollable. */
+#companyGate{z-index:8900;align-items:flex-start}
+#companyGate .card{max-width:600px;text-align:left;margin:4vh auto}
+#companyGate h2{margin:10px 0 2px;font-size:22px;text-transform:none;letter-spacing:0;color:var(--ink)}
+#companyGate .frow{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+#companyGate .frow>div{flex:1 1 150px;min-width:0}
+#companyGate label{display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:3px}
+#companyGate input,#companyGate select{width:100%}
+body.cwalled>*:not(#companyGate){visibility:hidden}
 #loginWall .ico{font-size:40px;line-height:1}
 #loginWall h2{margin:12px 0 4px;font-size:22px;text-transform:none;letter-spacing:0;color:var(--ink)}
 #loginWall .sub{color:var(--muted);font-size:13px;margin-bottom:18px}
@@ -940,6 +949,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
 <body>
 
 <div id="loginWall" style="display:none"></div>
+<div id="companyGate" style="display:none"></div>
 <input type="file" id="avFile" accept="image/*" style="display:none" onchange="empPhotoFromInput(event)">
 
 <header id="appHeader">
@@ -1902,8 +1912,8 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
       <div class="needs" id="adminNeeds"></div>
       <div class="statestrip" id="adminState"></div>
     </section>
-    <section class="adminsec">
-      <div class="hdr"><h3>🏢 Business</h3>
+    <section class="adminsec" id="bizCard">
+      <div class="hdr"><h3>🏢 Company settings</h3>
         <span class="hint">The root of everything. One permanent business id; employees, clients, leads, divisions, settings, and the clock all belong to it — nothing else in the app should hard-code who or where the business is.</span></div>
       <div class="note" id="bizIdLine" style="margin-bottom:10px"></div>
       <div class="frow">
@@ -1934,6 +1944,15 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
         <span class="hint">the service lines this business operates — one per line; employees link through the Department on their record</span></div>
       <textarea id="bizDivs" rows="4" style="width:100%;max-width:340px;margin-top:5px;font:inherit"></textarea>
       <div class="note" id="bizDivList" style="margin-top:5px"></div>
+      <div style="margin-top:10px"><b style="font-size:12px">Targets</b>
+        <span class="hint">company goals by period — the container the future goal system builds on; owner dashboards read from here, never from a person’s record</span></div>
+      <div class="note" id="bizTargetList" style="margin-top:5px"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;align-items:end">
+        <div><label style="font-size:11px">Metric</label><input id="bizTgMetric" placeholder="revenue" style="width:130px"></div>
+        <div><label style="font-size:11px">Period</label><input id="bizTgPeriod" placeholder="2027 or 2027-05" style="width:120px"></div>
+        <div><label style="font-size:11px">Target</label><input id="bizTgValue" type="number" style="width:110px"></div>
+        <button class="sm" onclick="bizTargetAddUI()">Set target</button>
+      </div>
       <div style="margin-top:10px"><b style="font-size:12px">Business hours</b>
         <span class="hint">leave a day blank if you have not decided — the app answers “unknown” rather than guessing</span></div>
       <div id="bizHoursGrid" style="margin-top:6px"></div>
@@ -3813,6 +3832,144 @@ function bizTargetSet(metric,period,value){
   auditRecord('biz-target',{metric, period, value:+value, was:old?old.value:null});
   return true;
 }
+
+/* ============================================================
+   THE COMPANY — the user-facing face of the business root.
+   Three identities, deliberately distinct: a USER is an authenticated
+   account (session email, server users table); an EMPLOYEE is a person
+   on the roster; the COMPANY is the organization both belong to. A
+   user resolves user → membership → business id → employee record.
+   A technically-migrated business record is NOT a confirmed company:
+   an admin walks through Company Setup once, and only that sets
+   BIZ.setup.complete. Members never create ALP #2 by logging in.
+   ============================================================ */
+function bizSetupComplete(){ return !!(BIZ&&BIZ.setup&&BIZ.setup.complete); }
+function bizMembers(){ return bizGet().members||[]; }
+function bizMembership(email){ email=String(email||'').toLowerCase().trim();
+  if(!email) return null; return bizMembers().find(m=>m.email===email)||null; }
+// Company-level authority: the server-verified admin role, the device admin
+// gate, or an owner/admin membership. Never a person's name, never a job title.
+function userIsCompanyAdmin(){
+  const s=session(); if(s&&s.role==='admin') return true;
+  if(typeof ADMIN!=='undefined'&&ADMIN) return true;
+  const m=s?bizMembership(s.email):null;
+  return !!(m&&(m.role==='owner'||m.role==='admin'));
+}
+// What stands between this user and the app right now?
+//   'setup'   — no confirmed company yet, and this user can establish it
+//   'pending' — company confirmed, user authenticated, but not linked to it
+//   'ok'      — inside the company (or local/PIN mode, where existing gates apply)
+function companyGateState(){
+  if(!bizSetupComplete()) return userIsCompanyAdmin()?'setup':'ok';
+  const s=session(); if(!s) return 'ok';
+  if(s.role==='admin') return 'ok';
+  if(bizMembership(s.email)) return 'ok';
+  if(typeof empMe==='function'&&empMe()) return 'ok';
+  return 'pending';
+}
+// A signed-in user who resolves to an employee gets their membership recorded
+// once — the invite already happened (the server's user list + the employee
+// email link ARE the approval flow). Nobody self-promotes: role follows the
+// server session, and the server keeps membership admin-write for everyone else.
+function companyMemberEnsure(){
+  const s=session(); if(!s||!s.email) return;
+  if(!bizSetupComplete()) return;
+  const em=String(s.email).toLowerCase().trim();
+  if(bizMembership(em)) return;
+  const me=(typeof empMe==='function')?empMe():null;
+  if(!me && s.role!=='admin') return;                 // unlinked stays pending, an admin links them
+  BIZ=Object.assign({},bizGet());
+  Object.keys(BIZ).forEach(k=>{ if(k.charAt(0)==='_') delete BIZ[k]; });
+  (BIZ.members=BIZ.members||[]).push({email:em, role:s.role==='admin'?'admin':'member',
+    empId:me?me.id:'', on:todayISO(), by:'auto-link'});
+  save(K_BIZ,BIZ); bizDirty();
+  auditRecord('company-member',{email:em, role:s.role==='admin'?'admin':'member', empId:me?me.id:''});
+}
+const CS_FIELDS=[['csName','name'],['csLegal','legal'],['csPhone','phone'],['csEmail','email'],
+  ['csWebsite','website'],['csAddr1','addr1'],['csCity','city'],['csState','state'],
+  ['csZip','zip'],['csCountry','country'],['csTz','tz'],['csWeekStart','weekStart']];
+function renderCompanyGate(){
+  const g=document.getElementById('companyGate'); if(!g) return;
+  if(document.body.classList.contains('walled')){ g.style.display='none'; document.body.classList.remove('cwalled'); return; }
+  const st=companyGateState();
+  document.body.classList.toggle('cwalled', st!=='ok');
+  g.style.display = st==='ok'?'none':'';
+  if(st==='ok'){ g.innerHTML=''; g.dataset.built=''; return; }
+  if(st==='pending'){
+    g.dataset.built='';
+    g.innerHTML='<div class="card" style="text-align:center;max-width:440px"><div style="font-size:40px">🔗</div>'+
+      '<h2>Account not yet linked</h2>'+
+      '<div class="note" style="margin-top:8px">You are signed in, but your login is not tied to a team member at <b>'+esc(bizGet().name)+'</b> yet. '+
+      'An administrator links logins on the Team page — ask them to connect yours, then reload.</div></div>';
+    return;
+  }
+  if(g.dataset.built) return;   // resuming setup keeps whatever is typed — nothing saves until submit
+  g.dataset.built='1';
+  const b=bizGet();
+  g.innerHTML='<div class="card">'+
+    '<h2>Set up your company</h2>'+
+    '<div class="note" style="margin:2px 0 6px">One company record owns everything in this tracker — the team, clients, sales, invoices, the clock. '+
+    'What is already known is filled in; confirm or correct it. Everything stays editable later in Company settings.</div>'+
+    '<div class="frow"><div style="flex:2 1 220px"><label>Company name</label><input id="csName"></div>'+
+    '<div><label>Legal name (optional)</label><input id="csLegal"></div></div>'+
+    '<div class="frow"><div><label>Phone</label><input id="csPhone"></div>'+
+    '<div><label>Primary email</label><input id="csEmail"></div>'+
+    '<div><label>Website (optional)</label><input id="csWebsite"></div></div>'+
+    '<div class="frow"><div style="flex:2 1 200px"><label>Street address</label><input id="csAddr1"></div>'+
+    '<div><label>City</label><input id="csCity"></div>'+
+    '<div style="flex:0 1 80px"><label>State</label><input id="csState"></div>'+
+    '<div style="flex:0 1 100px"><label>ZIP</label><input id="csZip"></div>'+
+    '<div style="flex:0 1 90px"><label>Country</label><input id="csCountry"></div></div>'+
+    '<div class="frow"><div><label>Timezone (IANA)</label><input id="csTz" list="bizTzList"></div>'+
+    '<div style="flex:0 1 150px"><label>Week starts</label><select id="csWeekStart"><option value="mon">Monday</option><option value="sun">Sunday</option></select></div></div>'+
+    '<div style="margin-top:12px"><label style="margin-bottom:4px">Business hours <span class="note" style="text-transform:none;letter-spacing:0;font-weight:400">— leave a day blank if undecided; the app answers “unknown” rather than guessing</span></label><div id="csHours"></div></div>'+
+    '<div style="margin-top:16px;display:flex;gap:10px;align-items:center">'+
+    '<button class="p" onclick="companySetupSave()">Create company</button>'+
+    '<span class="note">Saved to the permanent company record — the id never changes after this.</span></div></div>';
+  CS_FIELDS.forEach(f=>{ const x=document.getElementById(f[0]); if(x) x.value=b[f[1]]==null?'':b[f[1]]; });
+  const hg=document.getElementById('csHours');
+  if(hg){ hg.innerHTML=BIZ_DAYS.map(d=>'<div style="display:flex;gap:8px;align-items:center;margin:2px 0">'+
+      '<span style="width:86px;font-size:12px">'+d[1]+'</span>'+
+      '<label style="font-size:12px;display:flex;gap:4px;align-items:center;text-transform:none;letter-spacing:0"><input type="checkbox" id="csHc_'+d[0]+'"> closed</label>'+
+      '<input type="time" id="csHo_'+d[0]+'" style="width:110px"> – <input type="time" id="csHx_'+d[0]+'" style="width:110px"></div>').join('');
+    BIZ_DAYS.forEach(d=>{ const h=b.hours[d[0]];
+      const c=document.getElementById('csHc_'+d[0]), o=document.getElementById('csHo_'+d[0]), x=document.getElementById('csHx_'+d[0]);
+      if(!c) return; c.checked=!!(h&&h.closed); o.value=h&&h.open||''; x.value=h&&h.close||''; });
+  }
+}
+function companySetupSave(){
+  if(bizSetupComplete()){ renderCompanyGate(); return true; }        // double-submit is a no-op
+  if(!userIsCompanyAdmin()){ toast('Company setup needs an administrator'); return false; }
+  const g=id=>document.getElementById(id);
+  const patch={};
+  CS_FIELDS.forEach(f=>{ const x=g(f[0]); if(x) patch[f[1]]=x.value.trim(); });
+  if(!patch.name){ toast('The company needs a name'); return false; }
+  try{ new Intl.DateTimeFormat('en-US',{timeZone:patch.tz}); }
+  catch(e){ toast('"'+patch.tz+'" is not a valid IANA timezone — try America/Los_Angeles'); return false; }
+  const hours={};
+  BIZ_DAYS.forEach(d=>{ const c=g('csHc_'+d[0]), o=g('csHo_'+d[0]), x=g('csHx_'+d[0]);
+    if(!c) return;
+    if(c.checked) hours[d[0]]={closed:true};
+    else if(o.value&&x.value) hours[d[0]]={closed:false,open:o.value,close:x.value};
+    else hours[d[0]]=null; });
+  patch.hours=hours;
+  const s=session();
+  const next=Object.assign({},bizGet(),patch);
+  Object.keys(next).forEach(k=>{ if(k.charAt(0)==='_') delete next[k]; });
+  next.setup={complete:true, on:todayISO(), t:new Date().toISOString(),
+    by:(s&&s.email)||empWho()||'device-admin'};
+  next.members=(next.members||[]).slice();
+  const em=s?String(s.email).toLowerCase().trim():'';
+  if(em&&!next.members.some(m=>m.email===em))
+    next.members.push({email:em, role:'owner', empId:((typeof empMe==='function'&&empMe())||{}).id||'', on:todayISO(), by:'company-setup'});
+  BIZ=next; save(K_BIZ,BIZ); bizDirty();
+  auditRecord('company-setup',{id:BIZ.id, name:BIZ.name, by:next.setup.by});
+  toast('Welcome to '+BIZ.name);
+  renderCompanyGate(); render();
+  return true;
+}
+function openCompanySettings(){ setTab('admin');
+  setTimeout(()=>{ const el=document.getElementById('bizCard'); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); },60); }
 // weekStart honours the configured week start (Monday is the standing rule).
 function weekStart(s){ const d=dObj(s); const ws=bizGet().weekStart==='sun'?0:1;
   d.setDate(d.getDate()-((d.getDay()-ws+7)%7)); return iso(d.getFullYear(),d.getMonth()+1,d.getDate()); }
@@ -4717,6 +4874,9 @@ function render(){
   if(hd&&TAB_INFO[TAB]){ const d=TAB_INFO[TAB].desc||''; hd.textContent=fitWords(d,54); hd.title=d; }
   // Same question, asked by the OS tab strip.
   document.title=(hp&&hp.textContent?hp.textContent+' · ':'')+(bizGet().appName||'ALP Sales Tracker');
+  const wl=document.querySelector('.wm-l');
+  if(wl){ const nm=bizSetupComplete()&&bizGet().name?bizGet().name:''; const want=nm||'ALP Sales Tracker';
+    if(wl.textContent!==want) wl.textContent=want; }
   TABS.forEach(t=>document.getElementById('tab-'+t[0]).classList.toggle('on',TAB===t[0]));
   renderAdmin();
 
@@ -4810,6 +4970,18 @@ function renderBiz(){
     ? bizDivisions().map(d=>{ const n2=divisionMembers(d).length;
         return esc(d.name)+' — <a href="#" onclick="setTab(\'roster\');return false">'+n2+' member'+(n2===1?'':'s')+'</a>'; }).join(' · ')
     : 'No divisions yet — add one per line above, or set Departments on employee records and they seed themselves.';
+  const tl=document.getElementById('bizTargetList');
+  if(tl){ const ts=(b.targets||[]).slice().sort((a,x)=>a.period<x.period?-1:1);
+    tl.innerHTML=ts.length
+      ? ts.map(t=>'<b>'+esc(t.metric)+'</b> '+esc(t.period)+' → '+money(t.value)+' <span class="note">set '+fmtY(t.on)+(t.by?' by '+esc(t.by):'')+'</span>').join(' · ')
+      : 'No targets set.'; }
+}
+function bizTargetAddUI(){
+  const g=id=>document.getElementById(id);
+  if(bizTargetSet(g('bizTgMetric').value, g('bizTgPeriod').value, g('bizTgValue').value)){
+    g('bizTgMetric').value=''; g('bizTgPeriod').value=''; g('bizTgValue').value='';
+    renderBiz();
+  }
 }
 function bizSave(){
   if(!can('admin_security')){ toast('That is not part of your access'); return; }
@@ -14112,6 +14284,8 @@ function renderHdrTools(){
     '<div class="pnote">Ctrl&#8202;+&#8202;P does the same thing.</div>'+
     '<div class="phead">Appearance</div>'+
     '<button role="menuitem" onclick="themeToggle()">'+(themeGet()==='dark'?'☀️ Switch to light theme':'🌙 Switch to dark theme')+'</button>';
+  if(userIsCompanyAdmin()) items+='<div class="phead">Company</div>'+
+    '<button role="menuitem" onclick="closePops();openCompanySettings()">🏢 Company settings</button>';
   let data='';
   if(can('export_data')||scopeOf('sales')!=='none') data+='<button role="menuitem" onclick="closePops();exportCSV()">Export CSV</button>';
   if(can('admin_security')) data+='<button role="menuitem" onclick="closePops();backup()">Backup all</button>';
@@ -15785,6 +15959,7 @@ async function googleCredential(resp){
     localStorage.setItem(K_DEVUSER, (j.name||j.email)+' <'+j.email+'>');   // the audit trail now names a verified person
     auditRecord('login',{email:j.email,role:j.role,method:'google'});
     empLinkLogin(j);
+    companyMemberEnsure();
     applySessionIdentity(true);
     capsInvalidate(); TAB=homeTab();
     renderGoogleBtn(); renderLoginWall();
@@ -15852,6 +16027,7 @@ function pwUnlocked(){ try{ return sessionStorage.getItem(K_PWUNLOCK)==='1'; }ca
 function authOK(){ return !authRequired() || sessionValid() || pwUnlocked(); }
 function renderLoginWall(){
   const w=document.getElementById('loginWall'); if(!w) return;
+  setTimeout(renderCompanyGate,0);   // the company gate sits behind the login wall
   const walled=!authOK();
   document.body.classList.toggle('walled',walled);
   w.style.display=walled?'':'none';
@@ -15969,6 +16145,7 @@ function cloudApply(d){
   // Business Details sync across devices like settings do — replace-style.
   if(d.biz&&typeof d.biz==='object'){ BIZ=d.biz; put(K_BIZ,BIZ); bizDirty(); }
   bizEnsure();   // a pulled doc from before the business root existed still gets its id
+  setTimeout(renderCompanyGate,0);
   histDirty(); geoDirty(); invDirty();
   CLOUD.applying=false;
 }
@@ -16120,6 +16297,7 @@ document.getElementById('cMonth').value=defaultReportMonth();
 payoutMigrate();
 reversalMigrate();
 bizEnsure();   // the business gets its permanent root id exactly once
+companyMemberEnsure();
 
 render();
 cloudInit();
