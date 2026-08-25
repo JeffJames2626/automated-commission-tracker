@@ -2691,6 +2691,55 @@
       } else {
         results.push({name:'BIZSETUP company gate exists', expected:true, actual:false, pass:false});
       }
+
+      /* ---------- OWNERKPI: the command center reads real engines only ---------- */
+      if(typeof ownerKpis==='function'){
+        var oy=(typeof todayISO==='function'?todayISO():'2026-01-01').slice(0,4), oly=String(+oy-1);
+        ADMIN=true; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+        BIZ=null; bizDirty(); bizEnsure();
+        PEOPLE=[mkPerson({id:'OK1'}), mkPerson({id:'OK2', name:'Second', active:true})];
+        CLIENTS=[
+          {u:'a1', n:'Alpha Co', ct:'Client', gone:false, since:oly+'-03-01'},
+          {u:'b1', n:'Beta Co',  ct:'Client', gone:false, since:oy+'-02-15'},
+          {u:'l1', n:'Lead One', ct:'Lead', gone:false, lead:oy+'-01-10'},
+          {u:'l2', n:'Lead Two', ct:'Lead', gone:false, lead:oly+'-01-10'}];
+        INVOICES=[
+          {i:'T1', c:'Alpha Co', d:oy+'-01-15', v:1000, t:0, s:'x', k:'K', r:'', a:''},
+          {i:'T2', c:'Beta Co',  d:oy+'-01-20', v:500,  t:0, s:'x', k:'K', r:'', a:''},
+          {i:'T3', c:'Alpha Co', d:oly+'-01-05', v:800, t:0, s:'x', k:'K', r:'', a:''},
+          {i:'T4', c:'Alpha Co', d:oly+'-12-31', v:999, t:0, s:'x', k:'K', r:'', a:''}];
+        PAIDINV=[]; OPENINV=[]; INVLINKS=[]; INVCLIMAP=[]; INVASSIGN=[]; HOURS=[]; PAYOUTS=[];
+        if(typeof invDirty==='function') invDirty();
+        ROWS=[
+          mkRow({id:'ok-c1', rep:'OK1', value:2000, date:oy+'-01-10', completed:oy+'-01-12', invoiced:oy+'-01-14', paid:oy+'-01-20', paidAmt:200}),
+          mkRow({id:'ok-p1', rep:'OK1', value:700, date:oy+'-01-11'}),
+          mkRow({id:'ok-p2', rep:'OK2', value:300, date:oy+'-01-11', invoiced:oy+'-01-12'})];
+        var K=ownerKpis();
+        check('OWNERKPI revenue YTD comes from the invoice registry', 1500, K.billedYTD);
+        checkTrue('OWNERKPI …identical to the raw audit-line sum (no second engine)',
+          K.billedYTD===INVOICES.filter(function(x){return String(x.d).slice(0,4)===oy;}).reduce(function(a,x){return a+x.v;},0), K.billedYTD);
+        check('OWNERKPI same-date-last-year cutoff excludes later prior-year billing', 800, K.billedPrev);
+        check('OWNERKPI completed revenue counts only completed sales', 2000, K.completedYTD);
+        check('OWNERKPI pipeline is booked-not-invoiced only — no double count', 700, K.pipeline);
+        check('OWNERKPI clients billed YTD is a distinct count', 2, K.clientsYTD);
+        check('OWNERKPI revenue per client has a provable denominator', 750, K.revPerClient);
+        check('OWNERKPI leads YTD by lead date', 1, K.leadsYTD);
+        check('OWNERKPI new clients YTD is by since-date, not serviced count', 1, K.newCliYTD);
+        check('OWNERKPI existing-client revenue: relationships older than Jan 1', 1000, K.existingRev);
+        check('OWNERKPI revenue per employee across active headcount', 750, K.billedYTD/K.activeEmps);
+        check('OWNERKPI no logged hours means no efficiency guess', 0, K.hoursYTD);
+        check('OWNERKPI coverage is unavailable without a target', 'null', String(K.cover30));
+        check('OWNERKPI plan-to-date is unavailable without a target', 'null', String(K.planToDate));
+        bizTargetSet('revenue', oy, 100000);
+        K=ownerKpis();
+        checkTrue('OWNERKPI plan-to-date = target × season share through today',
+          Math.abs(K.planToDate-100000*seasonShare(oy+'-01-01',todayISO()))<0.01, K.planToDate);
+        checkTrue('OWNERKPI coverage computes with a target set', K.cover30!=null, K.cover30);
+        checkTrue('OWNERKPI projection = YTD normalized by season share',
+          K.projected==null||Math.abs(K.projected-1500/seasonShare(oy+'-01-01',todayISO()))<0.01, K.projected);
+      } else {
+        results.push({name:'OWNERKPI command center exists', expected:true, actual:false, pass:false});
+      }
     } catch(e){
       results.push({name:'HARNESS ERROR', expected:'no throw', actual:String(e&&e.message||e), pass:false});
     } finally {

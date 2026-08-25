@@ -275,6 +275,58 @@ section{margin:24px 0}
 .bar i{display:block;height:100%;border-radius:3px;background:var(--grn)}
 .bar i.bad{background:var(--red)}
 
+/* ==========================================================================
+   OWNER COMMAND CENTER — the 30,000 ft KPI stage.
+   One surface, six numbers, three lenses. Hierarchy comes from type scale,
+   never from more boxes. Pink is selection; green/red stay semantic.
+   ========================================================================== */
+.cmdhero{display:flex;gap:14px;align-items:center;flex-wrap:wrap;background:var(--bg-header);
+  color:#f3f5f0;border-radius:13px;padding:13px 18px;margin-bottom:10px}
+.cmdhero .av{width:50px;height:50px;border-radius:50%;object-fit:cover;border:2px solid var(--accent);background:#26261f;
+  display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;color:#f3f5f0;flex:0 0 auto}
+.cmdhero .who{min-width:0}
+.cmdhero .nm{font-size:17px;font-weight:750;letter-spacing:-.01em}
+.cmdhero .rl{font-size:12px;color:#a9b3a5;margin-top:1px}
+.cmdhero .hsp{flex:1}
+.cmdhero .co{text-align:right;font-size:12px;color:#a9b3a5}
+.cmdhero .co b{display:block;font-size:13px;color:#f3f5f0}
+.cmdattn{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;border:1px solid var(--border);
+  border-radius:11px;background:var(--bg-surface);padding:9px 14px;margin-bottom:12px;font-size:13px}
+.cmdattn .h{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+.cmdattn .it{color:var(--red);font-weight:600}
+.cmdattn .ok{color:var(--grn-d);font-weight:600}
+.cmdlens{display:flex;gap:3px;flex-wrap:wrap}
+.cmdlens button{border:1px solid var(--border);border-bottom:0;background:var(--bg-elevated);color:var(--muted);
+  border-radius:10px 10px 0 0;font-size:11.5px;font-weight:700;letter-spacing:.06em;padding:8px 15px;text-transform:uppercase}
+.cmdlens button:hover{background:var(--bg-surface);color:var(--ink)}
+.cmdlens button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.cmdstage{border:1px solid var(--border);border-radius:0 11px 11px 11px;background:var(--bg-surface);
+  box-shadow:var(--shadow);padding:20px 22px;display:grid;gap:18px 26px;grid-template-columns:1fr 1fr;margin-bottom:16px}
+.cmdstage .q{grid-column:1/-1;font-size:11px;font-weight:700;letter-spacing:.10em;text-transform:uppercase;color:var(--muted);margin-bottom:-6px}
+.kp{min-width:0}
+.kp .kv{font-weight:800;letter-spacing:-.02em;line-height:1.03;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.kp.kbig .kv{font-size:42px}
+.kp.kmed .kv{font-size:29px}
+.kp.ksml .kv{font-size:22px}
+.kp .kl{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-top:4px}
+.kp .kc{font-size:12.5px;margin-top:4px;color:var(--muted);line-height:1.45}
+.kp .up{color:var(--grn-d);font-weight:650}
+.kp .dn{color:var(--red);font-weight:650}
+.kp .kna{font-size:19px;font-weight:650;color:var(--muted)}
+.kp.click{cursor:pointer;border-radius:9px;padding:8px;margin:-8px;transition:background .12s}
+.kp.click:hover{background:var(--bg-elevated)}
+.kbar{height:6px;border-radius:3px;background:var(--band);margin-top:9px;overflow:hidden;max-width:280px}
+.kbar i{display:block;height:100%;border-radius:3px;background:var(--accent)}
+.kbar i.g{background:var(--grn)} .kbar i.r{background:var(--red)}
+.covwrap{grid-column:1/-1;display:flex;gap:26px;flex-wrap:wrap}
+.covwrap .cv{flex:1 1 150px;min-width:130px}
+.covwrap .cv .kv{font-size:24px;font-weight:800;font-variant-numeric:tabular-nums}
+@media(max-width:760px){
+  .cmdstage{grid-template-columns:1fr;gap:16px}
+  .kp.kbig .kv{font-size:38px}
+  .cmdhero .co{text-align:left}
+}
+
 table{width:100%;border-collapse:collapse;font-size:13.5px}
 th{text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
   padding:9px 10px;border-bottom:1px solid var(--line);white-space:nowrap;background:var(--paper);position:sticky;top:0;z-index:1}
@@ -1003,6 +1055,10 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
 <div class="tab" id="tab-view">
   <section>
     <div class="sechead"><h2>30,000 ft</h2><span class="hint" id="viewHint"></span></div>
+    <div id="cmdHero"></div>
+    <div id="cmdAttn"></div>
+    <div class="cmdlens" id="cmdLens"></div>
+    <div class="cmdstage" id="cmdStage"></div>
     <div id="teamPulse" style="margin-bottom:4px"></div>
     <div id="viewHero"></div>
     <h3 style="margin:0 0 8px">The eight that matter</h3>
@@ -14837,8 +14893,203 @@ function renderTeamPulse(){
    numbers underneath can be trusted today. Admin only. ---- */
 const VIEW_COLORS={booked:'#2e8b4a',billed:'#2f6fd4',collected:'#b07109'};   // slots 1–3 of the validated palette
 function monthsBack(n){ const out=[]; let m=todayISO().slice(0,7); for(let i=0;i<n;i++){ out.unshift(m); const y=+m.slice(0,4),mm=+m.slice(5,7); m=(mm===1?(y-1)+'-12':y+'-'+String(mm-1).padStart(2,'0')); } return out; }
+/* ============================================================
+   OWNER COMMAND CENTER — three lenses on the BUSINESS.
+   Every number reuses an existing canonical engine (the invoice
+   registry, netValue/stage on sales, the client roster, the season
+   curve, business targets, logged hours). Nothing here recalculates
+   money its own way; anything unprovable says so out loud.
+   These are COMPANY KPIs — the owner's profile is allowed to display
+   them, they never attach to an employee record.
+   ============================================================ */
+let OWNER_LENS='health';
+function ownerKpis(){
+  const t=todayISO(), y=t.slice(0,4), lastY=String(+y-1), sameCut=lastY+t.slice(4);
+  const y0=y+'-01-01';
+  const NA=why=>({na:true, why});
+  const pct=(a,b)=>b?a/b*100:null;
+  const delta=(cur,prev)=>prev?({v:(cur-prev)/prev*100, up:cur>=prev}):null;
+  // Revenue: the invoice registry — the same engine the Invoices tab reports from.
+  const reg=invoiceRegistry().list;
+  const inYr=reg.filter(h=>h.date&&h.date.slice(0,4)===y&&h.date<=t);
+  const inPrev=reg.filter(h=>h.date&&h.date>=lastY+'-01-01'&&h.date<=sameCut);
+  const billedYTD=inYr.reduce((a,h)=>a+h.pre,0);
+  const billedPrev=inPrev.reduce((a,h)=>a+h.pre,0);
+  const haveAudit=INVOICES.length>0||PAIDINV.length>0;
+  // Plan: business target × the company's season curve, through today only.
+  const tgt=(bizTargetsFor('revenue',y)[0]||null);
+  const shareToDate=seasonShare(y0,t);
+  const planToDate=tgt&&shareToDate?tgt.value*shareToDate:null;
+  // Sales-side engines (booked/completed/pipeline) — netValue and stage dates.
+  const liveRows=ROWS.filter(r=>!isReversed(r));
+  const completedYTD=liveRows.filter(r=>r.completed&&r.completed.slice(0,4)===y&&r.completed<=t).reduce((a,r)=>a+netValue(r),0);
+  const completedPrev=liveRows.filter(r=>r.completed&&r.completed>=lastY+'-01-01'&&r.completed<=sameCut).reduce((a,r)=>a+netValue(r),0);
+  const pipeRows=liveRows.filter(r=>!r.invoiced&&!r.paid);
+  const pipeline=pipeRows.reduce((a,r)=>a+netValue(r),0);
+  // Clients billed this year — distinct, from the registry's resolution.
+  const cliKey=h=>h.cli?norm(h.cli.n):norm(h.client||'');
+  const distinct=L=>{ const s={}; L.forEach(h=>{ const k=cliKey(h); if(k) s[k]=1; }); return Object.keys(s).length; };
+  const clientsYTD=distinct(inYr), clientsPrev=distinct(inPrev);
+  // Efficiency
+  const hoursYTD=HOURS.filter(h=>h.date>=y0&&h.date<=t).reduce((a,h)=>a+(+h.hours||0),0);
+  const laborCost=hoursYTD?PEOPLE.reduce((a,p)=>a+loggedHours(p.id,y0,t)*(+p.rate||0),0):0;
+  const activeEmps=bizEmployees().filter(p=>p.active).length;
+  const openLeads=CLIENTS.filter(c=>isLead(c)&&!c.gone).length;
+  const clientCount=bizClients().length;
+  // Growth
+  const leadsYTD=CLIENTS.filter(c=>c.lead&&c.lead>=y0&&c.lead<=t).length;
+  const leadsPrev=CLIENTS.filter(c=>c.lead&&c.lead>=lastY+'-01-01'&&c.lead<=sameCut).length;
+  const newCliYTD=CLIENTS.filter(c=>c.since&&c.since>=y0&&c.since<=t).length;
+  const newCliPrev=CLIENTS.filter(c=>c.since&&c.since>=lastY+'-01-01'&&c.since<=sameCut).length;
+  const existingRev=inYr.filter(h=>h.cli&&h.cli.since&&h.cli.since<y0).reduce((a,h)=>a+h.pre,0);
+  const cut365=addDays(t,-365);
+  const trail=reg.filter(h=>h.date&&h.date>cut365&&h.date<=t);
+  const trailRev=trail.reduce((a,h)=>a+h.pre,0), trailCli=distinct(trail);
+  // Projection: YTD normalized by the season curve's share of the year so far.
+  const projected=haveAudit&&shareToDate>0.04?billedYTD/shareToDate:null;
+  const cover=days=>{ if(!tgt) return null;
+    const req=tgt.value*seasonShare(addDays(t,1),addDays(t,days));
+    return req>0?pipeline/req*100:null; };
+  return {t,y,lastY,sameCut,haveAudit,tgt,
+    billedYTD,billedPrev,planToDate,completedYTD,completedPrev,pipeline,pipeCount:pipeRows.length,
+    clientsYTD,clientsPrev,
+    revPerClient:clientsYTD?billedYTD/clientsYTD:null,revPerClientPrev:clientsPrev?billedPrev/clientsPrev:null,
+    hoursYTD,laborCost,activeEmps,openLeads,clientCount,
+    leadsYTD,leadsPrev,newCliYTD,newCliPrev,existingRev,trailRev,trailCli,projected,
+    cover30:cover(30),cover60:cover(60),cover90:cover(90),
+    NA,pct,delta};
+}
+function cmdLensSet(l){ OWNER_LENS=l; renderCmd(); }
+function renderCmd(){
+  const stage=document.getElementById('cmdStage'); if(!stage) return;
+  const K=ownerKpis();
+  // hero: the viewer, compactly — the person is the reader, the company is the subject
+  const heroEl=document.getElementById('cmdHero');
+  if(heroEl){
+    const me=(typeof empMe==='function'&&empMe())||currentAdmin()||null;
+    const b=bizGet(), now=bizNow();
+    const av=me&&(me.photo||me.photoUrl)?'<img class="av" src="'+esc(me.photo||me.photoUrl)+'" alt="">'
+      :'<div class="av">'+esc((me&&me.name||b.name||'A').slice(0,1).toUpperCase())+'</div>';
+    heroEl.innerHTML='<div class="cmdhero">'+av+
+      '<div class="who"><div class="nm">'+esc(me?empName(me):b.name)+'</div>'+
+      '<div class="rl">'+(me?esc(me.title||'Owner')+' · ':'')+'<span style="color:var(--accent);font-weight:650">OWNER VIEW</span>'+
+      (me&&me.active!==false?' · <span style="color:#8fce8f">ACTIVE</span>':'')+'</div></div>'+
+      '<div class="hsp"></div>'+
+      '<div class="co"><b>'+esc(b.name)+'</b>'+esc((b.city?b.city+', '+(b.state||''):''))+' · '+fmtY(now.date)+' · '+now.hm+'</div></div>';
+  }
+  // attention: real Hawk findings only — never invented
+  const at=document.getElementById('cmdAttn');
+  if(at){
+    const bad=runChecks().filter(c=>c.sev==='bad'&&c.items.length);
+    at.innerHTML='<div class="cmdattn"><span class="h">Owner attention</span>'+
+      (bad.length
+        ? bad.slice(0,3).map(c=>'<a class="it" href="#" onclick="setTab(\'hawk\');return false">'+esc(c.title)+' ('+c.items.length+')</a>').join('')+
+          (bad.length>3?'<a href="#" onclick="setTab(\'hawk\');return false" class="note">+'+(bad.length-3)+' more</a>':'')
+        : '<span class="ok">No critical items — the Hawk is quiet.</span>')+'</div>';
+  }
+  // lenses
+  const lens=[['health','Company health'],['eff','Efficiency'],['growth','Growth & future']];
+  const le=document.getElementById('cmdLens');
+  if(le) le.innerHTML=lens.map(l=>'<button class="'+(OWNER_LENS===l[0]?'on':'')+'" onclick="cmdLensSet(\''+l[0]+'\')">'+l[1]+'</button>').join('');
+  // one KPI cell
+  const cell=(size,label,val,ctx,drill,barPct,barCls)=>{
+    return '<div class="kp '+size+(drill?' click':'')+'"'+(drill?' onclick="'+drill+'"':'')+'>'+
+      '<div class="kv">'+val+'</div><div class="kl">'+label+'</div>'+
+      (ctx?'<div class="kc">'+ctx+'</div>':'')+
+      (barPct!=null?'<div class="kbar"><i class="'+(barCls||'')+'" style="width:'+Math.max(2,Math.min(100,barPct))+'%"></i></div>':'')+
+      '</div>';
+  };
+  const na=(size,label,why)=>'<div class="kp '+size+'"><div class="kna">Data not available</div><div class="kl">'+label+'</div><div class="kc">'+why+'</div></div>';
+  const dtxt=d=>d?('<span class="'+(d.up?'up':'dn')+'">'+(d.up?'↑':'↓')+' '+num(Math.abs(d.v),1)+'%</span> vs same date last year'):'first year on record';
+  let h='';
+  if(OWNER_LENS==='health'){
+    h+='<div class="q">Where are we?</div>';
+    h+=K.haveAudit
+      ? cell('kbig','Revenue YTD',money(K.billedYTD),
+          dtxt(K.delta(K.billedYTD,K.billedPrev))+' · billed pre-tax, invoice registry',"setTab('invoices')")
+      : na('kbig','Revenue YTD','no invoice history imported — bring in the Invoice Audit or Paid Invoices export');
+    h+=K.planToDate!=null
+      ? cell('kbig','Revenue vs plan',num(K.pct(K.billedYTD,K.planToDate),0)+'%',
+          (K.billedYTD>=K.planToDate?'<span class="up">ON PACE</span>':'<span class="dn">BEHIND</span>')+
+          ' · '+money(K.billedYTD)+' actual vs '+money(K.planToDate)+' planned through today',
+          "openCompanySettings()",K.pct(K.billedYTD,K.planToDate),K.billedYTD>=K.planToDate?'g':'r')
+      : na('kbig','Revenue vs plan',K.tgt?'season curve unavailable':'no revenue target for '+K.y+' — set one in Company settings');
+    h+=cell('kmed','Completed revenue',money(K.completedYTD),
+        dtxt(K.delta(K.completedYTD,K.completedPrev))+' · sales with a completed date, net of reversals',"setTab('sales')");
+    h+=cell('kmed','Pipeline — booked, not yet invoiced',money(K.pipeline),
+        K.pipeCount+' sale'+(K.pipeCount===1?'':'s')+' waiting to bill · never overlaps billed revenue',"setTab('sales')");
+    h+=K.haveAudit
+      ? cell('ksml','Clients billed YTD',K.clientsYTD.toLocaleString(),dtxt(K.delta(K.clientsYTD,K.clientsPrev)),"setTab('invoices')")
+      : na('ksml','Clients billed YTD','needs the invoice history');
+    h+=K.revPerClient!=null
+      ? cell('ksml','Revenue / client',money(K.revPerClient),
+          dtxt(K.delta(K.revPerClient,K.revPerClientPrev))+' · across the '+K.clientsYTD.toLocaleString()+' billed clients above',"setTab('invoices')")
+      : na('ksml','Revenue / client','needs the invoice history');
+  } else if(OWNER_LENS==='eff'){
+    h+='<div class="q">How well are we operating?</div>';
+    h+=K.hoursYTD>0
+      ? cell('kbig','Revenue / labor hour',money(K.billedYTD/K.hoursYTD),num(K.hoursYTD,0)+' logged hours this year',"setTab('hours')")
+      : na('kbig','Revenue / labor hour','no labor hours logged this year — the Hours tab feeds this');
+    h+=(K.hoursYTD>0&&K.billedYTD>0)
+      ? cell('kbig','Labor % of revenue',num(K.laborCost/K.billedYTD*100,1)+'%',
+          money(K.laborCost)+' logged labor at plan rates vs '+money(K.billedYTD)+' billed',"setTab('hours')",K.laborCost/K.billedYTD*100)
+      : na('kbig','Labor % of revenue','needs logged hours and billed revenue');
+    h+=K.haveAudit&&K.activeEmps
+      ? cell('kmed','Revenue / employee',money(K.billedYTD/K.activeEmps),
+          'across '+K.activeEmps+' active team member'+(K.activeEmps===1?'':'s')+' today',"setTab('roster')")
+      : na('kmed','Revenue / employee',K.activeEmps?'needs the invoice history':'no active employees on the roster');
+    h+=na('kmed','Cost / lead','marketing spend is not tracked in this system yet');
+    h+=na('ksml','Cost / new client','marketing spend is not tracked in this system yet');
+    h+=(K.clientCount+K.openLeads)>0
+      ? cell('ksml','Lead → client rate',num(K.clientCount/(K.clientCount+K.openLeads)*100,0)+'%',
+          K.clientCount.toLocaleString()+' clients vs '+K.openLeads.toLocaleString()+' open leads — same math as the sources table',"setTab('clients')")
+      : na('ksml','Lead → client rate','no client or lead records yet');
+  } else {
+    h+='<div class="q">Where are we going?</div>';
+    h+=cell('kmed','Leads YTD',K.leadsYTD.toLocaleString(),dtxt(K.delta(K.leadsYTD,K.leadsPrev))+' · by lead date',"setTab('clients')");
+    h+=cell('kmed','New clients YTD',K.newCliYTD.toLocaleString(),
+        dtxt(K.delta(K.newCliYTD,K.newCliPrev))+' · by client-since date — not total serviced',"setTab('clients')");
+    h+=K.haveAudit
+      ? cell('kmed','Existing-client revenue',money(K.existingRev),
+          'billed this year to clients whose relationship began before Jan 1',"setTab('invoices')")
+      : na('kmed','Existing-client revenue','needs the invoice history');
+    h+=K.trailCli
+      ? cell('kmed','Average client value',money(K.trailRev/K.trailCli),
+          'trailing 12 months · '+money(K.trailRev)+' across '+K.trailCli.toLocaleString()+' billed clients — not a lifetime value',"setTab('invoices')")
+      : na('kmed','Average client value','needs the invoice history');
+    if(K.cover30!=null){
+      h+='<div class="covwrap"><div class="q" style="margin:0 0 -8px">Revenue coverage — booked work vs the plan ahead</div>'+
+        [[30,K.cover30],[60,K.cover60],[90,K.cover90]].map(c=>'<div class="cv">'+
+          '<div class="kv">'+num(c[1],0)+'%</div><div class="kl">'+c[0]+' days</div>'+
+          '<div class="kbar"><i class="'+(c[1]>=100?'g':(c[1]>=70?'':'r'))+'" style="width:'+Math.max(2,Math.min(100,c[1]))+'%"></i></div></div>').join('')+
+        '<div class="kc" style="flex:1 1 100%">pipeline (booked, not yet invoiced) vs the season-curve plan for each window — no double counting</div></div>';
+    } else {
+      h+=na('kmed','30 / 60 / 90 day coverage','needs a revenue target for '+K.y+' — set one in Company settings');
+    }
+    h+=K.projected!=null
+      ? cell('kbig','Projected year-end revenue',money(K.projected),
+          (K.tgt?num(K.pct(K.projected,K.tgt.value),0)+'% of the '+money(K.tgt.value)+' target · ':'no target set · ')+
+          'YTD normalized by the season curve — a pace, not a promise',
+          K.tgt?"openCompanySettings()":null,K.tgt?K.pct(K.projected,K.tgt.value):null,K.tgt&&K.projected>=K.tgt.value?'g':'')
+      : na('kbig','Projected year-end revenue','needs invoice history and a meaningful share of the season');
+  }
+  stage.innerHTML=h;
+}
+// swipe between lenses on touch screens
+(function(){ let x0=null;
+  document.addEventListener('touchstart',e=>{ const s=document.getElementById('cmdStage');
+    if(s&&s.contains(e.target)) x0=e.touches[0].clientX; },{passive:true});
+  document.addEventListener('touchend',e=>{ if(x0==null) return;
+    const dx=e.changedTouches[0].clientX-x0; x0=null;
+    if(Math.abs(dx)<60) return;
+    const order=['health','eff','growth']; const i=order.indexOf(OWNER_LENS);
+    const ni=dx<0?Math.min(order.length-1,i+1):Math.max(0,i-1);
+    if(order[ni]!==OWNER_LENS){ OWNER_LENS=order[ni]; renderCmd(); } },{passive:true});
+})();
+
 function renderView(){
   const hero=document.getElementById('viewHero'); if(!hero||!ADMIN) return;
+  renderCmd();
   const t=todayISO(), y=t.slice(0,4), lastY=String(+y-1);
   const live=ROWS.filter(r=>!isReversed(r) && r.date<=t);
   const netYTD=live.filter(r=>r.date.slice(0,4)===y).reduce((a,r)=>a+netValue(r),0);
