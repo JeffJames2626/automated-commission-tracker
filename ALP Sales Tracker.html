@@ -1301,6 +1301,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
           <div><label>Commission plan effective</label><input type="date" id="pStart" onchange="savePlan()" title="Gates COMMISSION only — sales dated before this earn nothing. Never affects base pay."></div>
           <div><label>Employee start date</label><input type="date" id="pPayFrom" onchange="savePlan()" title="Base pay runs from this date and only this date. Blank = no base pay accrues."></div>
           <div><label>Reports to</label><select id="pMgr" onchange="savePlan()"></select></div>
+          <div><label>Labor class</label><select id="pLabor" onchange="savePlan()" title="Which labor bucket this person’s payroll hours belong to — powers field-labor efficiency. Explicit, never inferred from a title."></select></div>
           <div><label class="chk"><input type="checkbox" id="pActive" onchange="savePlan()"> Active</label></div>
         </div>
         <div class="note" id="payFromNote" style="margin-top:9px"></div>
@@ -2133,6 +2134,34 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
 
 <!-- ==================== HOURS ==================== -->
 <div class="tab" id="tab-hours">
+  <section id="tsCard" style="display:none">
+    <div class="card pad">
+      <div class="sechead"><h3>💵 Payroll timesheets</h3>
+        <span class="hint">total compensated hours by pay period — the record Total Compensation and labor efficiency build on. Not the sales-hours log below, and never a time clock.</span></div>
+      <div class="frow">
+        <div><label>Period start</label><input type="date" id="tsFrom"></div>
+        <div><label>Period end</label><input type="date" id="tsTo"></div>
+        <div><label>Upload report (CSV · XLSX · PDF)</label><input type="file" id="tsFile" accept=".csv,.txt,.xlsx,.xls,.pdf" onchange="tsHandleFile(event)"></div>
+      </div>
+      <label style="margin-top:8px;display:block">…or paste rows (name, regular, OT, total)</label>
+      <textarea id="tsPaste" rows="3" placeholder="Josh Everard, 80, 4.5, 84.5" oninput="tsHandlePaste()"></textarea>
+      <div id="tsReview" style="margin-top:10px"></div>
+      <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+        <b style="font-size:12px">Manual entry</b>
+        <div class="frow" style="margin-top:6px">
+          <div><label>Employee</label><select id="tsmEmp"></select></div>
+          <div><label>Regular</label><input type="number" id="tsmReg" step="0.25" min="0" style="width:90px"></div>
+          <div><label>OT</label><input type="number" id="tsmOt" step="0.25" min="0" style="width:80px"></div>
+          <div><label>Total *</label><input type="number" id="tsmTot" step="0.25" min="0" style="width:90px"></div>
+          <div style="flex:2;min-width:160px"><label>Note</label><input id="tsmNote"></div>
+          <div style="align-self:end"><button class="p sm" onclick="tsManualSave()">Save timesheet</button></div>
+        </div>
+        <div class="note" style="margin-top:5px">Uses the period dates above. Total-only is fine — never invent a regular/OT split the paystub didn’t give you.</div>
+      </div>
+      <div id="tsPeriods" style="margin-top:14px"></div>
+      <div id="tsHistory" style="margin-top:10px"></div>
+    </div>
+  </section>
   <section>
     <div class="card pad">
       <div class="sechead"><h3>Log sales hours</h3>
@@ -2911,6 +2940,9 @@ const K_INVASSIGN='alp_invassign_v1';
 const FORMER_DEFAULT=['Russanne','Malisa','Jaron','Alina','Erbie','Crystal','Michael'];
 const K_ADMIN='alp_admin_v1';
 const K_BIZ='alp_biz_v1';
+const K_TSHEET='alp_tsheet_v1';   // payroll timesheet lines — period-grain compensated hours
+const K_PAYPER='alp_payper_v1';   // pay periods
+const K_TSIMP='alp_tsimp_v1';     // timesheet import history
 const K_REV='alp_roster_rev_v2';
 const K_ADMINREV='alp_admin_user_v1';
 const K_OSC='alp_osc_v1';
@@ -2965,6 +2997,9 @@ let INVCLIMAP= load(K_INVCLI,[]);    // admin-approved invoice-name → roster-c
 let INVASSIGN= load(K_INVASSIGN,[]); // admin-assigned salesperson per invoice — accountability for rep-less billing
 let OSCS     = load(K_OSC,[]);       // on-site estimates and consultations
 let BIZ      = load(K_BIZ,null);     // Business Details — org identity, location, timezone, hours (null = defaults)
+let TSHEET   = load(K_TSHEET,[]);    // payroll timesheets: NOT the sales-hours log — total compensated hours by pay period
+let PAYPER   = load(K_PAYPER,[]);    // pay periods {id, from, to, check?}
+let TSIMP    = load(K_TSIMP,[]);     // timesheet import history, newest last, capped 60
 const POLICY_DEFAULT={
   raiseDays:30,       // rep has this long to dispute a figure
   respondDays:10,     // ALP responds within this many business days
@@ -4026,6 +4061,202 @@ function companySetupSave(){
 }
 function openCompanySettings(){ setTab('admin');
   setTimeout(()=>{ const el=document.getElementById('bizCard'); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); },60); }
+
+/* ============================================================
+   PAYROLL TIMESHEETS — the Hours side of Total Compensation.
+   NOT the sales-hours log (HOURS = time spent selling, feeding the
+   sales cost model — that meaning is untouched). A TSHEET line is the
+   payroll fact: this EMPLOYEE was compensated for these HOURS in this
+   PAY PERIOD, from this SOURCE. Period-grain, id-keyed, correction-
+   audited, import-provenanced. No clock-in, no taxes, no payroll
+   processing — a trustworthy historical record that Total Compensation
+   and labor-efficiency reporting can later build on.
+   ============================================================ */
+// Pay periods: date-only boundaries, permanent ids, idempotent by exact dates.
+function payPeriodEnsure(from,to,src){
+  from=pDate(from); to=pDate(to);
+  if(!from||!to||to<from) return null;
+  let p=PAYPER.find(x=>x.from===from&&x.to===to);
+  if(p) return p;
+  p={id:uid('pp'), from, to, on:todayISO(), by:empWho()||'', src:src||'manual'};
+  PAYPER.push(p); save(K_PAYPER,PAYPER);
+  return p;
+}
+function payPeriodOf(id){ return PAYPER.find(x=>x.id===id)||null; }
+function payPeriodLabel(p){ return p?fmt(p.from)+' – '+fmtY(p.to):'—'; }
+// Timesheet lines for one employee / one period.
+function tsFor(empId){ return TSHEET.filter(x=>x.emp===empId); }
+function tsForPeriod(perId){ return TSHEET.filter(x=>x.per===perId); }
+// Hours inside a date window. Period-grain data means only periods FULLY inside
+// the window count — a half-covered period is excluded and reported, never
+// prorated by guesswork (periods and windows must align, or say so).
+function tsHoursBetween(a,b,empFilter){
+  let hours=0, partial=0;
+  TSHEET.forEach(x=>{
+    const p=payPeriodOf(x.per); if(!p) return;
+    if(empFilter&&!empFilter(x)) return;
+    if(p.from>=a&&p.to<=b) hours+=(+x.hours||0);
+    else if(p.to>=a&&p.from<=b) partial++;
+  });
+  return {hours, partial};
+}
+// Labor classification — explicit on the employee record (p.labor), never
+// inferred from a title. Unset = unclassified; nothing is counted as FIELD
+// until a person says so.
+const LABOR_CLASSES=[['','— not classified —'],['field','Field'],['sales','Sales'],['admin','Office / Admin'],['mgmt','Management'],['other','Other']];
+function laborClassOf(p){ return (p&&p.labor)||''; }
+function bizFieldHours(a,b){
+  const anyClassified=PEOPLE.some(p=>laborClassOf(p)==='field');
+  if(!anyClassified) return null;   // missing architecture, reported — not invented
+  return tsHoursBetween(a,b,x=>{ const p=person(x.emp); return p&&laborClassOf(p)==='field'; });
+}
+/* ---- committing rows: the one write path for import AND manual ---- */
+// rows: [{empId, srcName, reg, ot, hours, note}] · every number already parsed.
+// Returns what actually happened, row by row — nothing silent.
+function tsCommit(rows, perId, meta){
+  if(!can('admin_security')){ toast('Payroll hours are an admin record'); return null; }
+  const per=payPeriodOf(perId); if(!per){ toast('Pick the pay period first'); return null; }
+  meta=meta||{};
+  const out={added:0, corrected:0, dupes:0, skipped:0, total:0, results:[]};
+  rows.forEach(r=>{
+    const res={srcName:r.srcName, empId:r.empId};
+    if(!r.empId||!person(r.empId)){ res.what='skipped — no confirmed employee'; out.skipped++; out.results.push(res); return; }
+    const hours=+r.hours||0;
+    if(!(hours>0)){ res.what='skipped — no hours'; out.skipped++; out.results.push(res); return; }
+    const old=TSHEET.find(x=>x.emp===r.empId&&x.per===perId);
+    if(old){
+      const same=Math.abs((+old.hours||0)-hours)<0.005&&Math.abs((+old.reg||0)-(+r.reg||0))<0.005&&Math.abs((+old.ot||0)-(+r.ot||0))<0.005;
+      if(same){ res.what='duplicate — already recorded, skipped'; out.dupes++; out.results.push(res); return; }
+      if(!r.replace){ res.what='conflict — period already has '+num(old.hours,2)+' hrs (this file says '+num(hours,2)+')'; res.conflict=true; res.old=old.hours; out.skipped++; out.results.push(res); return; }
+      // corrected report, explicitly approved: history preserved on the record
+      (old.edits=old.edits||[]).push({t:new Date().toISOString(), by:empWho()||'',
+        from:{reg:old.reg,ot:old.ot,hours:old.hours}, to:{reg:r.reg,ot:r.ot,hours},
+        why:meta.file?('corrected report '+meta.file):'manual correction'});
+      old.reg=r.reg; old.ot=r.ot; old.hours=hours; old.src=meta.src||old.src;
+      old.impId=meta.impId||old.impId; old.srcName=r.srcName||old.srcName;
+      auditRecord('ts-correct',{emp:r.empId, per:perId, from:old.edits[old.edits.length-1].from, to:{reg:r.reg,ot:r.ot,hours}});
+      res.what='corrected — '+num(old.edits[old.edits.length-1].from.hours,2)+' → '+num(hours,2)+' hrs';
+      out.corrected++; out.total+=hours; out.results.push(res); return;
+    }
+    TSHEET.push({id:uid('ts'), emp:r.empId, per:perId, reg:(+r.reg||null), ot:(+r.ot||null),
+      hours, srcName:r.srcName||'', src:meta.src||'manual', impId:meta.impId||'',
+      note:r.note||'', flags:r.flags||[], on:todayISO(), t:new Date().toISOString(), by:empWho()||''});
+    out.added++; out.total+=hours; res.what='added — '+num(hours,2)+' hrs'; out.results.push(res);
+  });
+  if(out.added||out.corrected){
+    save(K_TSHEET,TSHEET);
+    auditRecord('ts-import',{per:perId, file:meta.file||'manual', added:out.added, corrected:out.corrected, dupes:out.dupes, skipped:out.skipped, hours:Math.round(out.total*100)/100});
+  }
+  return out;
+}
+/* ---- parsing: spreadsheet grids, CSVs, pasted text, best-effort PDFs ---- */
+// Header sniffing over a 2D grid → row objects. Ambiguity surfaces in review.
+function tsSniffGrid(grid){
+  if(!grid||!grid.length) return {rows:[], err:'Nothing to read'};
+  const H=grid[0].map(h=>norm(h));
+  const col=(...names)=>{ for(const n of names){ const i=H.findIndex(h=>h===norm(n)); if(i>-1) return i; }
+    // fuzzy pass: short tokens are exact-only — "ot" must never match inside "tOTal hours"
+    for(const n of names){ if(norm(n).length<4) continue;
+      const i=H.findIndex(h=>h&&h.indexOf(norm(n))>-1); if(i>-1) return i; } return -1; };
+  const cName=col('employee name','employee','name','team member','worker');
+  const cFirst=col('first name','first'), cLast=col('last name','last');
+  const cReg=col('regular hours','regular','reg hours','reg'), cOt=col('overtime hours','overtime','ot hours','ot');
+  const cTot=col('total hours','hours','total');
+  const headered=(cName>-1||(cFirst>-1&&cLast>-1))&&(cTot>-1||cReg>-1);
+  const rows=[]; const body=headered?grid.slice(1):grid;
+  body.forEach(r=>{
+    if(!r||!r.join('').trim()) return;
+    let nm, reg=null, ot=null, tot=null;
+    if(headered){
+      nm=cName>-1?String(r[cName]||'').trim():((r[cFirst]||'')+' '+(r[cLast]||'')).trim();
+      reg=cReg>-1?pNum(r[cReg]):null; ot=cOt>-1?pNum(r[cOt]):null; tot=cTot>-1?pNum(r[cTot]):null;
+    } else {
+      // headerless (pasted text / PDF lines): name tokens then trailing numbers
+      const cells=r.filter(c=>String(c).trim()!=='');
+      const nums=[]; while(cells.length&&isFinite(pNum(cells[cells.length-1]))&&String(cells[cells.length-1]).match(/\d/)){ nums.unshift(pNum(cells.pop())); }
+      nm=cells.join(' ').trim();
+      if(nums.length===1) tot=nums[0];
+      else if(nums.length>=2){ reg=nums[0]; ot=nums[1]; tot=nums.length>2?nums[nums.length-1]:null; }
+    }
+    if(!nm) return;
+    if(tot==null) tot=(reg||0)+(ot||0);
+    rows.push({srcName:nm, reg, ot, hours:tot});
+  });
+  return {rows, headered};
+}
+// XLSX: a workbook is a ZIP of XML. Read sheet1 + sharedStrings with the
+// browser's own inflater — no libraries, no dependencies.
+async function tsReadXlsx(buf){
+  const u8=new Uint8Array(buf), dv=new DataView(buf);
+  const files={};
+  for(let i=0;i<u8.length-4;i++){
+    if(dv.getUint32(i,true)!==0x04034b50) continue;
+    const method=dv.getUint16(i+8,true), csize=dv.getUint32(i+18,true),
+      nlen=dv.getUint16(i+26,true), elen=dv.getUint16(i+28,true);
+    const name=new TextDecoder().decode(u8.slice(i+30,i+30+nlen));
+    const start=i+30+nlen+elen, raw=u8.slice(start,start+csize);
+    if(/sharedStrings\.xml$|worksheets\/sheet1\.xml$/.test(name)){
+      let xml;
+      if(method===0) xml=new TextDecoder().decode(raw);
+      else { const ds=new DecompressionStream('deflate-raw');
+        const st=new Blob([raw]).stream().pipeThrough(ds);
+        xml=await new Response(st).text(); }
+      files[name.split('/').pop()]=xml;
+    }
+    i=start+csize-1;
+  }
+  const sheet=files['sheet1.xml']; if(!sheet) throw new Error('No sheet found — save the report as CSV and import that');
+  const shared=[]; (files['sharedStrings.xml']||'').replace(/<si[^>]*>([\s\S]*?)<\/si>/g,(m,si)=>{
+    shared.push(si.replace(/<[^>]+>/g,'')); return ''; });
+  const grid=[];
+  sheet.replace(/<row[^>]*>([\s\S]*?)<\/row>/g,(m,rowXml)=>{
+    const cells=[];
+    rowXml.replace(/<c([^>]*)>([\s\S]*?)<\/c>/g,(cm,attrs,inner)=>{
+      const ref=(attrs.match(/r="([A-Z]+)\d+"/)||[])[1]||'';
+      let ci=0; for(const ch of ref) ci=ci*26+(ch.charCodeAt(0)-64); ci=Math.max(0,ci-1);
+      const t=(attrs.match(/t="(\w+)"/)||[])[1]||'';
+      let v=(inner.match(/<v>([\s\S]*?)<\/v>/)||[])[1];
+      if(v==null) v=(inner.match(/<t[^>]*>([\s\S]*?)<\/t>/)||[])[1]||'';
+      if(t==='s') v=shared[+v]!==undefined?shared[+v]:v;
+      cells[ci]=String(v).replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>');
+      return '';
+    });
+    for(let k=0;k<cells.length;k++) if(cells[k]===undefined) cells[k]='';
+    grid.push(cells); return '';
+  });
+  return grid;
+}
+// PDF: best-effort TEXT extraction — inflate content streams, read the text
+// operators. Interpretation, not truth: every PDF row lands in review.
+async function tsReadPdf(buf){
+  const u8=new Uint8Array(buf);
+  const ascii=new TextDecoder('latin1').decode(u8);
+  const chunks=[];
+  const re=/stream\r?\n/g; let m;
+  while((m=re.exec(ascii))){
+    const start=m.index+m[0].length;
+    const end=ascii.indexOf('endstream', start); if(end<0) continue;
+    const raw=u8.slice(start,end);
+    let text=null;
+    try{ const ds=new DecompressionStream('deflate');
+      text=await new Response(new Blob([raw]).stream().pipeThrough(ds)).text(); }
+    catch(e){ text=new TextDecoder('latin1').decode(raw); }
+    if(text&&/T[jJ]|Td|'\]/.test(text)) chunks.push(text);
+    re.lastIndex=end;
+  }
+  if(!chunks.length) throw new Error('No readable text in this PDF (a scanned image?) — export the report as CSV or XLSX instead');
+  // Each Tj / TJ show is its own line: payroll reports set one row (or one cell)
+  // per show, and merging them destroys the table. Interpretation, not truth —
+  // every PDF row goes to review regardless.
+  const lines=[];
+  chunks.forEach(c=>{
+    c.replace(/\((?:[^()\\]|\\.)*\)\s*Tj|\[((?:[^\[\]\\]|\\.)*)\]\s*TJ/g,x=>{
+      const t=x.replace(/\)\s*-?\d+(?:\.\d+)?\s*\(/g,' ').replace(/^\[?\(|\)\]?\s*T[jJ]$/g,'').replace(/\\([()\\])/g,'$1').trim();
+      if(t) lines.push(t);
+      return ''; });
+  });
+  return lines.map(l=>l.split(/\s{2,}|\t/).map(s=>s.trim()).filter(Boolean)).filter(r=>r.length);
+}
 // weekStart honours the configured week start (Monday is the standing rule).
 function weekStart(s){ const d=dObj(s); const ws=bizGet().weekStart==='sun'?0:1;
   d.setDate(d.getDate()-((d.getDay()-ws+7)%7)); return iso(d.getFullYear(),d.getMonth()+1,d.getDate()); }
@@ -6030,6 +6261,8 @@ function planToForm(){
   planLabels(p);
   document.getElementById('pMgr').innerHTML='<option value="">— nobody —</option>'+
     PEOPLE.filter(x=>x.id!==p.id).map(x=>'<option value="'+x.id+'"'+(x.id===p.mgr?' selected':'')+'>'+esc(x.name)+'</option>').join('');
+  const pl=document.getElementById('pLabor');
+  if(pl) pl.innerHTML=LABOR_CLASSES.map(c=>'<option value="'+c[0]+'"'+(laborClassOf(p)===c[0]?' selected':'')+'>'+c[1]+'</option>').join('');
   document.getElementById('pMonths').innerHTML=MON.map((m,i)=>
     '<label class="'+((p.offMonths||[]).indexOf(i)>-1?'on':'')+'"><input type="checkbox" data-m="'+i+'"'+
     ((p.offMonths||[]).indexOf(i)>-1?' checked':'')+' onchange="savePlan()">'+m+'</label>').join('');
@@ -6069,7 +6302,7 @@ function planLabels(p){
 // audit trail could not see, and an autosaved date input can commit
 // intermediate values (arrow through "day 31" and it is saved) with no trace.
 const PLAN_AUDIT_FIELDS=['start','payFrom','rate','hrsIn','hrsOff','offMonths',
-  'commNew','commUp','commRenew','commOv','salesPct','active','mgr'];
+  'commNew','commUp','commRenew','commOv','salesPct','active','mgr','labor'];
 function savePlan(){
   const p=person(SEL); if(!p)return;
   const g=id=>document.getElementById(id);
@@ -6084,6 +6317,7 @@ function savePlan(){
   p.note=g('pNote').value.trim();
   p.payFrom=g('pPayFrom').value||'';
   p.mgr=g('pMgr').value;
+  if(g('pLabor')) p.labor=g('pLabor').value;
   p.rate=Math.max(0,pNum(g('pRate').value));
   p.hrsIn=Math.max(0,pNum(g('pHrsIn').value));
   p.hrsOff=Math.max(0,pNum(g('pHrsOff').value));
@@ -12585,7 +12819,160 @@ function hoursStart(){
   return ppl.length ? ppl.map(p=>p.start).sort()[0] : todayISO();
 }
 
+/* ---- payroll timesheet UI: parse → review → confirm, nothing silent ---- */
+let TS_PARSE=null;
+async function tsHandleFile(e){
+  const f=e.target.files[0]; if(!f) return;
+  if(!can('admin_security')){ toast('Payroll hours are an admin record'); e.target.value=''; return; }
+  const ext=(f.name.split('.').pop()||'').toLowerCase();
+  try{
+    let grid, ftype;
+    if(ext==='pdf'){ grid=await tsReadPdf(await f.arrayBuffer()); ftype='pdf'; }
+    else if(ext==='xlsx'||ext==='xls'){ grid=await tsReadXlsx(await f.arrayBuffer()); ftype='xlsx'; }
+    else { grid=parseCSV(await f.text()); ftype='csv'; }
+    const P=tsSniffGrid(grid);
+    if(P.err||!P.rows.length){ toast(P.err||'No employee rows found in that file'); return; }
+    TS_PARSE={rows:P.rows, file:f.name, ftype, pdf:ftype==='pdf'};
+    tsRenderReview();
+  }catch(err){ toast('Could not read '+f.name+': '+err.message); }
+}
+function tsHandlePaste(){
+  const t=document.getElementById('tsPaste').value;
+  if(!t.trim()){ if(TS_PARSE&&TS_PARSE.ftype==='paste'){ TS_PARSE=null; tsRenderReview(); } return; }
+  const P=tsSniffGrid(parseCSV(t));
+  TS_PARSE=P.rows.length?{rows:P.rows, file:'(pasted)', ftype:'paste'}:null;
+  tsRenderReview();
+}
+function tsPeriodDates(){
+  const a=pDate(document.getElementById('tsFrom').value), b=pDate(document.getElementById('tsTo').value);
+  return a&&b&&b>=a?{from:a,to:b}:null;
+}
+function tsRenderReview(){
+  const box=document.getElementById('tsReview'); if(!box) return;
+  if(!TS_PARSE){ box.innerHTML=''; return; }
+  const per=tsPeriodDates();
+  const days=per?Math.round((dObj(per.to)-dObj(per.from))/86400000)+1:14;
+  const existing=per?(()=>{ const pp=PAYPER.find(x=>x.from===per.from&&x.to===per.to);
+    return pp?tsForPeriod(pp.id):[]; })():[];
+  let srcTotal=0, accTotal=0, matched=0, review=0;
+  TS_PARSE.rows.forEach((r,i)=>{
+    srcTotal+=(+r.hours||0);
+    const hit=resolveEmployee(r.srcName,'*');
+    r.empId=r.sel!==undefined?r.sel:(hit?hit.id:'');
+    r.flags=[];
+    if(!(+r.hours>0)) r.flags.push('no hours');
+    if(+r.hours<0) r.flags.push('negative');
+    if(r.reg!=null&&r.ot!=null&&Math.abs((r.reg+r.ot)-r.hours)>0.01) r.flags.push('reg+OT ≠ total');
+    if(+r.hours>days*16) r.flags.push('suspiciously high');
+    const p=r.empId?person(r.empId):null;
+    if(p&&(!p.active||(p.ended&&per&&p.ended<per.from))) r.flags.push('former employee — historical hours are fine, just confirming');
+    const dup=p?existing.find(x=>x.emp===p.id):null;
+    r.dup=dup?{hours:dup.hours}:null;
+    r.status=!p?'review':(TS_PARSE.pdf&&r.sel===undefined?'review':(r.flags.some(f=>f==='negative'||f==='no hours')?'review':'ok'));
+    if(r.status==='ok'&&!r.dup) accTotal+=(+r.hours||0);
+    if(r.status==='ok') matched++; else review++;
+  });
+  const diff=Math.round((srcTotal-accTotal)*100)/100;
+  let h='<div class="note" style="margin-bottom:7px"><b>'+esc(TS_PARSE.file)+'</b> · '+TS_PARSE.rows.length+' rows · '+
+    num(srcTotal,2)+' hrs in the file'+(TS_PARSE.pdf?' · <b style="color:var(--gold)">PDF — every row needs a confirming eye</b>':'')+
+    (per?'':' · <b style="color:var(--red)">set the period dates above before importing</b>')+'</div>';
+  h+='<div class="scroll"><table><thead><tr><th>Source name</th><th>Matched employee</th><th class="num">Reg</th><th class="num">OT</th><th class="num">Total</th><th>Status</th></tr></thead><tbody>';
+  TS_PARSE.rows.forEach((r,i)=>{
+    const p=r.empId?person(r.empId):null;
+    h+='<tr><td>'+esc(r.srcName)+'</td>'+
+      '<td><select onchange="tsRowMap('+i+',this.value)" style="max-width:180px">'+peopleOptions(r.empId,'— pick / skip —',true)+'</select></td>'+
+      '<td class="num">'+(r.reg!=null?num(r.reg,2):'—')+'</td><td class="num">'+(r.ot!=null?num(r.ot,2):'—')+'</td>'+
+      '<td class="num"><b>'+num(r.hours,2)+'</b></td>'+
+      '<td>'+(r.dup?'<label style="font-size:12px;color:var(--red)">has '+num(r.dup.hours,2)+' hrs already · <input type="checkbox" onchange="tsRowReplace('+i+',this.checked)"'+(r.replace?' checked':'')+'> replace (correction)</label>'
+        : p?'<span class="pill '+(r.flags.length?'mid':'ok')+'">'+(r.flags.length?esc(r.flags.join(' · ')):'MATCHED')+'</span>'
+        : '<span class="pill no">REVIEW — no confident match</span>')+'</td></tr>';
+  });
+  h+='</tbody></table></div>';
+  h+='<div class="note" style="margin-top:8px">Reconciliation: <b>'+num(srcTotal,2)+'</b> in the file → <b>'+num(accTotal,2)+'</b> ready to import'+
+    (diff?' · <b style="color:var(--red)">'+num(diff,2)+' hrs held back by the rows above</b>':' · clean')+'</div>';
+  h+='<div style="margin-top:10px;display:flex;gap:9px"><button class="p" onclick="tsConfirm()"'+(per?'':' disabled')+'>Import timesheet</button>'+
+    '<button class="sm" onclick="TS_PARSE=null;tsRenderReview()">Clear</button></div>';
+  box.innerHTML=h;
+}
+function tsRowMap(i,v){ TS_PARSE.rows[i].sel=v; tsRenderReview(); }
+function tsRowReplace(i,on){ TS_PARSE.rows[i].replace=on; tsRenderReview(); }
+function tsConfirm(){
+  if(!TS_PARSE) return;
+  const per=tsPeriodDates(); if(!per){ toast('Set the pay-period dates first'); return; }
+  const pp=payPeriodEnsure(per.from,per.to,'import'); if(!pp) return;
+  const impId=uid('hi');
+  const rows=TS_PARSE.rows.filter(r=>r.empId&&person(r.empId));
+  // remember hand-made mappings as aliases so the next report matches itself
+  rows.forEach(r=>{ if(r.sel&&!resolveEmployee(r.srcName,'*')) empAddAlias(r.empId,r.srcName,'*'); });
+  const out=tsCommit(rows, pp.id, {src:'import', impId, file:TS_PARSE.file});
+  if(!out) return;
+  const srcTotal=TS_PARSE.rows.reduce((a,r)=>a+(+r.hours||0),0);
+  TSIMP.push({id:impId, t:new Date().toISOString(), on:todayISO(), by:empWho()||'',
+    file:TS_PARSE.file, ftype:TS_PARSE.ftype, per:pp.id, rows:TS_PARSE.rows.length,
+    added:out.added, corrected:out.corrected, dupes:out.dupes, skipped:out.skipped,
+    srcTotal:Math.round(srcTotal*100)/100, accTotal:Math.round(out.total*100)/100,
+    results:out.results.slice(0,80)});
+  while(TSIMP.length>60) TSIMP.shift();
+  save(K_TSIMP,TSIMP);
+  toast(out.added+' added, '+out.corrected+' corrected, '+out.dupes+' duplicate'+(out.dupes===1?'':'s')+' skipped — '+num(out.total,2)+' hrs');
+  TS_PARSE=null; const f=document.getElementById('tsFile'); if(f) f.value='';
+  const pt=document.getElementById('tsPaste'); if(pt) pt.value='';
+  render();
+}
+function tsManualSave(){
+  const per=tsPeriodDates(); if(!per){ toast('Set the pay-period dates first'); return; }
+  const emp=document.getElementById('tsmEmp').value; if(!emp){ toast('Pick the employee'); return; }
+  const reg=pNum(document.getElementById('tsmReg').value)||null, ot=pNum(document.getElementById('tsmOt').value)||null;
+  let tot=pNum(document.getElementById('tsmTot').value); if(!tot&&(reg||ot)) tot=(reg||0)+(ot||0);
+  if(!(tot>0)){ toast('Total hours are required'); return; }
+  const pp=payPeriodEnsure(per.from,per.to,'manual'); if(!pp) return;
+  const existing=TSHEET.find(x=>x.emp===emp&&x.per===pp.id);
+  const out=tsCommit([{empId:emp, srcName:'', reg, ot, hours:tot,
+    note:document.getElementById('tsmNote').value.trim(), replace:existing?confirm('This period already has '+num(existing.hours,2)+' hrs for them. Replace it as a correction?'):false}],
+    pp.id, {src:'manual'});
+  if(out&&(out.added||out.corrected)){ ['tsmReg','tsmOt','tsmTot','tsmNote'].forEach(id=>document.getElementById(id).value=''); render(); }
+  else if(out&&out.results[0]&&out.results[0].conflict) toast('Left unchanged — tick replace to correct it');
+}
+function tsExportPeriod(perId){
+  const pp=payPeriodOf(perId); if(!pp) return;
+  const lines=['Pay period,Employee,Regular,OT,Total,Source,Note'];
+  tsForPeriod(perId).forEach(x=>{ const p=person(x.emp);
+    lines.push([payPeriodLabel(pp),p?p.name:x.emp,x.reg!=null?x.reg:'',x.ot!=null?x.ot:'',x.hours,x.src,String(x.note||'').replace(/,/g,';')].join(',')); });
+  dl(new Blob([lines.join('\n')],{type:'text/csv'}),'hours-'+pp.from+'-to-'+pp.to+'.csv');
+}
+function renderPayroll(){
+  const card=document.getElementById('tsCard'); if(!card) return;
+  const ok=can('admin_security');
+  card.style.display=ok?'':'none';
+  if(!ok) return;
+  const sel=document.getElementById('tsmEmp');
+  if(sel&&document.activeElement!==sel) sel.innerHTML=peopleOptions(sel.value,'— employee —',true);
+  const pers=document.getElementById('tsPeriods');
+  if(pers){
+    const byPer={}; TSHEET.forEach(x=>{ (byPer[x.per]=byPer[x.per]||[]).push(x); });
+    const list=Object.keys(byPer).map(id=>({p:payPeriodOf(id), rows:byPer[id]}))
+      .filter(x=>x.p).sort((a,b)=>a.p.from<b.p.from?1:-1).slice(0,8);
+    pers.innerHTML=list.length
+      ? '<b style="font-size:12px">Recent pay periods</b><div class="scroll"><table><thead><tr><th>Period</th><th class="num">People</th><th class="num">Reg</th><th class="num">OT</th><th class="num">Total hrs</th><th></th></tr></thead><tbody>'+
+        list.map(x=>'<tr><td>'+payPeriodLabel(x.p)+'</td><td class="num">'+x.rows.length+'</td>'+
+          '<td class="num">'+num(x.rows.reduce((a,r)=>a+(+r.reg||0),0),2)+'</td>'+
+          '<td class="num">'+num(x.rows.reduce((a,r)=>a+(+r.ot||0),0),2)+'</td>'+
+          '<td class="num"><b>'+num(x.rows.reduce((a,r)=>a+(+r.hours||0),0),2)+'</b></td>'+
+          '<td><button class="sm" onclick="tsExportPeriod(\''+x.p.id+'\')">CSV</button></td></tr>').join('')+'</tbody></table></div>'
+      : '<div class="note">No payroll periods recorded yet — upload a timesheet or enter one above.</div>';
+  }
+  const hist=document.getElementById('tsHistory');
+  if(hist) hist.innerHTML=TSIMP.length
+    ? '<b style="font-size:12px">Import history</b>'+TSIMP.slice().reverse().slice(0,6).map(im=>{
+        const pp=payPeriodOf(im.per);
+        return '<div class="note" style="margin-top:4px">'+fmtDT(im.t)+' · <b>'+esc(im.file)+'</b> ('+im.ftype+') · '+payPeriodLabel(pp)+' · '+
+          im.rows+' rows → '+im.added+' added'+(im.corrected?', '+im.corrected+' corrected':'')+(im.dupes?', '+im.dupes+' dup':'')+(im.skipped?', '+im.skipped+' held':'')+
+          ' · '+num(im.accTotal,2)+' of '+num(im.srcTotal,2)+' hrs'+(im.by?' · '+esc(im.by):'')+'</div>'; }).join('')
+    : '';
+}
+
 function renderHoursTab(){
+  renderPayroll();
   const ppl=hoursScope(), today=todayISO(), start=hoursStart();
   const box=document.getElementById('hoursTiles');
   document.getElementById('hRange').textContent = ppl.length
@@ -14377,7 +14764,8 @@ function stateSnapshot(){   // v6: employee identity fields (first/last/photo/al
     invsyncs:INVSYNC,implog:IMPLOG,gear:GEAR,payments:PAYMENTS,paysyncs:PAYSYNC,
     takeovers:TAKEOVERS,openinv:OPENINV,balsyncs:BALSYNC,paidinv:PAIDINV,pdisyncs:PDISYNC,
     invlinks:INVLINKS,invclimap:INVCLIMAP,invassign:INVASSIGN,
-    tombstones:TOMBSTONES,oscs:OSCS,global:GLOBAL,biz:BIZ};
+    tombstones:TOMBSTONES,oscs:OSCS,global:GLOBAL,biz:BIZ,
+    tsheet:TSHEET,payper:PAYPER,tsimp:TSIMP};
 }
 function backup(){
   // Gated in the header too, but the guard belongs in the function: a whole-state
@@ -14420,6 +14808,9 @@ function restore(e){
     // (a backup from before Business Details existed simply leaves the defaults).
     if(d.biz&&typeof d.biz==='object'&&!BIZ){ BIZ=d.biz; save(K_BIZ,BIZ); bizDirty(); }
     bizEnsure();
+    if(Array.isArray(d.payper)&&!PAYPER.length){ PAYPER=d.payper; save(K_PAYPER,PAYPER); }
+    if(Array.isArray(d.tsheet)&&!TSHEET.length){ TSHEET=d.tsheet; save(K_TSHEET,TSHEET); }
+    if(Array.isArray(d.tsimp)&&!TSIMP.length){ TSIMP=d.tsimp; save(K_TSIMP,TSIMP); }
     const key=r=>r.rep+'|'+r.date+'|'+String(r.client).toLowerCase()+'|'+bookedValue(r).toFixed(2);
     // Restored sales are given fresh ids, so the payout ledger has to be told where each
     // one went. Without this map, every restored payout still pointed at the backup's old
@@ -14930,9 +15321,15 @@ function ownerKpis(){
   const cliKey=h=>h.cli?norm(h.cli.n):norm(h.client||'');
   const distinct=L=>{ const s={}; L.forEach(h=>{ const k=cliKey(h); if(k) s[k]=1; }); return Object.keys(s).length; };
   const clientsYTD=distinct(inYr), clientsPrev=distinct(inPrev);
-  // Efficiency
-  const hoursYTD=HOURS.filter(h=>h.date>=y0&&h.date<=t).reduce((a,h)=>a+(+h.hours||0),0);
-  const laborCost=hoursYTD?PEOPLE.reduce((a,p)=>a+loggedHours(p.id,y0,t)*(+p.rate||0),0):0;
+  // Efficiency — PAYROLL timesheet hours (total compensated labor), never the
+  // sales-activity log. Only pay periods fully inside the window count.
+  const tsW=tsHoursBetween(y0,t);
+  const hoursYTD=tsW.hours;
+  let laborCost=0, rateless=0;
+  if(hoursYTD){ const seen={};
+    TSHEET.forEach(x=>{ const pp=payPeriodOf(x.per); if(!pp||pp.from<y0||pp.to>t) return;
+      const p=person(x.emp); if(!p) return;
+      if(+p.rate>0) laborCost+=(+x.hours||0)*(+p.rate); else if(!seen[x.emp]){ seen[x.emp]=1; rateless++; } }); }
   const activeEmps=bizEmployees().filter(p=>p.active).length;
   const openLeads=CLIENTS.filter(c=>isLead(c)&&!c.gone).length;
   const clientCount=bizClients().length;
@@ -14954,7 +15351,7 @@ function ownerKpis(){
     billedYTD,billedPrev,planToDate,completedYTD,completedPrev,pipeline,pipeCount:pipeRows.length,
     clientsYTD,clientsPrev,
     revPerClient:clientsYTD?billedYTD/clientsYTD:null,revPerClientPrev:clientsPrev?billedPrev/clientsPrev:null,
-    hoursYTD,laborCost,activeEmps,openLeads,clientCount,
+    hoursYTD,laborCost,rateless,tsPartial:tsW.partial,activeEmps,openLeads,clientCount,
     leadsYTD,leadsPrev,newCliYTD,newCliPrev,existingRev,trailRev,trailCli,projected,
     cover30:cover(30),cover60:cover(60),cover90:cover(90),
     NA,pct,delta};
@@ -15028,12 +15425,13 @@ function renderCmd(){
   } else if(OWNER_LENS==='eff'){
     h+='<div class="q">How well are we operating?</div>';
     h+=K.hoursYTD>0
-      ? cell('kbig','Revenue / labor hour',money(K.billedYTD/K.hoursYTD),num(K.hoursYTD,0)+' logged hours this year',"setTab('hours')")
-      : na('kbig','Revenue / labor hour','no labor hours logged this year — the Hours tab feeds this');
-    h+=(K.hoursYTD>0&&K.billedYTD>0)
+      ? cell('kbig','Revenue / labor hour',money(K.billedYTD/K.hoursYTD),
+          num(K.hoursYTD,0)+' payroll timesheet hours in completed pay periods'+(K.tsPartial?' · '+K.tsPartial+' in-progress period excluded':''),"setTab('hours')")
+      : na('kbig','Revenue / labor hour','no payroll timesheet hours recorded this year — import one on the Hours tab');
+    h+=(K.hoursYTD>0&&K.billedYTD>0&&!K.rateless)
       ? cell('kbig','Labor % of revenue',num(K.laborCost/K.billedYTD*100,1)+'%',
-          money(K.laborCost)+' logged labor at plan rates vs '+money(K.billedYTD)+' billed',"setTab('hours')",K.laborCost/K.billedYTD*100)
-      : na('kbig','Labor % of revenue','needs logged hours and billed revenue');
+          money(K.laborCost)+' payroll hours at plan hourly rates vs '+money(K.billedYTD)+' billed',"setTab('hours')",K.laborCost/K.billedYTD*100)
+      : na('kbig','Labor % of revenue',K.hoursYTD>0&&K.rateless?'hourly rate missing for '+K.rateless+' employee'+(K.rateless===1?'':'s')+' with hours — set them on the comp plans':'needs payroll hours and billed revenue');
     h+=K.haveAudit&&K.activeEmps
       ? cell('kmed','Revenue / employee',money(K.billedYTD/K.activeEmps),
           'across '+K.activeEmps+' active team member'+(K.activeEmps===1?'':'s')+' today',"setTab('roster')")
@@ -15916,6 +16314,21 @@ function renderEmp(){
       epT('invoices',epTile('Invoice lines',K.invLines.toLocaleString(),money(K.invBilled)+' billed pre-tax · '+money(K.invYr)+' this year'))+
       (K.collectedN?epT('invoices',epTile('Collected',money(K.collectedV),K.collectedN.toLocaleString()+' paid invoices pre-tax · '+money(K.collectedYr)+' this year')):'')+
       epT('invoices',epTile('Outstanding',money(K.outstanding),'past-due balances on accounts they own'))+'</div>';
+    // Payroll periods — the permanent hours history, keyed to this employee id
+    // forever (renames, role changes and leaving never move it).
+    if(money$){
+      const ts=tsFor(p.id).map(x=>({x, p:payPeriodOf(x.per)})).filter(e=>e.p)
+        .sort((a,b)=>a.p.from<b.p.from?1:-1);
+      if(ts.length){
+        h+='<h3 style="margin:18px 0 6px">Payroll hours</h3><div class="scroll"><table><thead><tr><th>Pay period</th><th class="num">Reg</th><th class="num">OT</th><th class="num">Total</th><th>Source</th></tr></thead><tbody>'+
+          ts.slice(0,6).map(e=>'<tr><td>'+payPeriodLabel(e.p)+'</td>'+
+            '<td class="num">'+(e.x.reg!=null?num(e.x.reg,2):'—')+'</td><td class="num">'+(e.x.ot!=null?num(e.x.ot,2):'—')+'</td>'+
+            '<td class="num"><b>'+num(e.x.hours,2)+'</b></td>'+
+            '<td class="note">'+esc(e.x.src)+(e.x.srcName&&e.x.srcName!==p.name?' as “'+esc(e.x.srcName)+'”':'')+' · '+fmt(e.x.on)+
+            ((e.x.edits||[]).length?' · <span title="'+esc((e.x.edits||[]).map(ed=>num(ed.from.hours,2)+'→'+num(ed.to.hours,2)+' '+String(ed.t).slice(0,10)+(ed.why?' ('+ed.why+')':'')).join(' · '))+'" style="color:var(--gold);font-weight:650">'+e.x.edits.length+' correction'+(e.x.edits.length===1?'':'s')+'</span>':'')+'</td></tr>').join('')+
+          '</tbody></table></div>';
+      }
+    }
     const prePlan=D.rows.filter(r=>!r.voidType && r.date<(p.start||'0000'));
     if(prePlan.length) h+='<div class="warnbox" style="margin-top:10px"><b>'+prePlan.length+' sale'+(prePlan.length===1?'':'s')+' ('+money(prePlan.reduce((a,r)=>a+netValue(r)*shareFor(r,p.id),0))+') predate this comp plan</b>, which starts '+fmtY(p.start)+'. They earn $0 commission and do not count toward the standard — on this page, the Scoreboard and the Commissions tab alike. If that start date is wrong, fix it on '+(ADMIN?'<a href="#" onclick="closeEmp();setTab(&quot;plans&quot;);selPerson(&quot;'+p.id+'&quot;);return false">the comp plan</a>':'the comp plan')+'.</div>';
     if(money$ && empIsSales(p) && D.rows.length){ const R=empReconcile(p.id); if(R) h+='<div class="note" style="margin-top:8px">'+(R.ok?'✓ These figures reconcile with the Scoreboard and the Commissions tab.':'<b style="color:var(--red)">⚠ Does not reconcile</b> — page '+money(R.page.planV)+' / '+R.page.planN+' vs Scoreboard '+money(R.scoreboard.planV)+' / '+R.scoreboard.planN+'; commission page '+money(R.page.commEarned)+' vs Commissions tab '+money(R.commissionTab.earned))+'</div>'; }
@@ -16395,6 +16808,9 @@ function cloudApply(d){
   if(d.global&&typeof d.global==='object'){ GLOBAL=d.global; if(!GLOBAL.policy)GLOBAL.policy=Object.assign({},POLICY_DEFAULT); put(K_GLOBAL,GLOBAL); }
   // Business Details sync across devices like settings do — replace-style.
   if(d.biz&&typeof d.biz==='object'){ BIZ=d.biz; put(K_BIZ,BIZ); bizDirty(); }
+  TSHEET=A(d.tsheet,TSHEET); put(K_TSHEET,TSHEET);
+  PAYPER=A(d.payper,PAYPER); put(K_PAYPER,PAYPER);
+  TSIMP=A(d.tsimp,TSIMP); put(K_TSIMP,TSIMP);
   bizEnsure();   // a pulled doc from before the business root existed still gets its id
   setTimeout(renderCompanyGate,0);
   histDirty(); geoDirty(); invDirty();

@@ -178,11 +178,12 @@ function projectState(raw, email) {
     doc.payouts  = keepVisible(doc.payouts,  x => ownedVisible(ctx, x, 'emp'));
     doc.disputes = keepVisible(doc.disputes, x => ownedVisible(ctx, x, 'rep'));
     doc.hours    = keepVisible(doc.hours,    x => ownedVisible(ctx, x, 'rep'));
+    doc.tsheet   = keepVisible(doc.tsheet,   x => ownedVisible(ctx, x, 'emp'));
   }
   // Client billing: invoices, payments and open balances are money owed to the
   // company, not to a rep. Only billing, managers and the owner get them.
   if (!ctx.financial) {
-    ['invoices','payments','openinv','paidinv','invsyncs','paysyncs','balsyncs','pdisyncs','invlinks','invclimap','invassign'].forEach(k => {
+    ['invoices','payments','openinv','paidinv','invsyncs','paysyncs','balsyncs','pdisyncs','invlinks','invclimap','invassign','tsimp'].forEach(k => {
       if (Array.isArray(doc[k])) doc[k] = [];
     });
   }
@@ -289,6 +290,11 @@ function mergeProtected(incomingRaw, storedRaw, email) {
     inc[k] = (ctx.financial && ctx.sales !== 'none')
       ? (Array.isArray(inc[k]) ? inc[k] : (stored[k] || []))
       : (stored[k] || []);
+  });
+  // Payroll timesheets, pay periods and their import history are written where
+  // payroll is run — never from a non-admin session, not even their own row.
+  ['tsheet', 'payper', 'tsimp'].forEach(k => {
+    inc[k] = Array.isArray(stored[k]) ? stored[k] : [];
   });
   // Business Details are the ORG's record — everyone reads them, only an admin
   // save (which skips this merge entirely) can write or seed them. One narrow

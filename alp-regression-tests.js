@@ -69,6 +69,9 @@
                INVCLIMAP:(typeof INVCLIMAP!=='undefined'?INVCLIMAP:undefined),
                INVASSIGN:(typeof INVASSIGN!=='undefined'?INVASSIGN:undefined),
                BIZ:(typeof BIZ!=='undefined'?BIZ:undefined),
+               TSHEET:(typeof TSHEET!=='undefined'?TSHEET:undefined),
+               PAYPER:(typeof PAYPER!=='undefined'?PAYPER:undefined),
+               TSIMP:(typeof TSIMP!=='undefined'?TSIMP:undefined),
                ADMIN:(typeof ADMIN!=='undefined'?ADMIN:undefined) };
     // Nothing a test run may COST localStorage. Stubbing save() is not enough:
     // cloudApply() writes through its own internal put() (raw localStorage.setItem),
@@ -2740,6 +2743,69 @@
       } else {
         results.push({name:'OWNERKPI command center exists', expected:true, actual:false, pass:false});
       }
+
+      /* ---------- TSHEET: payroll timesheets — the hours foundation ---------- */
+      if(typeof tsCommit==='function'){
+        ADMIN=true; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+        TSHEET=[]; PAYPER=[]; TSIMP=[];
+        PEOPLE=[mkPerson({id:'TS1', name:'Josh Everard'}),
+                mkPerson({id:'TS2', name:'Zed Former', active:false, ended:'2026-01-01'})];
+        if(typeof EMP_IDX!=='undefined') EMP_IDX=null;
+        var pp1=payPeriodEnsure('2026-08-01','2026-08-15');
+        checkTrue('TSHEET a pay period gets a permanent id', /^pp/.test(pp1.id), pp1.id);
+        check('TSHEET the same dates return the same period', pp1.id, payPeriodEnsure('2026-08-01','2026-08-15').id);
+        var G=tsSniffGrid([['Employee Name','Regular Hours','OT Hours','Total Hours'],['Josh Everard','80','4.5','84.5']]);
+        check('TSHEET spreadsheet headers map to hours', 84.5, G.rows[0].hours);
+        check('TSHEET source reg/OT preserved', '80|4.5', G.rows[0].reg+'|'+G.rows[0].ot);
+        check('TSHEET headerless rows parse name plus trailing numbers', 84.5,
+          tsSniffGrid([['Josh Everard','80','4.5','84.5']]).rows[0].hours);
+        var G3=tsSniffGrid([['Employee','Total Hours'],['Josh Everard','75']]);
+        check('TSHEET total-only stays total-only — no manufactured split', 'null|null|75',
+          G3.rows[0].reg+'|'+G3.rows[0].ot+'|'+G3.rows[0].hours);
+        tsCommit([{empId:'TS1', srcName:'J. Everard', reg:80, ot:4.5, hours:84.5}], pp1.id, {src:'import', impId:'hi-t', file:'test.csv'});
+        check('TSHEET import attaches hours to the canonical employee id', 1, tsFor('TS1').length);
+        check('TSHEET provenance rides the record', 'import|hi-t|J. Everard',
+          tsFor('TS1')[0].src+'|'+tsFor('TS1')[0].impId+'|'+tsFor('TS1')[0].srcName);
+        var d1=tsCommit([{empId:'TS1', srcName:'J. Everard', reg:80, ot:4.5, hours:84.5}], pp1.id, {src:'import'});
+        check('TSHEET the same report twice never doubles the hours', 1, tsFor('TS1').length);
+        check('TSHEET …and the duplicate is named, not silent', 1, d1.dupes);
+        var c1=tsCommit([{empId:'TS1', hours:86}], pp1.id, {src:'import'});
+        check('TSHEET a corrected report is HELD as a conflict', 84.5, tsFor('TS1')[0].hours);
+        checkTrue('TSHEET …and says exactly what it found', c1.results[0].conflict===true, c1.results[0].what);
+        tsCommit([{empId:'TS1', hours:86, replace:true}], pp1.id, {src:'import', file:'corrected.csv'});
+        check('TSHEET an approved correction replaces the value', 86, tsFor('TS1')[0].hours);
+        check('TSHEET …keeping the old value on the record', 84.5, tsFor('TS1')[0].edits[0].from.hours);
+        var pn=PEOPLE.length;
+        tsCommit([{empId:'', srcName:'D. Smith', hours:40}], pp1.id, {});
+        check('TSHEET unknown names never create employees', pn, PEOPLE.length);
+        tsCommit([{empId:'TS2', hours:10}], pp1.id, {src:'manual'});
+        check('TSHEET former employees keep historical hours', 10, tsFor('TS2')[0].hours);
+        check('TSHEET a window covering the whole period counts it', 96, tsHoursBetween('2026-08-01','2026-08-31').hours);
+        var W2=tsHoursBetween('2026-08-05','2026-08-31');
+        check('TSHEET a half-covered period is excluded, never prorated by guess', '0|yes', W2.hours+'|'+(W2.partial>0?'yes':'no'));
+        PEOPLE[0].name='Joshua Renamed'; if(typeof EMP_IDX!=='undefined') EMP_IDX=null;
+        check('TSHEET a rename never moves hours history', 86, tsFor('TS1')[0].hours);
+        check('TSHEET field hours are null until someone is explicitly classified', 'null',
+          String(bizFieldHours('2026-08-01','2026-08-31')));
+        PEOPLE[0].labor='field';
+        check('TSHEET classified field hours compute', 86, bizFieldHours('2026-08-01','2026-08-31').hours);
+        // the EXISTING Owner efficiency KPI consumes payroll hours — no second engine
+        BIZ=null; bizDirty(); bizEnsure();
+        INVOICES=[]; PAIDINV=[]; OPENINV=[]; INVLINKS=[]; INVCLIMAP=[]; INVASSIGN=[];
+        if(typeof invDirty==='function') invDirty();
+        ROWS=[];
+        var OK2=ownerKpis();
+        check('TSHEET the Owner efficiency KPI reads payroll hours', 96, OK2.hoursYTD);
+        checkTrue('TSHEET …with labor cost from plan hourly rates', OK2.laborCost===96*20, OK2.laborCost);
+        ADMIN=false; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+        check('TSHEET non-admins cannot write payroll hours', 'null', String(tsCommit([{empId:'TS1',hours:1}], pp1.id, {})));
+        ADMIN=true; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+        var sn2=stateSnapshot();
+        checkTrue('TSHEET backup carries timesheets, periods and import history',
+          Array.isArray(sn2.tsheet)&&Array.isArray(sn2.payper)&&Array.isArray(sn2.tsimp)&&sn2.tsheet.length===2, sn2.tsheet.length);
+      } else {
+        results.push({name:'TSHEET hours foundation exists', expected:true, actual:false, pass:false});
+      }
     } catch(e){
       results.push({name:'HARNESS ERROR', expected:'no throw', actual:String(e&&e.message||e), pass:false});
     } finally {
@@ -2772,6 +2838,9 @@
       if(typeof INVCLIMAP!=='undefined' && snap.INVCLIMAP!==undefined) INVCLIMAP=snap.INVCLIMAP;
       if(typeof INVASSIGN!=='undefined' && snap.INVASSIGN!==undefined) INVASSIGN=snap.INVASSIGN;
       if(typeof BIZ!=='undefined' && snap.BIZ!==undefined) BIZ=snap.BIZ;
+      if(typeof TSHEET!=='undefined' && snap.TSHEET!==undefined) TSHEET=snap.TSHEET;
+      if(typeof PAYPER!=='undefined' && snap.PAYPER!==undefined) PAYPER=snap.PAYPER;
+      if(typeof TSIMP!=='undefined' && snap.TSIMP!==undefined) TSIMP=snap.TSIMP;
       if(typeof ADMIN!=='undefined' && snap.ADMIN!==undefined) ADMIN=snap.ADMIN;
       if(typeof bizDirty==='function') bizDirty();
       if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
