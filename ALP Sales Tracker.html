@@ -10862,13 +10862,64 @@ function runChecks(){
     preplan.slice(0,40).map(r=>({text:'<b>'+cliLink(r.client)+'</b> · '+saleLink(r.id,money(bookedValue(r))),
       sub:fmt(r.date)+' · '+(person(r.rep)?empLink(r.rep)+' starts '+fmtY(person(r.rep).start):'')})));
 
-  /* --- active employee with no start date --- */
-  const noStart=PEOPLE.filter(p=>p.active && p.id!==EMP_UNASSIGNED && !p.payFrom);
-  add('empstart','warn','No employee start date',
-    'Base pay runs from the employee start date and only from there — with none recorded, no base pay accrues for this person no matter what their comp plan says. Set the date on their comp plan, or mute this for anyone who is commission-only on purpose.',
-    noStart.map(p=>({text:'<b>'+empLink(p.id)+'</b>'+(p.title?' · '+esc(p.title):''),
+  /* ============================================================
+     🦅 HR — the Hawk watches the people data payroll runs on.
+     Two tiers, deliberately: RED = payroll cannot run right without it.
+     WARN = set it up before this gets much further.
+     ============================================================ */
+  const hrPeople=PEOPLE.filter(p=>p.active && p.id!==EMP_UNASSIGNED);
+  const planBtn=p=>'<button class="sm" onclick="setTab(\'plans\');selPerson(\''+p.id+'\')">Open their plan</button>';
+
+  /* --- RED: active employee with no start date --- */
+  add('empstart','bad','No employee start date',
+    'Crucial before payroll. Base pay runs from the employee start date and only from there — with none recorded, no base pay accrues for this person no matter what their comp plan says. Set the date, or mute this for anyone who is commission-only on purpose.',
+    hrPeople.filter(p=>!p.payFrom).map(p=>({text:'<b>'+empLink(p.id)+'</b>'+(p.title?' · '+esc(p.title):''),
       sub:'commission plan effective '+fmtY(p.start)+' · no base pay accrues until a start date is set',
-      act:'<button class="sm" onclick="setTab(\'plans\');selPerson(\''+p.id+'\')">Open their plan</button>'})));
+      act:planBtn(p)})));
+
+  /* --- RED: comp-plan data that silently zeroes money --- */
+  const hrplan=[];
+  hrPeople.forEach(p=>{
+    if(!p.start) hrplan.push({text:'<b>'+empLink(p.id)+'</b> · no commission plan date',
+      sub:'every sale credited to them earns $0 until the plan has an effective date', act:planBtn(p)});
+    const hasSales=ROWS.some(r=>shareFor(r,p.id)>0);
+    const rates=(+p.commNew||0)+(+p.commUp||0)+(+p.commRenew||0);
+    if(hasSales && rates===0) hrplan.push({text:'<b>'+empLink(p.id)+'</b> · sells, but every commission rate is 0%',
+      sub:'sales are credited to them and the plan pays nothing on any of it — set the rates or reassign the sales', act:planBtn(p)});
+    if(p.payFrom && ((+p.rate||0)<=0 || (((+p.hrsIn||0)<=0)&&((+p.hrsOff||0)<=0))))
+      hrplan.push({text:'<b>'+empLink(p.id)+'</b> · start date set, but no pay terms',
+        sub:'base pay computes $0 — set the hourly rate and guaranteed hours, or clear the start date if they are commission-only', act:planBtn(p)});
+  });
+  const byEmail={};
+  PEOPLE.filter(p=>p.id!==EMP_UNASSIGNED&&p.email).forEach(p=>{ const e=String(p.email).toLowerCase().trim(); (byEmail[e]=byEmail[e]||[]).push(p); });
+  Object.keys(byEmail).forEach(e=>{ if(byEmail[e].length>1)
+    hrplan.push({text:'<b>'+esc(e)+'</b> is on '+byEmail[e].length+' records',
+      sub:byEmail[e].map(p=>empLink(p.id)).join(' · ')+' — logins, activity and pay attribution land on whichever matches first'}); });
+  add('hrplan','bad','HR data payroll cannot run on',
+    'Needed before anyone is paid. Each of these makes money silently compute wrong: a plan with no date, a seller on 0% rates, a start date with no pay terms, one email on two people.',
+    hrplan);
+
+  /* --- WARN: HR setup to finish before this gets much further --- */
+  const hrsetup=[];
+  hrPeople.forEach(p=>{
+    if(!p.email) hrsetup.push({text:'<b>'+empLink(p.id)+'</b> · no login email',
+      sub:'cannot sign in — their activity and edits attribute to a shared device instead of them', act:planBtn(p)});
+    if(p.email && !(p.roles||[]).length) hrsetup.push({text:'<b>'+empLink(p.id)+'</b> · no role assigned',
+      sub:'signs in with default field access — assign a role so their permissions are deliberate'});
+    if(p.mgr){ const m=person(p.mgr);
+      if(!m) hrsetup.push({text:'<b>'+empLink(p.id)+'</b> · reports to nobody on the roster',
+        sub:'their manager id points at no record — overrides and team views mis-route', act:planBtn(p)});
+      else if(!m.active) hrsetup.push({text:'<b>'+empLink(p.id)+'</b> · reports to former staff',
+        sub:'their manager is '+empLink(m.id)+', who has left — overrides would still route there', act:planBtn(p)});
+    }
+  });
+  PEOPLE.filter(p=>p.id!==EMP_UNASSIGNED&&p.ended&&p.active).forEach(p=>{
+    hrsetup.push({text:'<b>'+empLink(p.id)+'</b> · marked ended and active at once',
+      sub:'ended '+fmtY(p.ended)+' but still active — pick one, the roster and reports disagree until then'});
+  });
+  add('hrsetup','warn','HR setup to finish',
+    'Not blocking payroll yet, but each gets more expensive to fix the longer it waits: logins, roles, manager lines, and stale active flags.',
+    hrsetup);
 
   /* ============================================================
      🦅 TEN MORE SKILLS — every one of these is a failure mode a

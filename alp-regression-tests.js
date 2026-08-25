@@ -2526,6 +2526,43 @@
       } else {
         results.push({name:'HAWKSTART hawk exists', expected:true, actual:false, pass:false});
       }
+
+      /* ---------- HRHAWK: the Hawk audits HR data in two tiers ---------- */
+      if(typeof runChecks==='function'){
+        var pick=function(id){ return runChecks().filter(function(x){return x.id===id;})[0]; };
+        var nItems=function(id){ var c=pick(id); return c?c.items.length+c.muted.length:0; };
+        // start date is payroll-RED, not worth-a-look
+        PEOPLE=[mkPerson({id:'HR1', payFrom:'', email:'a@x.com', roles:['sales']})]; ROWS=[];
+        var es=pick('empstart');
+        check('HRHAWK start date finding is payroll-red', 'bad', es?es.sev:'absent');
+        // a plan with no date silently zeroes commission — red
+        PEOPLE=[mkPerson({id:'HR2', start:'', payFrom:'2026-01-01', email:'b@x.com', roles:['sales']})]; ROWS=[];
+        checkTrue('HRHAWK missing plan date is flagged red', nItems('hrplan')>=1 && pick('hrplan').sev==='bad', nItems('hrplan'));
+        // somebody sells and every rate is 0%
+        PEOPLE=[mkPerson({id:'HR3', commNew:0, commUp:0, commRenew:0, payFrom:'2026-01-01', email:'c@x.com', roles:['sales']})];
+        ROWS=[mkRow({rep:'HR3'})];
+        checkTrue('HRHAWK a seller on 0% rates is flagged', (pick('hrplan')||{items:[]}).items.some(function(i){return i.text.indexOf('0%')>-1;}), 'items');
+        // a start date with no pay terms computes $0 base
+        PEOPLE=[mkPerson({id:'HR4', payFrom:'2026-01-01', rate:0, email:'d@x.com', roles:['sales']})]; ROWS=[];
+        checkTrue('HRHAWK start date without pay terms is flagged', (pick('hrplan')||{items:[]}).items.some(function(i){return i.text.indexOf('no pay terms')>-1;}), 'items');
+        // one email on two records
+        PEOPLE=[mkPerson({id:'HR5', email:'same@x.com', payFrom:'2026-01-01', roles:['sales']}),
+                mkPerson({id:'HR6', name:'Other Person', email:'same@x.com', payFrom:'2026-01-01', roles:['sales']})]; ROWS=[];
+        checkTrue('HRHAWK one email on two records is flagged', (pick('hrplan')||{items:[]}).items.some(function(i){return i.text.indexOf('same@x.com')>-1;}), 'items');
+        // a complete record raises nothing red
+        PEOPLE=[mkPerson({id:'HR7', payFrom:'2026-01-01', email:'e@x.com', roles:['sales']})]; ROWS=[];
+        check('HRHAWK a complete record raises nothing red', 0, nItems('hrplan'));
+        // setup tier: login, roles, manager lines, stale flags — warn, not red
+        PEOPLE=[mkPerson({id:'HR8', payFrom:'2026-01-01'})]; ROWS=[];
+        checkTrue('HRHAWK missing login email is a setup warning', nItems('hrsetup')>=1 && pick('hrsetup').sev==='warn', nItems('hrsetup'));
+        PEOPLE=[mkPerson({id:'HR9', payFrom:'2026-01-01', email:'f@x.com', roles:[], mgr:'ghost'})]; ROWS=[];
+        var su=pick('hrsetup');
+        checkTrue('HRHAWK no-role and ghost-manager both flagged', su&&su.items.length>=2, su?su.items.length:0);
+        PEOPLE=[mkPerson({id:'HRA', payFrom:'2026-01-01', email:'g@x.com', roles:['sales'], ended:'2026-05-01', active:true})]; ROWS=[];
+        checkTrue('HRHAWK ended-but-active mismatch is flagged', (pick('hrsetup')||{items:[]}).items.some(function(i){return i.text.indexOf('ended and active')>-1;}), 'items');
+      } else {
+        results.push({name:'HRHAWK hawk exists', expected:true, actual:false, pass:false});
+      }
     } catch(e){
       results.push({name:'HARNESS ERROR', expected:'no throw', actual:String(e&&e.message||e), pass:false});
     } finally {
