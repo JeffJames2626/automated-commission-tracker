@@ -15561,6 +15561,41 @@ window.addEventListener('hashchange',function(){
   const d=document.createElement('div'); d.className='wrap'; d.innerHTML=msgs.join('');
   document.querySelector('header').insertAdjacentElement('afterend',d);
 })();
+
+/* Uploaded-invoice remover. Open the tracker with #wipe-uploads in the URL to
+   clear every uploaded invoice feed from THIS browser: audit lines, paid
+   invoices, open balances, payment lines, their import logs, and the manual
+   links/assignments into them. Sales, payouts, clients, leads, team, comp
+   plans, and settings are untouched, and the source files can be re-imported
+   any time. Keys are emptied to [], never deleted (deleting alp_ keys
+   re-triggers boot migrations). Asks before doing anything; with cloud sync
+   on it waits for the push so the cleared state reaches the server. */
+(function(){
+  if(location.hash!=='#wipe-uploads') return;
+  history.replaceState(null,'',location.pathname+location.search);
+  if(!confirm('Remove ALL uploaded invoice data from this browser?\n\n'+
+    'Goes away: invoice audit lines, paid-invoice history, open balances, payment lines, their import logs, and invoice links/assignments.\n'+
+    'Stays: sales, payouts, clients, leads, team, comp plans, settings.\n\n'+
+    'The export files on disk can be re-imported later.')) return;
+  INVOICES=[];  save(K_INV,INVOICES);
+  OPENINV=[];   save(K_BAL,OPENINV);
+  PAIDINV=[];   save(K_PDI,PAIDINV);
+  PAYMENTS=[];  save(K_PAY,PAYMENTS);
+  INVSYNC=[];   save(K_INVSYNC,INVSYNC);
+  BALSYNC=[];   save(K_BALSYNC,BALSYNC);
+  PDISYNC=[];   save(K_PDISYNC,PDISYNC);
+  PAYSYNC=[];   save(K_PAYSYNC,PAYSYNC);
+  INVLINKS=[];  save(K_INVLINK,INVLINKS);
+  INVASSIGN=[]; save(K_INVASSIGN,INVASSIGN);
+  invDirty();
+  if(typeof CLOUD!=='undefined'&&CLOUD.on){
+    toast('Uploaded invoice data removed — syncing, hold on…');
+    setTimeout(function(){location.reload();},6000);
+  } else {
+    toast('Uploaded invoice data removed.');
+    setTimeout(function(){location.reload();},800);
+  }
+})();
 </script>
 <!-- Regression tests (financial/data-integrity). Inert unless the URL ends in #selftest;
      runs against the live functions, never writes to storage. Safe to ship or remove. -->
