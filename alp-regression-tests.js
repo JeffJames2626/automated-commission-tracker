@@ -2959,6 +2959,75 @@
       } else {
         results.push({name:'EOSTOGGLE resolver exists', expected:true, actual:false, pass:false});
       }
+
+      /* ---------- EOSWIZ: enable → set up → review → complete ---------- */
+      if(typeof eosState==='function'&&typeof eosWizComplete==='function'){
+        ADMIN=true; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+        PEOPLE=[mkPerson({id:'EW1', name:'Wiz Person', roles:['sales']})];
+        if(typeof EMP_IDX!=='undefined') EMP_IDX=null;
+        EOSROLES=[]; EOSASSIGN=[];
+        // fresh business: off until chosen
+        BIZ=null; bizDirty(); bizEnsure();
+        check('EOSWIZ fresh business state is off', 'off', eosState());
+        // enabling without configuration = setup required, not broken screens
+        eosOpsSet({enabled:true});
+        check('EOSWIZ enabled + never configured = setup', 'setup', eosState());
+        // the legacy ALP shape (boolean true) migrates to enabled + NEEDS REVIEW
+        BIZ={id:'biz-alp', status:'active', divisions:[], targets:[], ops:{eos:true}, name:'ALP'}; bizDirty();
+        bizEnsure();
+        check('EOSWIZ ALP-style legacy boolean becomes enabled + setup-needs-review', 'setup', eosState());
+        check('EOSWIZ …same business id', 'biz-alp', bizId());
+        // progress is resumable state on the business record
+        eosOpsSet({setupStep:3});
+        check('EOSWIZ the step rides the business record', 3, eosOps().setupStep);
+        // EOS off mid-setup: progress, roles, assignments all preserved
+        var wr=eosRoleCreate('Visionary'); eosAssign('EW1', wr.id);
+        var rolesKeep=JSON.stringify(EOSROLES), assignKeep=JSON.stringify(EOSASSIGN);
+        eosOpsSet({enabled:false});
+        check('EOSWIZ off mid-setup hides, keeps the step', 'off|3', eosState()+'|'+eosOps().setupStep);
+        check('EOSWIZ …and keeps every seat', rolesKeep, JSON.stringify(EOSROLES));
+        eosOpsSet({enabled:true});
+        check('EOSWIZ back on resumes setup at the same step', 'setup|3', eosState()+'|'+eosOps().setupStep);
+        check('EOSWIZ …with assignments intact', assignKeep, JSON.stringify(EOSASSIGN));
+        // completion is explicit, audited once, and idempotent
+        var aB4=AUDIT.length;
+        eosWizComplete();
+        check('EOSWIZ completing flips the state to ok', 'ok', eosState());
+        checkTrue('EOSWIZ …with a completion date', !!eosOps().completedAt, eosOps().completedAt);
+        var aAfter=AUDIT.length;
+        eosWizComplete();
+        check('EOSWIZ double-completion changes nothing', aAfter, AUDIT.length);
+        checkTrue('EOSWIZ …and completion was audited exactly once', aAfter>aB4, aAfter-aB4);
+        // configured off/on: no wizard, same data
+        eosOpsSet({enabled:false}); eosOpsSet({enabled:true});
+        check('EOSWIZ a configured company comes back as ok, never setup', 'ok', eosState());
+        check('EOSWIZ …with the same seat ids', wr.id, (empEosRoles('EW1')[0]||{}).id);
+        // company setup path: choosing EOS leaves the company complete and EOS in setup
+        BIZ=null; bizDirty(); bizEnsure();
+        localStorage.setItem('alp_session_v1', JSON.stringify({token:'tw',email:'wiz@x.com',name:'W',role:'admin'}));
+        renderCompanyGate();
+        var cse=document.getElementById('csEos'); if(cse) cse.checked=true;
+        if(document.getElementById('csName')){ document.getElementById('csName').value='Wizard Co'; }
+        companySetupSave();
+        check('EOSWIZ company setup with EOS=yes: company complete', true, bizSetupComplete());
+        check('EOSWIZ …and EOS waiting in setup, not blocking the company', 'setup', eosState());
+        localStorage.removeItem('alp_session_v1');
+        var cg=document.getElementById('companyGate'); if(cg){ cg.style.display='none'; cg.innerHTML=''; cg.dataset.built=''; }
+        var ew=document.getElementById('eosWizard'); if(ew){ ew.style.display='none'; ew.innerHTML=''; }
+        document.body.classList.remove('cwalled');
+        // the wizard renders pre-filled from canonical data
+        EOSROLES=[]; EOSASSIGN=[]; eosOpsSet({enabled:true, setupComplete:false, setupStep:2});
+        var pr=eosRoleCreate('Prefilled Seat');
+        if(ew){ ew.style.display=''; renderEosWiz();
+          checkTrue('EOSWIZ the roles step pre-fills existing seats', ew.innerHTML.indexOf('Prefilled Seat')>-1, 'shown');
+          ew.style.display='none'; ew.innerHTML=''; }
+        // snapshot carries the full state object
+        eosWizComplete();
+        checkTrue('EOSWIZ backup carries the configured state',
+          stateSnapshot().biz.ops.eos.setupComplete===true, 'ok');
+      } else {
+        results.push({name:'EOSWIZ wizard exists', expected:true, actual:false, pass:false});
+      }
     } catch(e){
       results.push({name:'HARNESS ERROR', expected:'no throw', actual:String(e&&e.message||e), pass:false});
     } finally {

@@ -557,8 +557,13 @@ footer{padding:24px 0 40px;font-size:12px;color:var(--muted);text-align:center}
 #lockGoogle .or{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;margin:14px 0 4px}
 #lockGoogle .or:before,#lockGoogle .or:after{content:"";flex:1;border-top:1px solid var(--line)}
 /* Login wall: on the hosted site nothing shows until a company Google account is signed in. */
-#loginWall,#companyGate{position:fixed;inset:0;z-index:9000;background:var(--sand);display:flex;align-items:center;justify-content:center;padding:24px;overflow:auto}
-#loginWall .card,#companyGate .card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:34px 30px;max-width:440px;width:100%;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.08)}
+#loginWall,#companyGate,#eosWizard{position:fixed;inset:0;z-index:9000;background:var(--sand);display:flex;align-items:center;justify-content:center;padding:24px;overflow:auto}
+#loginWall .card,#companyGate .card,#eosWizard .card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:34px 30px;max-width:440px;width:100%;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.08)}
+#eosWizard{z-index:8800;align-items:flex-start}
+#eosWizard .card{max-width:640px;text-align:left;margin:4vh auto}
+#eosWizard h2{margin:6px 0 2px;font-size:22px;text-transform:none;letter-spacing:0;color:var(--ink)}
+#eosWizard label{display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:3px}
+#eosWizard .frow{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
 /* Company setup is a form, not a lock screen: wider, left-aligned, scrollable. */
 #companyGate{z-index:8900;align-items:flex-start}
 #companyGate .card{max-width:600px;text-align:left;margin:4vh auto}
@@ -1002,6 +1007,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
 
 <div id="loginWall" style="display:none"></div>
 <div id="companyGate" style="display:none"></div>
+<div id="eosWizard" style="display:none"></div>
 <input type="file" id="avFile" accept="image/*" style="display:none" onchange="empPhotoFromInput(event)">
 
 <header id="appHeader">
@@ -2000,7 +2006,8 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
       <div style="margin-top:10px"><b style="font-size:12px">Operating system</b>
         <span class="hint">product experience only — never permissions, identity, or money. Turning EOS off hides the experience; it deletes nothing.</span></div>
       <label style="display:flex;gap:7px;align-items:center;margin-top:5px;font-size:13px">
-        <input type="checkbox" id="bizEos"> EOS / Traction — Roles, Accountability and Scorecard features</label>
+        <input type="checkbox" id="bizEos"> EOS / Traction — Roles, Accountability and Scorecard features
+        <span id="bizEosStatus"></span></label>
       <div style="margin-top:10px"><b style="font-size:12px">Divisions</b>
         <span class="hint">the service lines this business operates — one per line; employees link through the Department on their record</span></div>
       <textarea id="bizDivs" rows="4" style="width:100%;max-width:340px;margin-top:5px;font:inherit"></textarea>
@@ -3789,7 +3796,7 @@ function pNum(s){
    ============================================================ */
 function bizDefaults(){ return {
   id:'', status:'active', divisions:[], targets:[],   // root fields — bizEnsure() stamps the permanent id
-  ops:{eos:false},   // operating-system choices — product experience, never permissions or identity
+  ops:{eos:{enabled:false, setupComplete:false, setupStep:0, setupV:1, startedAt:'', completedAt:''}},   // operating-system choices — product experience, never permissions or identity
   name:'Automated Lawn & Pest', appName:'ALP Sales Tracker', legal:'', email:'', phone:'', website:'',
   addr1:'', addr2:'', city:'Spokane', state:'WA', zip:'', country:'US',
   tz:'America/Los_Angeles',    // IANA — Intl handles PST/PDT itself, never a raw offset
@@ -3825,7 +3832,25 @@ function bizSet(patch){
   return true;
 }
 function BIZ_TZ(){ return bizGet().tz||'America/Los_Angeles'; }
-function businessUsesEOS(){ return !!(bizGet().ops&&bizGet().ops.eos); }
+function eosOps(){ const e=(bizGet().ops||{}).eos;
+  if(typeof e==='object'&&e) return Object.assign({enabled:false,setupComplete:false,setupStep:0,setupV:1,startedAt:'',completedAt:''},e);
+  return {enabled:!!e, setupComplete:false, setupStep:0, setupV:1, startedAt:'', completedAt:''};   // legacy boolean shape
+}
+function businessUsesEOS(){ return eosOps().enabled; }
+function eosSetupComplete(){ const o=eosOps(); return o.enabled&&o.setupComplete; }
+// 'off' | 'setup' (enabled, not yet configured) | 'ok'
+function eosState(){ const o=eosOps(); return !o.enabled?'off':(o.setupComplete?'ok':'setup'); }
+// Writes wizard/step state WITHOUT the per-field audit spam — meaningful events
+// (enable/disable/start/complete) are audited by their own entries.
+function eosOpsSet(patch){
+  const cur=(BIZ&&typeof BIZ==='object')?BIZ:bizGet();
+  BIZ=Object.assign({},cur);
+  Object.keys(BIZ).forEach(k=>{ if(k.charAt(0)==='_') delete BIZ[k]; });
+  BIZ.ops=Object.assign({},BIZ.ops||{});
+  BIZ.ops.eos=Object.assign({},eosOps(),patch);
+  save(K_BIZ,BIZ); bizDirty();
+  return BIZ.ops.eos;
+}
 // The clock. Pure at the core: give it any instant and any IANA zone and it
 // answers what date/time that instant is THERE. Intl owns the DST rules.
 function bizPartsAtTz(d,tz){
@@ -3908,7 +3933,12 @@ function bizEnsure(){
   }
   if(!Array.isArray(cur.targets)){ cur.targets=[]; changed=true; }
   if(!cur.ops||typeof cur.ops.eos==='undefined'){
-    cur.ops=Object.assign({},cur.ops||{},{eos:!born});   // existing record → on; fresh install → setup asks
+    // existing record → enabled (ALP keeps what it was building) but NOT configured —
+    // the wizard runs once, pre-filled; fresh install → setup asks
+    cur.ops=Object.assign({},cur.ops||{},{eos:{enabled:!born, setupComplete:false, setupStep:0, setupV:1, startedAt:'', completedAt:''}});
+    changed=true;
+  } else if(typeof cur.ops.eos!=='object'){
+    cur.ops=Object.assign({},cur.ops,{eos:{enabled:!!cur.ops.eos, setupComplete:false, setupStep:0, setupV:1, startedAt:'', completedAt:''}});
     changed=true;
   }
   if(changed){
@@ -4073,7 +4103,7 @@ function companySetupSave(){
     else if(o.value&&x.value) hours[d[0]]={closed:false,open:o.value,close:x.value};
     else hours[d[0]]=null; });
   patch.hours=hours;
-  patch.ops=Object.assign({},bizGet().ops,{eos:!!(document.getElementById('csEos')||{}).checked});
+  patch.ops=Object.assign({},bizGet().ops,{eos:Object.assign({},eosOps(),{enabled:!!(document.getElementById('csEos')||{}).checked})});
   const s=session();
   const next=Object.assign({},bizGet(),patch);
   Object.keys(next).forEach(k=>{ if(k.charAt(0)==='_') delete next[k]; });
@@ -4087,6 +4117,7 @@ function companySetupSave(){
   auditRecord('company-setup',{id:BIZ.id, name:BIZ.name, by:next.setup.by});
   toast('Welcome to '+BIZ.name);
   renderCompanyGate(); render();
+  if(eosState()==='setup') setTimeout(eosWizOpen,300);   // company first, then the OS
   return true;
 }
 function openCompanySettings(){ setTab('admin');
@@ -5408,6 +5439,124 @@ function render(){
 function setHWho(v){ HWHO=v; renderHoursTab(); }
 
 
+/* ---- EOS SETUP WIZARD — enable → set up → review → complete ----
+   Six short steps, resumable at any point (the step rides on the business
+   record), every screen reads and writes the CANONICAL structures — divisions,
+   roles, assignments — so confirming existing data never duplicates it. */
+const EOS_STEPS=['Welcome','Divisions','Roles','People','Accountabilities','Review'];
+function eosWizOpen(){
+  const g=document.getElementById('eosWizard'); if(!g) return;
+  if(!can('admin_security')&&!userIsCompanyAdmin()){ toast('EOS setup is an admin job'); return; }
+  const o=eosOps();
+  if(!o.startedAt){ eosOpsSet({startedAt:todayISO()}); auditRecord('eos-setup-start',{step:o.setupStep}); }
+  g.style.display='';
+  renderEosWiz();
+}
+function eosWizClose(){ const g=document.getElementById('eosWizard'); if(g) g.style.display='none'; render(); }
+function eosWizGo(n){ eosOpsSet({setupStep:Math.max(0,Math.min(EOS_STEPS.length-1,n))}); renderEosWiz(); }
+function eosWizCreateRole(){
+  const nm=document.getElementById('ewRoleName'), dv=document.getElementById('ewRoleDiv');
+  if(eosRoleCreate(nm.value, dv?dv.value:'')){ nm.value=''; renderEosWiz(); }
+}
+function eosWizAssign(empId){
+  const sel=document.getElementById('ewPick_'+empId); if(!sel||!sel.value){ toast('Pick the seat first'); return; }
+  if(eosAssign(empId, sel.value)) renderEosWiz();
+}
+function eosWizAccts(id){
+  const r=eosRoleOf(id); const ta=document.getElementById('ewAccts_'+id); if(!r||!ta) return;
+  eosRoleUpdate(id,{accts:ta.value.split('\n').map(x=>x.trim()).filter(Boolean),
+    purpose:(document.getElementById('ewPurpose_'+id)||{value:r.purpose}).value.trim()});
+  toast('Saved'); renderEosWiz();
+}
+function eosWizComplete(){
+  if(eosSetupComplete()){ eosWizClose(); return; }   // double-click safe
+  eosOpsSet({setupComplete:true, completedAt:todayISO(), setupStep:EOS_STEPS.length-1});
+  auditRecord('eos-setup-complete',{roles:EOSROLES.length,
+    assigned:EOSASSIGN.filter(a=>!a.to).length, divisions:bizDivisions().length});
+  toast('EOS is set up — '+bizGet().name+' runs on it now');
+  eosWizClose();
+}
+function renderEosWiz(){
+  const g=document.getElementById('eosWizard'); if(!g||g.style.display==='none') return;
+  const step=eosOps().setupStep||0;
+  const dots=EOS_STEPS.map((t,i)=>'<span style="display:inline-flex;align-items:center;gap:5px;margin-right:12px;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:'+(i===step?'var(--accent)':(i<step?'var(--grn-d)':'var(--muted)'))+'">'+
+    '<span style="width:7px;height:7px;border-radius:50%;background:'+(i===step?'var(--accent)':(i<step?'var(--grn)':'var(--band)'))+'"></span>'+(i===step?esc(t):'')+'</span>').join('');
+  const nav=(back,nextLabel,nextFn)=>'<div style="margin-top:18px;display:flex;gap:10px;align-items:center">'+
+    (back?'<button class="sm" onclick="eosWizGo('+(step-1)+')">← Back</button>':'')+
+    '<button class="p" onclick="'+(nextFn||('eosWizGo('+(step+1)+')'))+'">'+(nextLabel||'Continue')+'</button>'+
+    '<span class="hspace"></span><button class="sm" onclick="eosWizClose()">Finish later</button>'+
+    '<span class="note">'+(step+1)+' of '+EOS_STEPS.length+' · progress saves itself</span></div>';
+  let h='<div class="card"><div style="margin-bottom:14px">'+dots+'</div>';
+  if(step===0){
+    h+='<h2>Set up EOS / Traction</h2>'+
+      '<div class="note" style="margin-top:6px">EOS is on for <b>'+esc(bizGet().name)+'</b>. This walk-through sets up what the app will run for you:</div>'+
+      '<div style="margin:12px 0;font-size:14px;line-height:2"><b>Roles / Seats</b> — who owns what, by permanent seat<br>'+
+      '<b>Accountability</b> — each seat’s purpose and its short list<br>'+
+      '<b>Scorecard</b> — ready to build once the seats are confirmed</div>'+
+      '<div class="note">Everything already known is pre-filled. Confirming existing data never duplicates it.</div>'+nav(false,'Start setup');
+  } else if(step===1){
+    h+='<h2>Divisions</h2><div class="note" style="margin:4px 0 10px">The teams this business operates — one per line. These are the company’s own divisions; EOS reuses them, it never copies them.</div>'+
+      '<textarea id="ewDivs" rows="5" style="width:100%;max-width:340px">'+esc(bizDivisions().map(d=>d.name).join('\n'))+'</textarea>'+
+      nav(true,'Save & continue','eosWizSaveDivs()');
+  } else if(step===2){
+    const divOpt=bizDivisions().map(d=>'<option value="'+d.id+'">'+esc(d.name)+'</option>').join('');
+    h+='<h2>EOS Roles / Seats</h2><div class="note" style="margin:4px 0 10px">One seat per role in the business. Existing seats are listed for confirmation — creating a near-duplicate name reuses the seat instead.</div>'+
+      (EOSROLES.length?'<div style="margin-bottom:10px">'+EOSROLES.map(r=>{const dv=bizDivisions().find(d=>d.id===r.div);
+        return '<div style="display:flex;gap:8px;align-items:center;margin:3px 0"><b>'+esc(r.name)+'</b>'+
+          '<span class="note">'+(dv?esc(dv.name):'no division')+' · '+(eosCurrent(r.id).length?eosCurrent(r.id).map(p=>esc(empShort(p))).join(', '):'vacant')+'</span>'+
+          '<button class="sm" onclick="eosRenameUI(\''+r.id+'\');renderEosWiz()">Rename</button></div>';}).join('')+'</div>':'')+
+      '<div class="frow"><div><label>New seat</label><input id="ewRoleName" placeholder="Integrator"></div>'+
+      (bizDivisions().length?'<div><label>Division</label><select id="ewRoleDiv"><option value="">—</option>'+divOpt+'</select></div>':'')+
+      '<div style="align-self:end"><button class="sm p" onclick="eosWizCreateRole()">Add seat</button></div></div>'+nav(true);
+  } else if(step===3){
+    const roleOpt=EOSROLES.filter(r=>r.status==='active').map(r=>'<option value="'+r.id+'">'+esc(r.name)+'</option>').join('');
+    const props=eosProposals();
+    h+='<h2>Who sits where</h2><div class="note" style="margin:4px 0 10px">Assign your people to seats — by their permanent records, never by name text. A seat can stay vacant; a person can hold more than one.</div>'+
+      '<div class="scroll"><table><thead><tr><th>Person</th><th>Title</th><th>Seat</th><th></th></tr></thead><tbody>'+
+      props.map(x=>'<tr><td><b>'+esc(empName(x.p))+'</b></td><td class="note">'+esc(x.title||'—')+'</td>'+
+        '<td>'+(x.cur.length?x.cur.map(r=>'<b>'+esc(r.name)+'</b> <button class="sm" onclick="eosVacateUI(\''+x.p.id+'\',\''+r.id+'\');renderEosWiz()">vacate</button>').join(' · ')
+          :'<select id="ewPick_'+x.p.id+'" style="max-width:170px"><option value="">— pick —</option>'+roleOpt+'</select>')+'</td>'+
+        '<td>'+(x.cur.length?'':'<button class="sm" onclick="eosWizAssign(\''+x.p.id+'\')">Assign</button>')+'</td></tr>').join('')+'</tbody></table></div>'+
+      nav(true);
+  } else if(step===4){
+    h+='<h2>Accountabilities</h2><div class="note" style="margin:4px 0 10px">Each seat’s purpose and its short list. Skip anything that is not ready — nothing is invented to fill space.</div>'+
+      (EOSROLES.length?EOSROLES.map(r=>'<details style="margin:6px 0"><summary><b>'+esc(r.name)+'</b> <span class="note">'+((r.accts||[]).length?(r.accts.length+' accountabilit'+(r.accts.length===1?'y':'ies')):'none yet')+'</span></summary>'+
+        '<div style="margin:8px 0 4px"><label style="font-size:11px">Purpose</label><input id="ewPurpose_'+r.id+'" value="'+esc(r.purpose||'')+'" style="max-width:340px">'+
+        '<label style="font-size:11px;display:block;margin-top:5px">Accountabilities (one per line)</label>'+
+        '<textarea id="ewAccts_'+r.id+'" rows="3" style="width:100%;max-width:340px">'+esc((r.accts||[]).join('\n'))+'</textarea>'+
+        '<div><button class="sm" onclick="eosWizAccts(\''+r.id+'\')">Save</button></div></div></details>').join('')
+        :'<div class="note">No seats yet — go back a step and add them first.</div>')+
+      nav(true,'Continue (skipping is fine)');
+  } else {
+    const vac=EOSROLES.filter(r=>r.status==='active'&&!eosCurrent(r.id).length);
+    const noAccts=EOSROLES.filter(r=>!(r.accts||[]).length);
+    const props=eosProposals(), unassigned=props.filter(x=>!x.cur.length);
+    h+='<h2>Review</h2>'+
+      '<div style="margin:10px 0;line-height:2.1;font-size:14px">'+
+      '<b>'+esc(bizGet().name)+'</b><br>'+
+      bizDivisions().length+' division'+(bizDivisions().length===1?'':'s')+' · '+
+      EOSROLES.length+' seat'+(EOSROLES.length===1?'':'s')+' · '+
+      props.filter(x=>x.cur.length).length+' of '+props.length+' people seated'+
+      (vac.length?'<br><span style="color:var(--gold)">'+vac.length+' vacant seat'+(vac.length===1?'':'s')+': '+vac.map(r=>esc(r.name)).join(', ')+'</span>':'')+
+      (unassigned.length?'<br><span class="note">'+unassigned.length+' unseated: '+unassigned.map(x=>esc(empShort(x.p))).join(', ')+'</span>':'')+
+      (noAccts.length?'<br><span class="note">'+noAccts.length+' seat'+(noAccts.length===1?'':'s')+' without accountabilities yet</span>':'')+
+      '<br><span class="note">Scorecard: ready to build now that the seats are confirmed — a later pass.</span></div>'+
+      '<div class="note">Vacant seats and missing accountabilities are honest states, not blockers. Everything stays editable under Admin → EOS Roles.</div>'+
+      nav(true,'✓ Complete EOS setup','eosWizComplete()');
+  }
+  h+='</div>';
+  g.innerHTML=h;
+}
+function eosWizSaveDivs(){
+  const ta=document.getElementById('ewDivs'); if(!ta){ eosWizGo(2); return; }
+  const cur=bizDivisions();
+  const divs=ta.value.split('\n').map(x=>x.trim()).filter(Boolean)
+    .filter((x,i,a)=>a.findIndex(y=>norm(y)===norm(x))===i)
+    .map(nm=>{ const old=cur.find(d=>norm(d.name)===norm(nm)); return old?{id:old.id,name:nm}:{id:uid('dv'),name:nm}; });
+  bizSet({divisions:divs});
+  eosWizGo(2);
+}
+
 /* ---- EOS Roles panel ---- */
 function eosJump(){ setTab('admin');
   setTimeout(()=>{ const el=document.getElementById('eosCard'); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); },60); }
@@ -5433,6 +5582,18 @@ function eosAssignUI(empId){
 function eosVacateUI(empId,roleId){ if(confirm('Vacate this seat? The history keeps who held it.')){ eosVacate(empId,roleId); renderEos(); } }
 function renderEos(){
   const box=document.getElementById('eosPanel'); if(!box) return;
+  if(eosState()==='setup'){
+    box.innerHTML='<div class="warnbox"><b>EOS setup needs review.</b> EOS is on, but the setup walk-through has never been completed — '+
+      'everything below stays editable, and the wizard pre-fills what already exists. Step '+((eosOps().setupStep||0)+1)+' of '+EOS_STEPS.length+'. '+
+      '<button class="sm p" onclick="eosWizOpen()" style="margin-left:8px">Continue setup</button></div>'+
+      '<div id="eosPanelBody"></div>';
+    renderEosInto(document.getElementById('eosPanelBody'));
+    return;
+  }
+  renderEosInto(box);
+}
+function renderEosInto(box){
+  if(!box) return;
   const divOpt=bizDivisions().map(d=>'<option value="'+d.id+'">'+esc(d.name)+'</option>').join('');
   const roleOpt=EOSROLES.filter(r=>r.status==='active').map(r=>'<option value="'+r.id+'">'+esc(r.name)+'</option>').join('');
   let h='<div class="frow"><div><label>New seat</label><input id="eosNewName" placeholder="Estimator"></div>'+
@@ -5513,6 +5674,9 @@ function renderBiz(){
   }
   const eo=document.getElementById('bizEos');
   if(eo) eo.checked=businessUsesEOS();
+  const est=document.getElementById('bizEosStatus');
+  if(est) est.innerHTML=eosState()==='ok'?'<span class="pill ok">CONFIGURED</span> <button class="sm" onclick="eosJump()">Manage EOS</button>'
+    :eosState()==='setup'?'<span class="pill mid">SETUP NEEDS REVIEW</span> <button class="sm" onclick="eosWizOpen()">Review setup</button>':'';
   const dt=document.getElementById('bizDivs');
   if(dt&&document.activeElement!==dt) dt.value=bizDivisions().map(d=>d.name).join('\n');
   const dl=document.getElementById('bizDivList');
@@ -5549,7 +5713,11 @@ function bizSave(){
   });
   patch.hours=hours;
   const eo=document.getElementById('bizEos');
-  if(eo) patch.ops=Object.assign({},bizGet().ops,{eos:eo.checked});
+  let eosTurnedOn=false;
+  if(eo){ const was=businessUsesEOS();
+    patch.ops=Object.assign({},bizGet().ops,{eos:Object.assign({},eosOps(),{enabled:eo.checked})});
+    if(eo.checked!==was) auditRecord(eo.checked?'eos-enabled':'eos-disabled',{});
+    eosTurnedOn=eo.checked&&!was; }
   // divisions: one per line; names that match existing divisions keep their ids
   const dt=document.getElementById('bizDivs');
   if(dt){
@@ -5558,7 +5726,9 @@ function bizSave(){
       .filter((x,i,a)=>a.findIndex(y=>norm(y)===norm(x))===i)
       .map(nm=>{ const old=cur.find(d=>norm(d.name)===norm(nm)); return old?{id:old.id,name:nm}:{id:uid('dv'),name:nm}; });
   }
-  if(bizSet(patch)){ const n=document.getElementById('bizSavedNote'); if(n) n.textContent='Saved · the clock and week boundaries now follow these settings'; render(); }
+  if(bizSet(patch)){ const n=document.getElementById('bizSavedNote'); if(n) n.textContent='Saved · the clock and week boundaries now follow these settings'; render();
+    if(eosTurnedOn&&eosState()==='setup') eosWizOpen();   // configured companies just come back on
+  }
 }
 
 function renderAdmin(){
