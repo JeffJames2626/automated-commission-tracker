@@ -72,6 +72,8 @@
                TSHEET:(typeof TSHEET!=='undefined'?TSHEET:undefined),
                PAYPER:(typeof PAYPER!=='undefined'?PAYPER:undefined),
                TSIMP:(typeof TSIMP!=='undefined'?TSIMP:undefined),
+               EOSROLES:(typeof EOSROLES!=='undefined'?EOSROLES:undefined),
+               EOSASSIGN:(typeof EOSASSIGN!=='undefined'?EOSASSIGN:undefined),
                ADMIN:(typeof ADMIN!=='undefined'?ADMIN:undefined) };
     // Nothing a test run may COST localStorage. Stubbing save() is not enough:
     // cloudApply() writes through its own internal put() (raw localStorage.setItem),
@@ -2831,8 +2833,11 @@
         checkTrue('OWNERSHIP commissions accept no inbound source at all',
           ownershipOf('Commissions').inbound.length===0, 'ok');
         // the gaps are named, not hidden
-        check('OWNERSHIP the known gaps are flagged AMBIGUOUS', 'AMBIGUOUS|AMBIGUOUS|AMBIGUOUS',
-          [ownershipOf('EOS Roles').owner,ownershipOf('Properties').owner,ownershipOf('Vehicles').owner].join('|'));
+        check('OWNERSHIP the remaining gaps stay flagged AMBIGUOUS', 'AMBIGUOUS|AMBIGUOUS',
+          [ownershipOf('Properties').owner,ownershipOf('Vehicles').owner].join('|'));
+        check('OWNERSHIP EOS Roles graduated to app-canonical', 'app', ownershipOf('EOS Roles').owner);
+        checkTrue('OWNERSHIP …with no auto-applying inbound source',
+          ownershipOf('EOS Roles').inbound.every(function(i){return i.cls!=='authoritative';}), 'ok');
         // defining the registry moved no data: it is a constant, provably inert
         var b4=JSON.stringify({r:ROWS.length,p:PAYOUTS.length,c:(typeof CLIENTS!=='undefined'?CLIENTS.length:0)});
         ownershipOf('Sales'); ownershipOf('Payouts'); ownershipOf('Clients');
@@ -2840,6 +2845,77 @@
           JSON.stringify({r:ROWS.length,p:PAYOUTS.length,c:(typeof CLIENTS!=='undefined'?CLIENTS.length:0)}));
       } else {
         results.push({name:'OWNERSHIP registry exists', expected:true, actual:false, pass:false});
+      }
+
+      /* ---------- EOSROLE: the canonical seat ---------- */
+      if(typeof eosRoleCreate==='function'){
+        ADMIN=true; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+        EOSROLES=[]; EOSASSIGN=[];
+        BIZ=null; bizDirty();
+        PEOPLE=[mkPerson({id:'EO1', name:'Josh Everard', title:'Estimator', dept:'Irrigation', roles:['sales']}),
+                mkPerson({id:'EO2', name:'New Hire', title:'', roles:[]})];
+        if(typeof EMP_IDX!=='undefined') EMP_IDX=null;
+        bizEnsure();
+        var er=eosRoleCreate('Estimator', (bizDivisions()[0]||{}).id);
+        checkTrue('EOSROLE a seat gets a permanent id', /^er/.test(er.id), er.id);
+        check('EOSROLE the seat belongs to the business', bizId(), er.biz);
+        checkTrue('EOSROLE the seat links the canonical division id', er.div===(bizDivisions()[0]||{id:''}).id, er.div);
+        // near-name creation reuses the seat — never a duplicate identity
+        check('EOSROLE “ESTIMATOR ” is the same seat', er.id, eosRoleCreate('ESTIMATOR ').id);
+        check('EOSROLE …and the seat count stayed at one', 1, EOSROLES.length);
+        // assignment by id, idempotent
+        var a1=eosAssign('EO1', er.id);
+        check('EOSROLE assignment keys on ids, not names', 'EO1|'+er.id, a1.emp+'|'+a1.role);
+        check('EOSROLE assigning the same seat twice is one assignment', a1.id, eosAssign('EO1', er.id).id);
+        // renames never move identity or history
+        PEOPLE[0].name='Joshua Renamed'; if(typeof EMP_IDX!=='undefined') EMP_IDX=null;
+        check('EOSROLE an employee rename keeps the seat', 1, empEosRoles('EO1').length);
+        eosRoleRename(er.id,'Project Estimator');
+        check('EOSROLE a role rename keeps the id', er.id, (empEosRoles('EO1')[0]||{}).id);
+        check('EOSROLE …and never duplicates', 1, EOSROLES.length);
+        // vacancy + succession keep history
+        eosVacate('EO1', er.id);
+        check('EOSROLE a vacated seat shows no current holder', 0, eosCurrent(er.id).length);
+        check('EOSROLE …but the past holder stays on record', 'EO1', eosHistory(er.id)[0].emp);
+        eosAssign('EO2', er.id);
+        check('EOSROLE succession: new holder, history intact', 2, eosHistory(er.id).length);
+        // an employee may hold more than one seat
+        var er2=eosRoleCreate('Backflow Tech');
+        eosAssign('EO2', er2.id);
+        check('EOSROLE one person can hold two seats', 2, empEosRoles('EO2').length);
+        // migration is review material — title text creates and assigns NOTHING
+        var props=eosProposals();
+        var un=props.filter(function(x){return x.p.id==='EO1';})[0];
+        check('EOSROLE title text alone assigns nothing', 'review', un.status);
+        check('EOSROLE …and mints no roles', 2, EOSROLES.length);
+        // sheet/title drift never rewrites the seat
+        PEOPLE[1].title='Something Completely Different';
+        check('EOSROLE a changed title never moves the seat', 2, empEosRoles('EO2').length);
+        var drift=runChecks().filter(function(c){return c.id==='eosdrift';})[0];
+        checkTrue('EOSROLE …it raises a flag instead', drift&&drift.items.length>=1, drift?drift.items.length:0);
+        // accountabilities replace — a re-import cannot duplicate them
+        eosRoleUpdate(er.id,{accts:['Owns estimates','Owns backflow scheduling']});
+        eosRoleUpdate(er.id,{accts:['Owns estimates','Owns backflow scheduling']});
+        check('EOSROLE accountabilities never duplicate on re-import', 2, eosRoleOf(er.id).accts.length);
+        // a seat grants no permissions
+        var capsB4=JSON.stringify(empRoleKeys(PEOPLE[1]));
+        var gm=eosRoleCreate('General Manager');
+        eosAssign('EO2', gm.id);
+        check('EOSROLE a General Manager seat grants zero app permissions', capsB4, JSON.stringify(empRoleKeys(PEOPLE[1])));
+        // gates: non-admin writes refused
+        ADMIN=false; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+        check('EOSROLE non-admin cannot create seats', 'null', String(eosRoleCreate('Rogue Seat')));
+        check('EOSROLE non-admin cannot assign seats', 'null', String(eosAssign('EO1', er.id)));
+        ADMIN=true; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+        // persistence
+        var sn3=stateSnapshot();
+        checkTrue('EOSROLE backup carries seats and history', sn3.eosroles.length===3&&sn3.eosassign.length===4, sn3.eosroles.length+'/'+sn3.eosassign.length);
+        ROWS=[]; PAYOUTS=[];
+        var keepR=JSON.parse(JSON.stringify(EOSROLES)), keepA=JSON.parse(JSON.stringify(EOSASSIGN));
+        cloudApply({eosroles:keepR, eosassign:keepA});
+        check('EOSROLE cloud sync preserves the ids', er.id, (EOSROLES.filter(function(r){return r.name==='Project Estimator';})[0]||{}).id);
+      } else {
+        results.push({name:'EOSROLE entity exists', expected:true, actual:false, pass:false});
       }
     } catch(e){
       results.push({name:'HARNESS ERROR', expected:'no throw', actual:String(e&&e.message||e), pass:false});
@@ -2876,6 +2952,8 @@
       if(typeof TSHEET!=='undefined' && snap.TSHEET!==undefined) TSHEET=snap.TSHEET;
       if(typeof PAYPER!=='undefined' && snap.PAYPER!==undefined) PAYPER=snap.PAYPER;
       if(typeof TSIMP!=='undefined' && snap.TSIMP!==undefined) TSIMP=snap.TSIMP;
+      if(typeof EOSROLES!=='undefined' && snap.EOSROLES!==undefined) EOSROLES=snap.EOSROLES;
+      if(typeof EOSASSIGN!=='undefined' && snap.EOSASSIGN!==undefined) EOSASSIGN=snap.EOSASSIGN;
       if(typeof ADMIN!=='undefined' && snap.ADMIN!==undefined) ADMIN=snap.ADMIN;
       if(typeof bizDirty==='function') bizDirty();
       if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;

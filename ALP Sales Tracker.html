@@ -2016,6 +2016,11 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
       <div style="margin-top:10px"><button class="p" onclick="bizSave()">Save business details</button>
         <span class="note" id="bizSavedNote"></span></div>
     </section>
+    <section class="adminsec" id="eosCard">
+      <div class="hdr"><h3>🧩 EOS Roles</h3>
+        <span class="hint">the canonical seats — separate from job titles, divisions, and app permissions. The role id is identity; names are display. Google text is reference, never authority.</span></div>
+      <div id="eosPanel"></div>
+    </section>
     <section class="adminsec">
       <div class="hdr"><h3>🗺️ Who owns the truth</h3>
         <span class="hint">the data-ownership registry — which system may write each domain, and how. Documentation of what the code actually does; Google is never authoritative unless a row says so explicitly.</span></div>
@@ -2950,6 +2955,8 @@ const K_BIZ='alp_biz_v1';
 const K_TSHEET='alp_tsheet_v1';   // payroll timesheet lines — period-grain compensated hours
 const K_PAYPER='alp_payper_v1';   // pay periods
 const K_TSIMP='alp_tsimp_v1';     // timesheet import history
+const K_EOSROLES='alp_eosroles_v1';   // canonical EOS Roles (seats) — id-keyed, app-owned
+const K_EOSASSIGN='alp_eosassign_v1'; // role assignment history — who holds/held each seat
 const K_REV='alp_roster_rev_v2';
 const K_ADMINREV='alp_admin_user_v1';
 const K_OSC='alp_osc_v1';
@@ -3007,6 +3014,8 @@ let BIZ      = load(K_BIZ,null);     // Business Details — org identity, locat
 let TSHEET   = load(K_TSHEET,[]);    // payroll timesheets: NOT the sales-hours log — total compensated hours by pay period
 let PAYPER   = load(K_PAYPER,[]);    // pay periods {id, from, to, check?}
 let TSIMP    = load(K_TSIMP,[]);     // timesheet import history, newest last, capped 60
+let EOSROLES = load(K_EOSROLES,[]);  // EOS seats — the role IS the id, the name is display
+let EOSASSIGN= load(K_EOSASSIGN,[]); // seat occupancy history — open entries have to:''
 const POLICY_DEFAULT={
   raiseDays:30,       // rep has this long to dispute a figure
   respondDays:10,     // ALP responds within this many business days
@@ -4070,6 +4079,84 @@ function openCompanySettings(){ setTab('admin');
   setTimeout(()=>{ const el=document.getElementById('bizCard'); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); },60); }
 
 /* ============================================================
+   EOS ROLES — the canonical seat, separate from job title, division,
+   and system permissions. The ROLE ID is identity; the name is display
+   and may be renamed without becoming a new seat. EOSASSIGN is the
+   occupancy history: open entries (to:'') are the current holders, a
+   vacated seat keeps every past holder, an employee may hold more than
+   one seat. Roles grant NOTHING — authorization stays with the
+   permission model. The app owns this domain; Google sheet/doc text is
+   reference and migration material, never silent authority.
+   ============================================================ */
+function eosRoleOf(id){ return EOSROLES.find(r=>r.id===id)||null; }
+function eosRoleCreate(name,divId,extra){
+  if(!can('admin_security')){ toast('EOS Roles are an admin record'); return null; }
+  name=String(name||'').trim(); if(!name){ toast('The role needs a name'); return null; }
+  // "Sales" / "SALES" / "sales " are ONE seat — near-name creation returns the
+  // existing role rather than quietly minting a duplicate identity.
+  const dup=EOSROLES.find(r=>norm(r.name)===norm(name));
+  if(dup){ toast('“'+dup.name+'” already exists — that seat was reused, not duplicated'); return dup; }
+  const r=Object.assign({id:uid('er'), biz:bizId(), name, div:divId||'', status:'active',
+    purpose:'', accts:[], src:'manual', on:todayISO(), t:new Date().toISOString(), by:empWho()||''}, extra||{});
+  EOSROLES.push(r); save(K_EOSROLES,EOSROLES);
+  auditRecord('eos-role-create',{id:r.id, name:r.name, div:r.div});
+  return r;
+}
+function eosRoleRename(id,name){
+  if(!can('admin_security')){ toast('EOS Roles are an admin record'); return false; }
+  const r=eosRoleOf(id); name=String(name||'').trim();
+  if(!r||!name) return false;
+  const clash=EOSROLES.find(x=>x.id!==id&&norm(x.name)===norm(name));
+  if(clash){ toast('“'+clash.name+'” already exists as its own seat'); return false; }
+  auditRecord('eos-role-rename',{id, from:r.name, to:name});
+  r.name=name; save(K_EOSROLES,EOSROLES);
+  return true;
+}
+function eosRoleUpdate(id,patch){
+  if(!can('admin_security')){ toast('EOS Roles are an admin record'); return false; }
+  const r=eosRoleOf(id); if(!r) return false;
+  ['div','status','purpose'].forEach(k=>{ if(patch[k]!==undefined&&patch[k]!==r[k]){
+    auditRecord('eos-role-edit',{id, k, was:String(r[k]).slice(0,80), now:String(patch[k]).slice(0,80)}); r[k]=patch[k]; }});
+  if(patch.accts!==undefined){ r.accts=patch.accts.slice(); }   // replace, never append — re-import cannot duplicate
+  save(K_EOSROLES,EOSROLES);
+  return true;
+}
+// occupancy
+function eosCurrent(roleId){ return EOSASSIGN.filter(a=>a.role===roleId&&!a.to).map(a=>person(a.emp)).filter(Boolean); }
+function eosHistory(roleId){ return EOSASSIGN.filter(a=>a.role===roleId).slice().sort((a,b)=>String(b.t).localeCompare(String(a.t))); }
+function empEosRoles(empId){ return EOSASSIGN.filter(a=>a.emp===empId&&!a.to).map(a=>eosRoleOf(a.role)).filter(Boolean); }
+function eosAssign(empId,roleId,fromDate){
+  if(!can('admin_security')){ toast('EOS Roles are an admin record'); return null; }
+  if(!person(empId)||!eosRoleOf(roleId)) return null;
+  const open=EOSASSIGN.find(a=>a.emp===empId&&a.role===roleId&&!a.to);
+  if(open) return open;   // idempotent — assigning the same seat twice is one assignment
+  const a={id:uid('ea'), role:roleId, emp:empId, from:fromDate||todayISO(), to:'',
+    on:todayISO(), t:new Date().toISOString(), by:empWho()||''};
+  EOSASSIGN.push(a); save(K_EOSASSIGN,EOSASSIGN);
+  auditRecord('eos-assign',{role:roleId, roleName:eosRoleOf(roleId).name, emp:empId, name:empName(person(empId))});
+  return a;
+}
+function eosVacate(empId,roleId){
+  if(!can('admin_security')){ toast('EOS Roles are an admin record'); return false; }
+  const open=EOSASSIGN.find(a=>a.emp===empId&&a.role===roleId&&!a.to);
+  if(!open) return false;
+  open.to=todayISO(); save(K_EOSASSIGN,EOSASSIGN);
+  auditRecord('eos-vacate',{role:roleId, emp:empId});
+  return true;
+}
+// Migration proposals — REVIEW material, nothing auto-creates. An exact
+// norm-match between the title text and an existing role name is a suggestion;
+// everything else waits for a person.
+function eosProposals(){
+  return PEOPLE.filter(p=>p.active&&p.id!==EMP_UNASSIGNED).map(p=>{
+    const cur=empEosRoles(p.id);
+    const exact=cur.length?null:EOSROLES.find(r=>r.status==='active'&&norm(r.name)===norm(p.title||''));
+    return {p, title:p.title||'', dept:p.dept||'', cur, suggest:exact||null,
+      status:cur.length?'assigned':(exact?'suggested':'review')};
+  });
+}
+
+/* ============================================================
    DATA OWNERSHIP — who owns the truth, domain by domain.
    The standing law: the APP is the canonical operational source of
    truth. Service Autopilot / Elevation Advisor are external source
@@ -4100,9 +4187,13 @@ const DATA_OWNERSHIP=[
    {src:'SA/EL/payroll names', cls:'reference', why:'match-only via resolveEmployee + aliases; imports never create a person'}],
   outbound:[], srcIds:'permanent employee id + aliases + emails + extIds',
   conflict:'matched contact fields update with an empLog entry; comp fields are server-protected admin writes', auto:true},
- {domain:'EOS Roles', store:'(none — rides as title text)', owner:'AMBIGUOUS',
-  inbound:[{src:'Google sheet Role column', cls:'reference', why:'no canonical EOS-role entity exists yet'}],
-  outbound:[], srcIds:'none', conflict:'n/a — flagged gap, decide before EOS integration', auto:false},
+ {domain:'EOS Roles', store:'EOSROLES + EOSASSIGN (alp_eosroles_v1 / alp_eosassign_v1)', owner:'app',
+  inbound:[
+   {src:'Google sheet Role column', cls:'reference', why:'migration/conflict signal only — a sheet title that disagrees with the canonical seat raises a flag, never a change'},
+   {src:'Google Docs accountabilities', cls:'review', why:'migrated into a confidently-matched role only when an admin approves; the Doc changing never rewrites the app'}],
+  outbound:[{dst:'future Google Doc publish', cls:'planned output only'}],
+  srcIds:'permanent role id (er…) + assignment ids (ea…); names are display',
+  conflict:'the APP role wins unless an authorized user explicitly approves an inbound change; renames keep the id; occupancy history is append-and-close, never rewritten', auto:false},
  {domain:'Scorecards / KPIs', store:'(derived, never stored)', owner:'app',
   inbound:[], outbound:[{dst:'future Google publish', cls:'planned output only'}],
   srcIds:'n/a', conflict:'recomputed from canonical engines on every read', auto:false},
@@ -5303,6 +5394,69 @@ function render(){
 function setHWho(v){ HWHO=v; renderHoursTab(); }
 
 
+/* ---- EOS Roles panel ---- */
+function eosJump(){ setTab('admin');
+  setTimeout(()=>{ const el=document.getElementById('eosCard'); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); },60); }
+function eosCreateUI(){
+  const nm=document.getElementById('eosNewName'), dv=document.getElementById('eosNewDiv');
+  if(eosRoleCreate(nm.value, dv?dv.value:'')){ nm.value=''; renderEos(); }
+}
+function eosRenameUI(id){
+  const r=eosRoleOf(id); if(!r) return;
+  const nm=prompt('Rename this seat (the id and every assignment stay put):', r.name);
+  if(nm!=null&&nm.trim()&&nm.trim()!==r.name){ eosRoleRename(id,nm.trim()); renderEos(); }
+}
+function eosAcctsUI(id){
+  const r=eosRoleOf(id); const ta=document.getElementById('eosAccts_'+id); if(!r||!ta) return;
+  eosRoleUpdate(id,{accts:ta.value.split('\n').map(x=>x.trim()).filter(Boolean),
+    purpose:(document.getElementById('eosPurpose_'+id)||{value:r.purpose}).value.trim()});
+  toast('Saved'); renderEos();
+}
+function eosAssignUI(empId){
+  const sel=document.getElementById('eosPick_'+empId); if(!sel||!sel.value) { toast('Pick the seat first'); return; }
+  if(eosAssign(empId, sel.value)) renderEos();
+}
+function eosVacateUI(empId,roleId){ if(confirm('Vacate this seat? The history keeps who held it.')){ eosVacate(empId,roleId); renderEos(); } }
+function renderEos(){
+  const box=document.getElementById('eosPanel'); if(!box) return;
+  const divOpt=bizDivisions().map(d=>'<option value="'+d.id+'">'+esc(d.name)+'</option>').join('');
+  const roleOpt=EOSROLES.filter(r=>r.status==='active').map(r=>'<option value="'+r.id+'">'+esc(r.name)+'</option>').join('');
+  let h='<div class="frow"><div><label>New seat</label><input id="eosNewName" placeholder="Estimator"></div>'+
+    (bizDivisions().length?'<div><label>Division</label><select id="eosNewDiv"><option value="">—</option>'+divOpt+'</select></div>':'')+
+    '<div style="align-self:end"><button class="sm p" onclick="eosCreateUI()">Create role</button></div></div>';
+  if(EOSROLES.length){
+    h+='<div class="scroll" style="margin-top:10px"><table><thead><tr><th>Seat</th><th>Division</th><th>Holds it now</th><th>History</th><th></th></tr></thead><tbody>'+
+      EOSROLES.map(r=>{
+        const cur=eosCurrent(r.id), past=eosHistory(r.id).filter(a=>a.to);
+        const dv=bizDivisions().find(d=>d.id===r.div);
+        return '<tr><td><b>'+esc(r.name)+'</b>'+(r.status!=='active'?' <span class="pill n">INACTIVE</span>':'')+
+          '<div class="note mono">'+esc(r.id)+'</div></td>'+
+          '<td>'+(dv?esc(dv.name):'—')+'</td>'+
+          '<td>'+(cur.length?cur.map(p=>empLink(p.id)+' <button class="sm" onclick="eosVacateUI(\''+p.id+'\',\''+r.id+'\')">vacate</button>').join('<br>'):'<span class="pill mid">VACANT</span>')+'</td>'+
+          '<td class="note">'+(past.length?past.map(a=>{const p=person(a.emp);return (p?esc(empName(p)):a.emp)+' '+(a.from?fmt(a.from):'?')+'–'+fmt(a.to);}).join('<br>'):'—')+'</td>'+
+          '<td><button class="sm" onclick="eosRenameUI(\''+r.id+'\')">Rename</button> '+
+          '<details style="display:inline-block"><summary class="sm" style="cursor:pointer">Detail</summary>'+
+          '<div style="margin-top:6px"><label style="font-size:11px">Purpose</label><input id="eosPurpose_'+r.id+'" value="'+esc(r.purpose||'')+'" style="width:220px">'+
+          '<label style="font-size:11px;margin-top:4px;display:block">Accountabilities (one per line)</label>'+
+          '<textarea id="eosAccts_'+r.id+'" rows="3" style="width:220px">'+esc((r.accts||[]).join('\n'))+'</textarea>'+
+          '<div><button class="sm" onclick="eosAcctsUI(\''+r.id+'\')">Save</button></div></div></details></td></tr>';
+      }).join('')+'</tbody></table></div>';
+  }
+  const props=eosProposals();
+  const open=props.filter(x=>x.status!=='assigned');
+  h+='<div style="margin-top:12px"><b style="font-size:12px">Seat assignments</b> <span class="hint">'+
+    props.filter(x=>x.status==='assigned').length+' assigned · '+open.length+' to decide — the sheet title is reference, nothing assigns itself</span></div>';
+  h+='<div class="scroll"><table><thead><tr><th>Employee</th><th>Title on record</th><th>Dept</th><th>EOS seat</th><th></th></tr></thead><tbody>'+
+    props.map(x=>'<tr><td>'+empLink(x.p.id)+'</td><td class="note">'+esc(x.title||'—')+'</td><td class="note">'+esc(x.dept||'—')+'</td>'+
+      '<td>'+(x.cur.length?x.cur.map(r=>'<b>'+esc(r.name)+'</b>').join(', ')
+        :'<select id="eosPick_'+x.p.id+'" style="max-width:170px"><option value="">— pick a seat —</option>'+roleOpt+'</select>'+
+         (x.suggest?' <span class="pill mid" title="the title text exactly matches this seat">suggest: '+esc(x.suggest.name)+'</span>':''))+'</td>'+
+      '<td>'+(x.cur.length?'':'<button class="sm" onclick="eosAssignUI(\''+x.p.id+'\')">Assign</button>')+'</td></tr>').join('')+'</tbody></table></div>';
+  box.innerHTML=h;
+  // pre-select exact-match suggestions — still one click away from committing
+  props.forEach(x=>{ if(x.suggest){ const sel=document.getElementById('eosPick_'+x.p.id); if(sel) sel.value=x.suggest.id; } });
+}
+
 /* ---- Business details form ---- */
 const BIZ_FIELDS=[['bizName','name'],['bizLegal','legal'],['bizEmail','email'],['bizPhone','phone'],
   ['bizWebsite','website'],['bizAddr1','addr1'],['bizAddr2','addr2'],['bizCity','city'],
@@ -5417,6 +5571,7 @@ function renderAdmin(){
     return;
   }
   renderBiz();
+  renderEos();
   const ot=document.getElementById('ownershipTable');
   if(ot&&!ot.dataset.built){ ot.dataset.built='1';
     ot.innerHTML='<thead><tr><th>Domain</th><th>Canonical store</th><th>Owner</th><th>Inbound</th><th>Conflict rule</th></tr></thead><tbody>'+
@@ -11633,6 +11788,17 @@ function runChecks(){
     hrsetup.push({text:'<b>'+empLink(p.id)+'</b> · marked ended and active at once',
       sub:'ended '+fmtY(p.ended)+' but still active — pick one, the roster and reports disagree until then'});
   });
+  const eosdrift=[];
+  PEOPLE.filter(p=>p.active&&p.id!==EMP_UNASSIGNED).forEach(p=>{
+    const held=empEosRoles(p.id); if(!held.length||!p.title) return;
+    const t=norm(p.title);
+    if(!held.some(r=>t.indexOf(norm(r.name))>-1||norm(r.name).indexOf(t)>-1))
+      eosdrift.push({text:'<b>'+empLink(p.id)+'</b> · title says “'+esc(p.title)+'”, the seat says '+held.map(r=>'<b>'+esc(r.name)+'</b>').join(', '),
+        sub:'the sheet/title text disagrees with the canonical EOS Role — the app wins until somebody changes the seat on purpose'});
+  });
+  add('eosdrift','warn','Title disagrees with the EOS seat',
+    'The Google sheet title is reference, not authority — when it drifts from the canonical seat, a person decides which is right. Nothing changes on its own.',
+    eosdrift);
   add('hrsetup','warn','HR setup to finish',
     'Not blocking payroll yet, but each gets more expensive to fix the longer it waits: logins, roles, manager lines, and stale active flags.',
     hrsetup);
@@ -14870,7 +15036,7 @@ function stateSnapshot(){   // v6: employee identity fields (first/last/photo/al
     takeovers:TAKEOVERS,openinv:OPENINV,balsyncs:BALSYNC,paidinv:PAIDINV,pdisyncs:PDISYNC,
     invlinks:INVLINKS,invclimap:INVCLIMAP,invassign:INVASSIGN,
     tombstones:TOMBSTONES,oscs:OSCS,global:GLOBAL,biz:BIZ,
-    tsheet:TSHEET,payper:PAYPER,tsimp:TSIMP};
+    tsheet:TSHEET,payper:PAYPER,tsimp:TSIMP,eosroles:EOSROLES,eosassign:EOSASSIGN};
 }
 function backup(){
   // Gated in the header too, but the guard belongs in the function: a whole-state
@@ -14916,6 +15082,8 @@ function restore(e){
     if(Array.isArray(d.payper)&&!PAYPER.length){ PAYPER=d.payper; save(K_PAYPER,PAYPER); }
     if(Array.isArray(d.tsheet)&&!TSHEET.length){ TSHEET=d.tsheet; save(K_TSHEET,TSHEET); }
     if(Array.isArray(d.tsimp)&&!TSIMP.length){ TSIMP=d.tsimp; save(K_TSIMP,TSIMP); }
+    if(Array.isArray(d.eosroles)&&!EOSROLES.length){ EOSROLES=d.eosroles; save(K_EOSROLES,EOSROLES); }
+    if(Array.isArray(d.eosassign)&&!EOSASSIGN.length){ EOSASSIGN=d.eosassign; save(K_EOSASSIGN,EOSASSIGN); }
     const key=r=>r.rep+'|'+r.date+'|'+String(r.client).toLowerCase()+'|'+bookedValue(r).toFixed(2);
     // Restored sales are given fresh ids, so the payout ledger has to be told where each
     // one went. Without this map, every restored payout still pointed at the backup's old
@@ -16393,6 +16561,10 @@ function renderEmp(){
   h+='<div class="epsecs">'+secs.map(x=>'<button class="sm'+(EP_SEC===x[0]?' on':'')+'" onclick="epSec(\''+x[0]+'\')">'+esc(x[1])+'</button>').join('')+'</div>';
 
   if(EP_SEC==='overview'){
+    const myRolesEos=empEosRoles(p.id);
+    if(myRolesEos.length) h+='<div class="note" style="margin:2px 0 10px"><b>EOS Role:</b> '+
+      myRolesEos.map(r=>'<a href="#" onclick="closeEmp();eosJump();return false"><b>'+esc(r.name)+'</b></a>').join(' · ')+
+      ' <span class="hint">canonical seat — the job title above is a separate fact</span></div>';
     const u=unitOf(p);
     // Every number is explainable: a KPI tile opens the section holding the
     // records that make it up — the same connectedness rule as the links.
@@ -16916,6 +17088,8 @@ function cloudApply(d){
   TSHEET=A(d.tsheet,TSHEET); put(K_TSHEET,TSHEET);
   PAYPER=A(d.payper,PAYPER); put(K_PAYPER,PAYPER);
   TSIMP=A(d.tsimp,TSIMP); put(K_TSIMP,TSIMP);
+  EOSROLES=A(d.eosroles,EOSROLES); put(K_EOSROLES,EOSROLES);
+  EOSASSIGN=A(d.eosassign,EOSASSIGN); put(K_EOSASSIGN,EOSASSIGN);
   bizEnsure();   // a pulled doc from before the business root existed still gets its id
   setTimeout(renderCompanyGate,0);
   histDirty(); geoDirty(); invDirty();
