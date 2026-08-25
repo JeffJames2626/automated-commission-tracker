@@ -290,6 +290,9 @@ function mergeProtected(incomingRaw, storedRaw, email) {
       ? (Array.isArray(inc[k]) ? inc[k] : (stored[k] || []))
       : (stored[k] || []);
   });
+  // Business Details are the ORG's record — everyone reads them, only an admin
+  // save (which skips this merge entirely) can write or seed them.
+  if (stored.biz !== undefined) inc.biz = stored.biz; else delete inc.biz;
   return JSON.stringify(inc);
 }
 

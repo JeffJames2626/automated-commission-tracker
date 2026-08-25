@@ -1854,6 +1854,39 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
       <div class="statestrip" id="adminState"></div>
     </section>
     <section class="adminsec">
+      <div class="hdr"><h3>🏢 Business details</h3>
+        <span class="hint">The one canonical company record. The Business Clock, week boundaries, reports, and every future integration read from here — nothing else in the app should hard-code who or where the business is.</span></div>
+      <div class="frow">
+        <div><label>Business name</label><input id="bizName"></div>
+        <div><label>Legal name (if different)</label><input id="bizLegal"></div>
+        <div><label>Email</label><input id="bizEmail" placeholder="office@…"></div>
+        <div><label>Phone</label><input id="bizPhone"></div>
+        <div><label>Website</label><input id="bizWebsite"></div>
+      </div>
+      <div class="frow" style="margin-top:8px">
+        <div><label>Street address</label><input id="bizAddr1"></div>
+        <div><label>Line 2</label><input id="bizAddr2"></div>
+        <div><label>City</label><input id="bizCity"></div>
+        <div><label>State</label><input id="bizState" style="width:70px"></div>
+        <div><label>ZIP</label><input id="bizZip" style="width:90px"></div>
+        <div><label>Country</label><input id="bizCountry" style="width:70px"></div>
+      </div>
+      <div class="frow" style="margin-top:8px">
+        <div><label>Timezone (IANA)</label><input id="bizTz" list="bizTzList" style="min-width:210px">
+          <datalist id="bizTzList"><option>America/Los_Angeles</option><option>America/Denver</option>
+          <option>America/Phoenix</option><option>America/Chicago</option><option>America/New_York</option>
+          <option>America/Anchorage</option><option>Pacific/Honolulu</option><option>UTC</option></datalist></div>
+        <div><label>Currency</label><input id="bizCurrency" style="width:80px"></div>
+        <div><label>Week starts</label><select id="bizWeekStart"><option value="mon">Monday</option><option value="sun">Sunday</option></select></div>
+        <div style="align-self:end"><span class="note" id="bizClockNote"></span></div>
+      </div>
+      <div style="margin-top:10px"><b style="font-size:12px">Business hours</b>
+        <span class="hint">leave a day blank if you have not decided — the app answers “unknown” rather than guessing</span></div>
+      <div id="bizHoursGrid" style="margin-top:6px"></div>
+      <div style="margin-top:10px"><button class="p" onclick="bizSave()">Save business details</button>
+        <span class="note" id="bizSavedNote"></span></div>
+    </section>
+    <section class="adminsec">
       <div class="hdr"><h3>🩹 Health check</h3>
         <span class="hint">Six things that can go wrong quietly. This only reads — it never changes, deletes or saves anything.</span></div>
       <div id="healthBody"><button class="p" onclick="runHealthCheck()">Run the health check</button></div>
@@ -2748,6 +2781,7 @@ const K_INVASSIGN='alp_invassign_v1';
 // People who have left. Accounts still carrying their name get flagged for takeover.
 const FORMER_DEFAULT=['Russanne','Malisa','Jaron','Alina','Erbie','Crystal','Michael'];
 const K_ADMIN='alp_admin_v1';
+const K_BIZ='alp_biz_v1';
 const K_REV='alp_roster_rev_v2';
 const K_ADMINREV='alp_admin_user_v1';
 const K_OSC='alp_osc_v1';
@@ -2801,6 +2835,7 @@ let INVLINKS = load(K_INVLINK,[]);   // admin-made sale↔invoice links, on top 
 let INVCLIMAP= load(K_INVCLI,[]);    // admin-approved invoice-name → roster-client mappings; never guessed
 let INVASSIGN= load(K_INVASSIGN,[]); // admin-assigned salesperson per invoice — accountability for rep-less billing
 let OSCS     = load(K_OSC,[]);       // on-site estimates and consultations
+let BIZ      = load(K_BIZ,null);     // Business Details — org identity, location, timezone, hours (null = defaults)
 const POLICY_DEFAULT={
   raiseDays:30,       // rep has this long to dispute a figure
   respondDays:10,     // ALP responds within this many business days
@@ -3518,11 +3553,23 @@ function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;',
 // the data as a real $0 — and so a malformed import can never paint "$NaN" on a tile.
 // -0 is folded into 0: "$-0" is not a number anybody should ever be shown.
 function fin(n){ const v=+n; return isFinite(v) ? (v===0?0:v) : null; }
+// Currency and locale come from Business Details. USD/en-US keeps the fast
+// literal path; anything else goes through Intl properly.
+function bizMoneyFmt(frac){ const b=bizGet();
+  if(b.currency==='USD'&&b.locale==='en-US') return null;
+  const key='_mf'+frac;
+  if(b[key]!==undefined) return b[key];        // cached on the bizGet() cache object; bizDirty() drops it
+  let f=null;
+  try{ f=new Intl.NumberFormat(b.locale||'en-US',{style:'currency',currency:b.currency||'USD',
+    minimumFractionDigits:frac,maximumFractionDigits:frac}); }catch(e){}
+  b[key]=f; return f; }
 function money(n){ const v=fin(n); if(v===null) return '\u2014';
   const w=Math.round(v)||0;                    // Math.round(-0.004) is -0, which prints as "$-0"
+  const f=bizMoneyFmt(0); if(f) return f.format(w);
   return '$'+w.toLocaleString('en-US'); }
 function money2(n){ const v=fin(n); if(v===null) return '\u2014';
   const w=(Math.round(v*100)/100)||0;          // folds -0 and -0.0001 into a clean 0.00
+  const f=bizMoneyFmt(2); if(f) return f.format(w);
   return '$'+w.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function num(n,d){ d=d==null?1:d; const v=fin(n); if(v===null) return '\u2014';
   return v.toFixed(d).replace(/\.0+$/,''); }
@@ -3546,9 +3593,106 @@ function pNum(s){
   t=t.replace(/[()$,\s]/g,'').replace(/[^0-9.\-]/g,'');
   const n=parseFloat(t); if(isNaN(n))return 0; return neg?-n:n;
 }
-function weekStart(s){const d=dObj(s);d.setDate(d.getDate()-((d.getDay()+6)%7));return iso(d.getFullYear(),d.getMonth()+1,d.getDate());}
+/* ============================================================
+   BUSINESS DETAILS + BUSINESS CLOCK
+   One canonical company record (who is this business?) and one clock that
+   reads its timezone (what day is it FOR THIS BUSINESS?). Every business-day
+   boundary in the app flows through todayISO()/weekStart() below, so pointing
+   those two at the business timezone migrates the whole app at once. A rep
+   checking the tracker from Florida at 12:30 AM Eastern still sees Spokane's
+   business day. Date-only values (sale dates, invoice dates) are plain
+   YYYY-MM-DD strings handled by pure string arithmetic — they never shift.
+   ============================================================ */
+function bizDefaults(){ return {
+  name:'Automated Lawn & Pest', appName:'ALP Sales Tracker', legal:'', email:'', phone:'', website:'',
+  addr1:'', addr2:'', city:'Spokane', state:'WA', zip:'', country:'US',
+  tz:'America/Los_Angeles',    // IANA — Intl handles PST/PDT itself, never a raw offset
+  currency:'USD', locale:'en-US',
+  weekStart:'mon',             // the long-standing rule: weeks run Monday–Sunday
+  // Hours are UNSET until an admin enters them — helpers answer null rather
+  // than pretending to know when the shop opens. day: {closed:bool, open:'HH:MM', close:'HH:MM'}
+  hours:{mon:null,tue:null,wed:null,thu:null,fri:null,sat:null,sun:null}
+};}
+var BIZ_CACHE=null;   // bizGet runs inside money()/weekStart() hot paths — cache the merge
+// (var, not let: boot-time code above this line — roster seeding, migrations —
+//  reaches todayISO() before this statement runs; var hoists, let would throw.)
+function bizDirty(){ BIZ_CACHE=null; }
+function bizGet(){ if(BIZ_CACHE) return BIZ_CACHE;
+  const d=bizDefaults(); let out;
+  if(!BIZ||typeof BIZ!=='object') out=d;
+  else { out=Object.assign({},d,BIZ); out.hours=Object.assign({},d.hours,BIZ.hours||{}); }
+  BIZ_CACHE=out; return out; }
+function bizSet(patch){
+  if(!can('admin_security')){ toast('That is not part of your access'); return false; }
+  const cur=bizGet(), next=Object.assign({},cur,patch||{});
+  if(patch&&patch.hours) next.hours=Object.assign({},cur.hours,patch.hours);
+  let changed=0;
+  Object.keys(next).forEach(k=>{
+    const was=JSON.stringify(cur[k]), now=JSON.stringify(next[k]);
+    if(was!==now){ changed++; auditRecord('biz-change',{k, was:was.slice(0,200), now:now.slice(0,200)}); }
+  });
+  if(!changed){ toast('Nothing changed'); return false; }
+  BIZ=next; save(K_BIZ,BIZ); bizDirty(); histDirty();
+  toast('Business details saved');
+  return true;
+}
+function BIZ_TZ(){ return bizGet().tz||'America/Los_Angeles'; }
+// The clock. Pure at the core: give it any instant and any IANA zone and it
+// answers what date/time that instant is THERE. Intl owns the DST rules.
+function bizPartsAtTz(d,tz){
+  try{
+    const f=new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',
+      day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+    const P={}; f.formatToParts(d).forEach(x=>{ P[x.type]=x.value; });
+    const hh=P.hour==='24'?'00':P.hour;   // midnight renders as 24 in some engines
+    return {date:P.year+'-'+P.month+'-'+P.day, time:hh+':'+P.minute+':'+P.second, hm:hh+':'+P.minute};
+  }catch(e){ // a corrupt tz string must never kill the app — fall back to the device clock
+    return {date:iso(d.getFullYear(),d.getMonth()+1,d.getDate()),
+      time:String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0'),
+      hm:String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')};
+  }
+}
+function bizDateAtTz(d,tz){ return bizPartsAtTz(d,tz).date; }
+function bizNow(){ return bizPartsAtTz(new Date(),BIZ_TZ()); }
+function bizToday(){ return bizNow().date; }
+function bizYesterday(){ return addDays(bizToday(),-1); }
+function bizTomorrow(){ return addDays(bizToday(),1); }
+function bizStartOfWeek(){ return weekStart(bizToday()); }
+function bizEndOfWeek(){ return addDays(bizStartOfWeek(),6); }
+function bizStartOfMonth(){ return bizToday().slice(0,7)+'-01'; }
+function bizEndOfMonth(){ const t=bizToday(); return iso(+t.slice(0,4),+t.slice(5,7),daysInMonth(+t.slice(0,4),+t.slice(5,7)-1)); }
+function bizStartOfYear(){ return bizToday().slice(0,4)+'-01-01'; }
+function bizEndOfYear(){ return bizToday().slice(0,4)+'-12-31'; }
+function bizYtd(){ return {from:bizStartOfYear(), to:bizToday()}; }
+// Exact timestamps (stored ISO-UTC) displayed in BUSINESS time, one format:
+// 'Aug 24, 2026 · 3:42 PM'. Anything unparseable comes back as an em dash.
+function fmtDT(ts){
+  if(!ts) return '—';
+  const d=new Date(ts); if(isNaN(d)) return '—';
+  try{
+    return new Intl.DateTimeFormat('en-US',{timeZone:BIZ_TZ(),month:'short',day:'numeric',
+      year:'numeric',hour:'numeric',minute:'2-digit',hour12:true}).format(d).replace(/, (\d{1,2}:)/,' · $1');
+  }catch(e){ return String(ts).slice(0,16).replace('T',' '); }
+}
+// Business hours — null until configured; never guesses.
+const BIZ_DOW=['sun','mon','tue','wed','thu','fri','sat'];
+function bizHoursFor(dateISO){ const h=bizGet().hours; const k=BIZ_DOW[dObj(dateISO).getDay()]; return h?h[k]||null:null; }
+function bizIsBusinessDay(dateISO){ const h=bizHoursFor(dateISO); if(h==null) return null; return !h.closed&&!!(h.open&&h.close); }
+function bizIsOpenAt(dateISO,hm){ const h=bizHoursFor(dateISO); if(h==null) return null;
+  if(h.closed||!h.open||!h.close) return false; return hm>=h.open&&hm<h.close; }
+function bizIsOpenNow(){ const n=bizNow(); return bizIsOpenAt(n.date,n.hm); }
+function bizNextBusinessDay(fromISO){ let cur=addDays(fromISO||bizToday(),1);
+  for(let i=0;i<8;i++){ const b=bizIsBusinessDay(cur); if(b==null) return null; if(b) return cur; cur=addDays(cur,1); } return null; }
+function bizNextOpen(){ const n=bizNow();
+  const todayH=bizHoursFor(n.date); if(todayH==null) return null;
+  if(!todayH.closed&&todayH.open&&n.hm<todayH.open) return {date:n.date, open:todayH.open};
+  const d=bizNextBusinessDay(n.date); if(!d) return null; const h=bizHoursFor(d); return {date:d, open:h.open}; }
+// weekStart honours the configured week start (Monday is the standing rule).
+function weekStart(s){ const d=dObj(s); const ws=bizGet().weekStart==='sun'?0:1;
+  d.setDate(d.getDate()-((d.getDay()-ws+7)%7)); return iso(d.getFullYear(),d.getMonth()+1,d.getDate()); }
 function addDays(s,n){const d=dObj(s);d.setDate(d.getDate()+n);return iso(d.getFullYear(),d.getMonth()+1,d.getDate());}
-function todayISO(){const d=new Date();return iso(d.getFullYear(),d.getMonth()+1,d.getDate());}
+// THE definition of today, app-wide: the current date in the BUSINESS timezone.
+function todayISO(){ return bizToday(); }
 function daysInMonth(y,m){return new Date(y,m+1,0).getDate();}
 
 function seasonShare(fromISO,toISO){
@@ -4436,7 +4580,7 @@ function render(){
   const hd=document.getElementById('hdrDesc');
   if(hd&&TAB_INFO[TAB]){ const d=TAB_INFO[TAB].desc||''; hd.textContent=fitWords(d,54); hd.title=d; }
   // Same question, asked by the OS tab strip.
-  document.title=(hp&&hp.textContent?hp.textContent+' · ':'')+'ALP Sales Tracker';
+  document.title=(hp&&hp.textContent?hp.textContent+' · ':'')+(bizGet().appName||'ALP Sales Tracker');
   TABS.forEach(t=>document.getElementById('tab-'+t[0]).classList.toggle('on',TAB===t[0]));
   renderAdmin();
 
@@ -4483,6 +4627,53 @@ function render(){
 function setHWho(v){ HWHO=v; renderHoursTab(); }
 
 
+/* ---- Business details form ---- */
+const BIZ_FIELDS=[['bizName','name'],['bizLegal','legal'],['bizEmail','email'],['bizPhone','phone'],
+  ['bizWebsite','website'],['bizAddr1','addr1'],['bizAddr2','addr2'],['bizCity','city'],
+  ['bizState','state'],['bizZip','zip'],['bizCountry','country'],['bizTz','tz'],
+  ['bizCurrency','currency'],['bizWeekStart','weekStart']];
+const BIZ_DAYS=[['mon','Monday'],['tue','Tuesday'],['wed','Wednesday'],['thu','Thursday'],
+  ['fri','Friday'],['sat','Saturday'],['sun','Sunday']];
+function renderBiz(){
+  const el=document.getElementById('bizName'); if(!el) return;
+  // Never clobber a form somebody is typing in.
+  const act=document.activeElement;
+  if(act&&act.id&&(act.id.indexOf('biz')===0)) return;
+  const b=bizGet();
+  BIZ_FIELDS.forEach(f=>{ const x=document.getElementById(f[0]); if(x) x.value=b[f[1]]==null?'':b[f[1]]; });
+  const g=document.getElementById('bizHoursGrid');
+  if(g&&!g.dataset.built){
+    g.innerHTML=BIZ_DAYS.map(d=>'<div style="display:flex;gap:8px;align-items:center;margin:2px 0">'+
+      '<span style="width:86px;font-size:12px">'+d[1]+'</span>'+
+      '<label style="font-size:12px;display:flex;gap:4px;align-items:center"><input type="checkbox" id="bizHc_'+d[0]+'"> closed</label>'+
+      '<input type="time" id="bizHo_'+d[0]+'" style="width:110px"> – <input type="time" id="bizHx_'+d[0]+'" style="width:110px"></div>').join('');
+    g.dataset.built='1';
+  }
+  if(g) BIZ_DAYS.forEach(d=>{ const h=b.hours[d[0]];
+    const c=document.getElementById('bizHc_'+d[0]), o=document.getElementById('bizHo_'+d[0]), x=document.getElementById('bizHx_'+d[0]);
+    if(!c) return; c.checked=!!(h&&h.closed); o.value=h&&h.open||''; x.value=h&&h.close||'';
+  });
+  const n=document.getElementById('bizClockNote');
+  if(n){ const now=bizNow(); n.textContent='Business clock: '+fmtY(now.date)+' · '+now.hm+' ('+b.tz+')'; }
+}
+function bizSave(){
+  if(!can('admin_security')){ toast('That is not part of your access'); return; }
+  const patch={};
+  BIZ_FIELDS.forEach(f=>{ const x=document.getElementById(f[0]); if(x) patch[f[1]]=x.value.trim(); });
+  try{ new Intl.DateTimeFormat('en-US',{timeZone:patch.tz}); }
+  catch(e){ toast('"'+patch.tz+'" is not a valid IANA timezone — try America/Los_Angeles'); return; }
+  patch.currency=(patch.currency||'USD').toUpperCase();
+  const hours={};
+  BIZ_DAYS.forEach(d=>{ const c=document.getElementById('bizHc_'+d[0]), o=document.getElementById('bizHo_'+d[0]), x=document.getElementById('bizHx_'+d[0]);
+    if(!c) return;
+    if(c.checked) hours[d[0]]={closed:true};
+    else if(o.value&&x.value) hours[d[0]]={closed:false,open:o.value,close:x.value};
+    else hours[d[0]]=null;
+  });
+  patch.hours=hours;
+  if(bizSet(patch)){ const n=document.getElementById('bizSavedNote'); if(n) n.textContent='Saved · the clock and week boundaries now follow these settings'; render(); }
+}
+
 function renderAdmin(){
   const locked=document.getElementById('adminLocked'), open=document.getElementById('adminOpen');
   locked.style.display = ADMIN ? 'none' : '';
@@ -4510,6 +4701,7 @@ function renderAdmin(){
     }
     return;
   }
+  renderBiz();
   const np=document.getElementById('nopinBlock'); if(np) np.remove();
 
   const me=currentAdmin();
@@ -5637,8 +5829,11 @@ function renderHours(){
    ============================================================ */
 // Previous calendar month, as YYYY-MM.
 function lastMonth(){
-  const d=new Date(); d.setDate(1); d.setMonth(d.getMonth()-1);
-  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+  // Business month, not device month — a rep opening this from another timezone
+  // on the 1st must not get a different report month than the office.
+  const t=todayISO(); let y=+t.slice(0,4), m=+t.slice(5,7)-1;
+  if(m<1){ m=12; y--; }
+  return y+'-'+String(m).padStart(2,'0');
 }
 // The month worth opening on: the newest one with sales in it, otherwise last month —
 // unless every plan is still in the future, in which case show the first live month
@@ -5807,7 +6002,7 @@ function renderComm(){
     grand.cb+=r.cbTotal;grand.adj+=r.adjTotal;grand.net+=r.payable;grand.carry+=r.carry;grand.paid+=r.paidC;grand.ledger+=r.ledgerRep+r.ledgerAdj+r.ledgerOv;});
 
   let h='<div class="repdoc">';
-  h+='<div class="rephead"><div><div class="co">Automated Lawn &amp; Pest</div>'+
+  h+='<div class="rephead"><div><div class="co">'+esc(bizGet().legal||bizGet().name)+'</div>'+
      '<div class="ti">Commission Report</div>'+
      '<div class="note" style="margin-top:5px">'+(basis==='due'
        ? 'Commission payable in this period — invoice date plus '+payLag()+' days'
@@ -7297,7 +7492,7 @@ function cliApply(){
     CLIENTS=load(K_CLIENTS,[]); return;
   }
   geoDirty(); invDirty();
-  SYNCLOG.push({on:todayISO(),at:new Date().toISOString().slice(11,16),kind:kind,
+  SYNCLOG.push({on:todayISO(),t:new Date().toISOString(),at:new Date().toISOString().slice(11,16),kind:kind,
     added:d.added.length,changed:d.changed.length,gone:markGone?d.gone.length:0,
     conv:conv.length,total:CLIENTS.length});
   if(SYNCLOG.length>60) SYNCLOG=SYNCLOG.slice(-60);
@@ -7343,7 +7538,7 @@ function renderClients(){
   const leads=CLIENTS.filter(c=>isLead(c)&&!c.gone);
   const ls=lastSync();
   document.getElementById('cliHint').innerHTML = ls
-    ? 'Last synced '+fmtY(ls.on)+' at '+esc(ls.at)+(ls.kind?' ('+esc(ls.kind==='Lead'?'leads':'clients')+')':'')+
+    ? 'Last synced '+(ls.t?fmtDT(ls.t):fmtY(ls.on)+' at '+esc(ls.at))+(ls.kind?' ('+esc(ls.kind==='Lead'?'leads':'clients')+')':'')+
       ' · '+clients.length.toLocaleString()+' clients, '+leads.length.toLocaleString()+' leads'
     : 'Nothing synced yet.';
 
@@ -7377,7 +7572,7 @@ function renderClients(){
     let x='<thead><tr><th>Date</th><th>Time</th><th>File</th><th class="num">New</th><th class="num">Updated</th>'+
       '<th class="num">Gone</th><th class="num">Converted</th><th class="num">On file</th></tr></thead><tbody>';
     SYNCLOG.slice().reverse().forEach(e=>{
-      x+='<tr><td>'+fmtY(e.on)+'</td><td class="mono">'+esc(e.at||'')+'</td>'+
+      x+='<tr><td>'+(e.t?fmtDT(e.t):fmtY(e.on))+'</td><td class="mono">'+(e.t?'':esc(e.at||''))+'</td>'+
         '<td>'+(e.kind==='Lead'?'<span class="pill mid">LEADS</span>':'<span class="pill sa">CLIENTS</span>')+'</td>'+
         '<td class="num">'+e.added+'</td><td class="num">'+e.changed+'</td>'+
         '<td class="num">'+e.gone+'</td><td class="num">'+(e.conv||'—')+'</td><td class="num">'+e.total+'</td></tr>';
@@ -8075,7 +8270,7 @@ function invApply(){
     INVOICES=load(K_INV,[]); return;
   }
   histDirty(); svcDirty(); invDirty();
-  INVSYNC.push({on:todayISO(),at:new Date().toISOString().slice(11,16),
+  INVSYNC.push({on:todayISO(),t:new Date().toISOString(),at:new Date().toISOString().slice(11,16),
     lines:rows.length, from, to, total:Math.round(rows.reduce((a,x)=>a+x.v,0)),
     replaced:m.replaced||0});
   if(INVSYNC.length>60) INVSYNC=INVSYNC.slice(-60);
@@ -8221,7 +8416,7 @@ function payApply(){
     alert('That is more payment history than this browser will store.\n\nNothing was saved. Import a shorter date range.');
     PAYMENTS=load(K_PAY,[]); return;
   }
-  PAYSYNC.push({on:todayISO(),at:new Date().toISOString().slice(11,16),
+  PAYSYNC.push({on:todayISO(),t:new Date().toISOString(),at:new Date().toISOString().slice(11,16),
     lines:rows.length, from, to, total:Math.round(rows.reduce((x,y)=>x+y.a,0)),
     replaced:before-kept.length});
   if(PAYSYNC.length>60) PAYSYNC=PAYSYNC.slice(-60);
@@ -8242,7 +8437,7 @@ function renderPayments(){
   const hist=document.getElementById('paySyncTable');
   if(hist) hist.innerHTML = PAYSYNC.length
     ? '<thead><tr><th>When</th><th class="num">Payments</th><th>Covers</th><th class="num">Received</th><th class="num">Replaced</th></tr></thead><tbody>'+
-      PAYSYNC.slice().reverse().map(s=>'<tr><td>'+fmtY(s.on)+' '+s.at+'</td><td class="num">'+s.lines.toLocaleString()+
+      PAYSYNC.slice().reverse().map(s=>'<tr><td>'+(s.t?fmtDT(s.t):fmtY(s.on)+' '+s.at)+'</td><td class="num">'+s.lines.toLocaleString()+
       '</td><td>'+fmt(s.from)+' – '+fmt(s.to)+'</td><td class="num mono">'+money(s.total)+'</td><td class="num">'+
       (s.replaced||'—')+'</td></tr>').join('')+'</tbody>'
     : '<tbody><tr><td class="empty">No payments imported yet.</td></tr></tbody>';
@@ -8439,7 +8634,7 @@ function pdiApply(){
   }
   invDirty();
   const dates=rows.map(x=>x.p).sort();
-  PDISYNC.push({on:todayISO(),at:new Date().toISOString().slice(11,16),
+  PDISYNC.push({on:todayISO(),t:new Date().toISOString(),at:new Date().toISOString().slice(11,16),
     lines:rows.length, from:dates[0], to:dates[dates.length-1],
     total:Math.round(rows.reduce((a,x)=>a+x.v,0)), added, updated});
   if(PDISYNC.length>60) PDISYNC=PDISYNC.slice(-60);
@@ -8461,7 +8656,7 @@ function renderPaidInv(){
   const hist=document.getElementById('pdiSyncTable');
   if(hist) hist.innerHTML = PDISYNC.length
     ? '<thead><tr><th>When</th><th class="num">Invoices</th><th>Covers</th><th class="num">Collected</th><th class="num">New</th><th class="num">Updated</th></tr></thead><tbody>'+
-      PDISYNC.slice().reverse().map(s=>'<tr><td>'+fmtY(s.on)+' '+s.at+'</td><td class="num">'+s.lines.toLocaleString()+
+      PDISYNC.slice().reverse().map(s=>'<tr><td>'+(s.t?fmtDT(s.t):fmtY(s.on)+' '+s.at)+'</td><td class="num">'+s.lines.toLocaleString()+
       '</td><td>'+fmt(s.from)+' – '+fmt(s.to)+'</td><td class="num mono">'+money(s.total)+'</td><td class="num">'+
       (s.added||'—')+'</td><td class="num">'+(s.updated||'—')+'</td></tr>').join('')+'</tbody>'
     : '<tbody><tr><td class="empty">No paid invoices imported yet.</td></tr></tbody>';
@@ -9267,7 +9462,7 @@ function balApply(){
   if(!BAL_PARSED) return;
   OPENINV=BAL_PARSED.rows.slice().sort((a,b)=>a.d<b.d?-1:1);
   save(K_BAL,OPENINV); invDirty();
-  BALSYNC.push({on:todayISO(),at:new Date().toISOString().slice(11,16),
+  BALSYNC.push({on:todayISO(),t:new Date().toISOString(),at:new Date().toISOString().slice(11,16),
     lines:OPENINV.length, total:Math.round(OPENINV.reduce((a,x)=>a+x.t,0)),
     past:OPENINV.filter(x=>/past/i.test(x.s)).length});
   if(BALSYNC.length>60) BALSYNC=BALSYNC.slice(-60);
@@ -9289,7 +9484,7 @@ function renderBalances(){
   const hist=document.getElementById('balSyncTable');
   if(hist) hist.innerHTML = BALSYNC.length
     ? '<thead><tr><th>Imported</th><th class="num">Unpaid invoices</th><th class="num">Past due</th><th class="num">Outstanding</th></tr></thead><tbody>'+
-      BALSYNC.slice().reverse().map(s=>'<tr><td>'+fmtY(s.on)+' '+s.at+'</td><td class="num">'+s.lines+
+      BALSYNC.slice().reverse().map(s=>'<tr><td>'+(s.t?fmtDT(s.t):fmtY(s.on)+' '+s.at)+'</td><td class="num">'+s.lines+
       '</td><td class="num">'+s.past+'</td><td class="num mono">'+money(s.total)+'</td></tr>').join('')+'</tbody>'
     : '<tbody><tr><td class="empty">No balances imported yet.</td></tr></tbody>';
   if(!OPENINV.length){
@@ -9826,7 +10021,7 @@ function renderRevenue(){
   const st=document.getElementById('invSyncTable');
   let x='<thead><tr><th>Imported</th><th>Covering</th><th class="num">Lines</th><th class="num">Replaced</th><th class="num">Billed</th></tr></thead><tbody>';
   INVSYNC.slice().reverse().forEach(e=>{
-    x+='<tr><td>'+fmtY(e.on)+' <span class="note">'+esc(e.at||'')+'</span></td>'+
+    x+='<tr><td>'+(e.t?fmtDT(e.t):fmtY(e.on)+' <span class="note">'+esc(e.at||'')+'</span>')+'</td>'+
       '<td>'+fmt(e.from)+' – '+fmtY(e.to)+'</td><td class="num">'+e.lines.toLocaleString()+'</td>'+
       '<td class="num">'+(e.replaced||'—')+'</td><td class="num">'+money(e.total)+'</td></tr>';
   });
@@ -11442,7 +11637,7 @@ function gcalLink(o){
   const fmt=d=>gcalStamp(d.toISOString()).slice(0,15)+'Z';
   const p=new URLSearchParams({
     action:'TEMPLATE', text:o.title, dates:fmt(start)+'/'+fmt(end),
-    details:o.details||'', location:o.location||'', ctz:'America/Los_Angeles'
+    details:o.details||'', location:o.location||'', ctz:BIZ_TZ()
   });
   return 'https://calendar.google.com/calendar/render?'+p.toString();
 }
@@ -13454,7 +13649,7 @@ function doImport(){
   auditRecord('import',{src:src, batch:batch, rows:out.length, added:added, updated:updated,
     dupes:dupes, tombed:tombed, stale:stale.length,
     total:Math.round(out.reduce((a,b)=>a+bookedValue(b),0))});
-  IMPLOG.push({id:batch,on:todayISO(),at:new Date().toISOString().slice(11,16),src,
+  IMPLOG.push({id:batch,on:todayISO(),t:new Date().toISOString(),at:new Date().toISOString().slice(11,16),src,
     rows:out.length,added,updated,dupes,
     total:Math.round(out.reduce((a,b)=>a+bookedValue(b),0))});
   if(IMPLOG.length>60) IMPLOG=IMPLOG.slice(-60);
@@ -13690,7 +13885,7 @@ function stateSnapshot(){   // v6: employee identity fields (first/last/photo/al
     invsyncs:INVSYNC,implog:IMPLOG,gear:GEAR,payments:PAYMENTS,paysyncs:PAYSYNC,
     takeovers:TAKEOVERS,openinv:OPENINV,balsyncs:BALSYNC,paidinv:PAIDINV,pdisyncs:PDISYNC,
     invlinks:INVLINKS,invclimap:INVCLIMAP,invassign:INVASSIGN,
-    tombstones:TOMBSTONES,oscs:OSCS,global:GLOBAL};
+    tombstones:TOMBSTONES,oscs:OSCS,global:GLOBAL,biz:BIZ};
 }
 function backup(){
   // Gated in the header too, but the guard belongs in the function: a whole-state
@@ -13729,6 +13924,9 @@ function restore(e){
     EMP_IDX=null; empMigrate();
     PEOPLE.forEach(p=>{ if(p.mgr&&idMap[p.mgr])p.mgr=idMap[p.mgr]; });
     if(d.global&&Array.isArray(d.global.empIgnore)){ GLOBAL.empIgnore=GLOBAL.empIgnore||[]; d.global.empIgnore.forEach(x=>{ if(!GLOBAL.empIgnore.some(y=>y.key===x.key)) GLOBAL.empIgnore.push(x); }); save(K_GLOBAL,GLOBAL); }
+    // Business Details: adopt the backup's copy only when this browser has none
+    // (a backup from before Business Details existed simply leaves the defaults).
+    if(d.biz&&typeof d.biz==='object'&&!BIZ){ BIZ=d.biz; save(K_BIZ,BIZ); bizDirty(); }
     const key=r=>r.rep+'|'+r.date+'|'+String(r.client).toLowerCase()+'|'+bookedValue(r).toFixed(2);
     // Restored sales are given fresh ids, so the payout ledger has to be told where each
     // one went. Without this map, every restored payout still pointed at the backup's old
@@ -15505,6 +15703,8 @@ function cloudApply(d){
   TOMBSTONES=A(d.tombstones,TOMBSTONES); put(K_TOMB,TOMBSTONES);
   OSCS=A(d.oscs,OSCS); put(K_OSC,OSCS);
   if(d.global&&typeof d.global==='object'){ GLOBAL=d.global; if(!GLOBAL.policy)GLOBAL.policy=Object.assign({},POLICY_DEFAULT); put(K_GLOBAL,GLOBAL); }
+  // Business Details sync across devices like settings do — replace-style.
+  if(d.biz&&typeof d.biz==='object'){ BIZ=d.biz; put(K_BIZ,BIZ); bizDirty(); }
   histDirty(); geoDirty(); invDirty();
   CLOUD.applying=false;
 }

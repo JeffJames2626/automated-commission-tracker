@@ -67,7 +67,9 @@
                PAYMENTS:(typeof PAYMENTS!=='undefined'?PAYMENTS:undefined),
                INVLINKS:(typeof INVLINKS!=='undefined'?INVLINKS:undefined),
                INVCLIMAP:(typeof INVCLIMAP!=='undefined'?INVCLIMAP:undefined),
-               INVASSIGN:(typeof INVASSIGN!=='undefined'?INVASSIGN:undefined) };
+               INVASSIGN:(typeof INVASSIGN!=='undefined'?INVASSIGN:undefined),
+               BIZ:(typeof BIZ!=='undefined'?BIZ:undefined),
+               ADMIN:(typeof ADMIN!=='undefined'?ADMIN:undefined) };
     // Nothing a test run may COST localStorage. Stubbing save() is not enough:
     // cloudApply() writes through its own internal put() (raw localStorage.setItem),
     // and the cloud-merge test calls the real cloudApply — on a browser holding real
@@ -2314,6 +2316,92 @@
       } else {
         results.push({name:'C2 tombstone mechanism exists (addTombstone/isTombstoned)', expected:true, actual:false, pass:false});
       }
+
+      /* ---------- BIZ: business details + business clock ---------- */
+      if(typeof bizGet==='function'&&typeof bizDateAtTz==='function'){
+        var LA='America/Los_Angeles', NY='America/New_York';
+        // record + defaults + old-state migration
+        BIZ=null; bizDirty();
+        var bd=bizGet();
+        check('BIZ canonical record exists, IANA timezone', LA, bd.tz);
+        check('BIZ defaults carry the business city', 'Spokane', bd.city);
+        check('BIZ defaults keep the standing Monday-week rule', 'mon', bd.weekStart);
+        checkTrue('BIZ state from before business details existed migrates to defaults',
+          bd.currency==='USD'&&bd.hours&&('mon' in bd.hours), JSON.stringify(bd).slice(0,50));
+        // authorization: hidden buttons are not authorization — the setter itself gates
+        ADMIN=false; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+        bizSet({city:'Denied'});
+        check('BIZ non-admin cannot edit (setter self-gates)', 'Spokane', bizGet().city);
+        ADMIN=true; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+        var aBefore=(typeof AUDIT!=='undefined'&&AUDIT.length)||0;
+        bizSet({city:'Testville'});
+        check('BIZ admin can edit', 'Testville', bizGet().city);
+        checkTrue('BIZ change is audited with old and new value',
+          typeof AUDIT!=='undefined'&&AUDIT.length>aBefore&&
+          JSON.stringify(AUDIT.slice(aBefore)).indexOf('Testville')>-1, (AUDIT.length-aBefore)+' entries');
+        // backup + cloud participation
+        checkTrue('BIZ rides in the backup snapshot', stateSnapshot().biz&&stateSnapshot().biz.city==='Testville',
+          JSON.stringify(stateSnapshot().biz||{}).slice(0,40));
+        ROWS=[]; PAYOUTS=[];
+        cloudApply({biz:Object.assign(bizGet(),{city:'CloudCity'})});
+        check('BIZ syncs through cloudApply like settings', 'CloudCity', bizGet().city);
+        // THE CLOCK — pure: instant + zone in, business calendar out. Intl owns DST.
+        check('CLOCK a UTC evening is still the prior business day', '2026-08-24', bizDateAtTz(new Date('2026-08-25T02:00:00Z'),LA));
+        check('CLOCK sale at 11:59 PM business time lands on that day', '2026-08-24', bizDateAtTz(new Date('2026-08-25T06:59:00Z'),LA));
+        check('CLOCK sale at 12:01 AM lands on the next day', '2026-08-25', bizDateAtTz(new Date('2026-08-25T07:01:00Z'),LA));
+        check('CLOCK the zone is explicit — an Eastern device gets Eastern only if asked', '2026-08-25', bizDateAtTz(new Date('2026-08-25T04:30:00Z'),NY));
+        check('CLOCK …while the business at that same instant is still Aug 24', '2026-08-24', bizDateAtTz(new Date('2026-08-25T04:30:00Z'),LA));
+        check('CLOCK spring DST, before the 2 AM jump', '2026-03-08', bizDateAtTz(new Date('2026-03-08T09:59:00Z'),LA));
+        check('CLOCK spring DST, after the jump — same 23-hour business day', '2026-03-08', bizDateAtTz(new Date('2026-03-08T11:00:00Z'),LA));
+        check('CLOCK fall DST, inside the repeated hour', '2026-11-01', bizDateAtTz(new Date('2026-11-01T08:30:00Z'),LA));
+        check('CLOCK fall DST, last minute of the 25-hour day', '2026-11-01', bizDateAtTz(new Date('2026-11-02T07:59:00Z'),LA));
+        check('CLOCK leap-year February has 29 days', 29, daysInMonth(2028,1));
+        check('CLOCK todayISO IS the business clock', bizToday(), todayISO());
+        checkTrue('CLOCK yesterday/tomorrow are one calendar day out',
+          bizYesterday()===addDays(bizToday(),-1)&&bizTomorrow()===addDays(bizToday(),1), bizYesterday()+' / '+bizTomorrow());
+        // date-only values are calendar facts — they never shift
+        check('DATE-ONLY Aug 24 renders as Aug 24', 'Aug 24', fmt('2026-08-24'));
+        check('DATE-ONLY dObj keeps the calendar day', 24, dObj('2026-08-24').getDate());
+        // week boundaries — one rule, configurable
+        check('WEEK Monday start: Wed Aug 26 opens Mon Aug 24', '2026-08-24', weekStart('2026-08-26'));
+        bizSet({weekStart:'sun'});
+        check('WEEK configurable: Sunday start moves the boundary', '2026-08-23', weekStart('2026-08-26'));
+        bizSet({weekStart:'mon'});
+        check('WEEK back on Monday', '2026-08-24', weekStart('2026-08-26'));
+        var mb=monthBounds('2026-02');
+        check('MONTH bounds, non-leap February', '2026-02-01|2026-02-28', mb.from+'|'+mb.to);
+        check('YEAR YTD starts on Jan 1', bizToday().slice(0,4)+'-01-01', bizYtd().from);
+        // business hours — unset answers null (never guesses), configured answers truly
+        BIZ=null; bizDirty(); ADMIN=true; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+        check('HOURS unconfigured day answers null, not a guess', 'null', String(bizIsBusinessDay('2026-08-24')));
+        bizSet({hours:{mon:{closed:false,open:'08:00',close:'17:00'},tue:{closed:false,open:'08:00',close:'17:00'},
+          wed:{closed:false,open:'08:00',close:'17:00'},thu:{closed:false,open:'08:00',close:'17:00'},
+          fri:{closed:false,open:'08:00',close:'17:00'},sat:{closed:true},sun:{closed:true}}});
+        check('HOURS a configured Monday is a business day', 'true', String(bizIsBusinessDay('2026-08-24')));
+        check('HOURS a closed Saturday is not', 'false', String(bizIsBusinessDay('2026-08-29')));
+        check('HOURS 10:00 on Monday is open', 'true', String(bizIsOpenAt('2026-08-24','10:00')));
+        check('HOURS 07:30 is before opening', 'false', String(bizIsOpenAt('2026-08-24','07:30')));
+        check('HOURS 18:00 is after closing', 'false', String(bizIsOpenAt('2026-08-24','18:00')));
+        check('HOURS next business day after Friday skips the weekend', '2026-08-31', bizNextBusinessDay('2026-08-28'));
+        bizSet({hours:{sat:{closed:false,open:'09:00',close:'12:00'}}});
+        check('HOURS a change takes effect immediately', 'true', String(bizIsBusinessDay('2026-08-29')));
+        // financial safety: changing the business timezone moves NO money and NO history
+        ROWS=[mkRow({type:'new', value:1000, invoiced:'2026-06-10', paid:'2026-06-20', paidAmt:100})];
+        PAYOUTS=[{id:'po-biz1', kind:'rep', emp:P.id, rowId:ROWS[0].id, period:'2026-06',
+          basisValue:1000, rate:10, share:1, amount:100, paidOn:'2026-06-20', status:'paid', at:'2026-06-20T19:00:00.000Z', by:'t'}];
+        var fin1=commissionFor(P,'2026-06','sold').commission;
+        bizSet({tz:NY});
+        check('FIN commission month total identical under another business tz', fin1, commissionFor(P,'2026-06','sold').commission);
+        check('FIN historical sale date untouched by tz change', '2026-06-05', ROWS[0].date);
+        check('FIN paid payout entry untouched by tz change', '100|2026-06|2026-06-20|2026-06-20T19:00:00.000Z',
+          PAYOUTS[0].amount+'|'+PAYOUTS[0].period+'|'+PAYOUTS[0].paidOn+'|'+PAYOUTS[0].at);
+        bizSet({tz:LA});
+        // import moment vs transaction date are different facts
+        checkTrue('IMPORT the log stamp is an exact instant, the sale date a calendar day',
+          mkRow({}).date.length===10 && new Date().toISOString().indexOf('T')===10, mkRow({}).date);
+      } else {
+        results.push({name:'BIZ business config exists (bizGet/bizDateAtTz)', expected:true, actual:false, pass:false});
+      }
     } catch(e){
       results.push({name:'HARNESS ERROR', expected:'no throw', actual:String(e&&e.message||e), pass:false});
     } finally {
@@ -2345,6 +2433,10 @@
       if(typeof INVLINKS!=='undefined' && snap.INVLINKS!==undefined) INVLINKS=snap.INVLINKS;
       if(typeof INVCLIMAP!=='undefined' && snap.INVCLIMAP!==undefined) INVCLIMAP=snap.INVCLIMAP;
       if(typeof INVASSIGN!=='undefined' && snap.INVASSIGN!==undefined) INVASSIGN=snap.INVASSIGN;
+      if(typeof BIZ!=='undefined' && snap.BIZ!==undefined) BIZ=snap.BIZ;
+      if(typeof ADMIN!=='undefined' && snap.ADMIN!==undefined) ADMIN=snap.ADMIN;
+      if(typeof bizDirty==='function') bizDirty();
+      if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
       if(typeof invDirty==='function') invDirty();
     }
 
