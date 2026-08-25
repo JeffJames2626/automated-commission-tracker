@@ -989,6 +989,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
           <div><label>From</label><input type="date" id="invFFrom" onchange="renderInvoices()"></div>
           <div><label>To</label><input type="date" id="invFTo" onchange="renderInvoices()"></div>
         </div>
+        <div id="invBulkBar" style="display:none;margin-top:8px"></div>
       </div>
       <div class="scroll tallscroll"><table id="invRegTable"></table></div>
     </div>
@@ -8696,6 +8697,89 @@ function invAssignRep(no,emp){
   if(typeof INV_ID!=='undefined'&&INV_ID) renderInv(); else render();
 }
 
+/* ---- group selection on the register ---- */
+// Session-only: which invoice numbers are ticked. Never persisted, pruned
+// against the live registry on every render so stale numbers cannot linger.
+let INVSEL=new Set(), INV_FILTERED=[];
+function invSelToggle(no,on){ no=String(no).trim(); if(on) INVSEL.add(no); else INVSEL.delete(no); renderInvoices(); }
+function invSelAll(on){ INV_FILTERED.forEach(n=>{ if(on) INVSEL.add(n); else INVSEL.delete(n); }); renderInvoices(); }
+function invSelNone(){ INVSEL.clear(); renderInvoices(); }
+// Bulk assignment: the same record semantics as invAssignRep, one save, one
+// audit entry. A clear is a RECORD (emp:''), never a deletion — the add-only
+// cloud merge would resurrect a deleted entry from any device still holding it.
+function invAssignMany(nos,emp){
+  if(!can('edit_sales')){ toast('That is not part of your access'); return 0; }
+  const p=emp?person(emp):null;
+  if(emp&&!p){ toast('No team member with that id'); return 0; }
+  let n=0;
+  nos.forEach(no=>{
+    no=String(no).trim(); if(!no) return;
+    const old=INVASSIGN.find(a=>String(a.no).trim()===no);
+    if(emp){
+      if(old&&old.emp===emp) return;
+      INVASSIGN=INVASSIGN.filter(a=>a!==old);
+      INVASSIGN.push({id:uid('ia'), no, emp, by:empWho()||'', on:todayISO()});
+      n++;
+    } else {
+      if(!old||old.emp==='') return;
+      INVASSIGN=INVASSIGN.filter(a=>a!==old);
+      INVASSIGN.push({id:uid('ia'), no, emp:'', by:empWho()||'', on:todayISO(), was:old.emp});
+      n++;
+    }
+  });
+  if(n){
+    save(K_INVASSIGN,INVASSIGN); invDirty();
+    auditRecord('inv-assign',{bulk:n, emp, name:p?empName(p):'', nos:nos.slice(0,250)});
+    toast(n+' invoice'+(n===1?'':'s')+(emp?' assigned to '+empName(p):' — assignment cleared'));
+  } else toast('Nothing to change');
+  return n;
+}
+// Bulk removal: takes the selected invoices out of every feed (audit lines,
+// paid, balances) plus their links and assignments. Admin only, confirmed,
+// audited. The register is derived, so removing the feed rows removes the
+// invoice everywhere. A later re-import of a feed that still contains these
+// numbers brings them back — the feeds mirror what Service Autopilot exports.
+function invRemoveMany(nos){
+  if(!can('admin_security')){ toast('That is not part of your access'); return 0; }
+  const set=new Set(nos.map(x=>String(x).trim()).filter(Boolean));
+  if(!set.size) return 0;
+  const inSet=v=>set.has(String(v==null?'':v).trim());
+  const b={inv:INVOICES.length, pdi:PAIDINV.length, bal:OPENINV.length};
+  INVOICES=INVOICES.filter(x=>!inSet(x.i));   save(K_INV,INVOICES);
+  PAIDINV =PAIDINV.filter(x=>!inSet(x.i));    save(K_PDI,PAIDINV);
+  OPENINV =OPENINV.filter(x=>!inSet(x.i));    save(K_BAL,OPENINV);
+  INVLINKS=INVLINKS.filter(l=>!inSet(l.no));  save(K_INVLINK,INVLINKS);
+  INVASSIGN=INVASSIGN.filter(a=>!inSet(a.no));save(K_INVASSIGN,INVASSIGN);
+  invDirty();
+  const n=set.size, gone={inv:b.inv-INVOICES.length, pdi:b.pdi-PAIDINV.length, bal:b.bal-OPENINV.length};
+  auditRecord('inv-remove',{count:n, lines:gone.inv, paid:gone.pdi, balances:gone.bal, nos:[...set].slice(0,250)});
+  toast(n+' invoice'+(n===1?'':'s')+' removed from the register');
+  return n;
+}
+function invBulkAssign(){
+  const sel=document.getElementById('invBulkRep'); const emp=sel?sel.value:'';
+  if(!emp){ toast('Pick a salesperson first'); return; }
+  const p=person(emp); if(!p) return;
+  const nos=[...INVSEL];
+  if(!confirm('Assign '+nos.length+' invoice'+(nos.length===1?'':'s')+' to '+empName(p)+'?')) return;
+  if(invAssignMany(nos,emp)) INVSEL.clear();
+  render();
+}
+function invBulkClearRep(){
+  const nos=[...INVSEL];
+  if(!confirm('Clear the salesperson assignment on '+nos.length+' invoice'+(nos.length===1?'':'s')+'?')) return;
+  invAssignMany(nos,'');
+  INVSEL.clear(); render();
+}
+function invBulkRemove(){
+  const nos=[...INVSEL];
+  if(!confirm('Remove '+nos.length+' invoice'+(nos.length===1?'':'s')+' from the tracker?\n\n'+
+    'Their audit lines, paid records, and open balances go away here (and sync everywhere). '+
+    'Re-importing a feed that still contains them brings them back.')) return;
+  if(invRemoveMany(nos)) INVSEL.clear();
+  render();
+}
+
 /* ---- claiming: history becomes commissionable sales, deliberately ---- */
 // The invoices one person could claim: attributed to THEM, no sale behind them
 // yet, not deliberately deleted before. Lists only — nothing here executes.
@@ -8906,14 +8990,38 @@ function renderInvoices(){
   if(ff) L=L.filter(h=>h.date>=ff);
   if(fto) L=L.filter(h=>h.date&&h.date<=fto);
   document.getElementById('invRegCount').textContent=L.length.toLocaleString()+(L.length!==R.list.length?' of '+R.list.length.toLocaleString():'');
+  // group selection — prune numbers that fell off the registry, remember the
+  // filtered set so "select all" means "everything matching the filters"
+  INVSEL.forEach(no=>{ if(!R.byNo[invId(no)]) INVSEL.delete(no); });
+  INV_FILTERED=L.map(h=>h.no);
+  const canSel=can('edit_sales');
+  const bar=document.getElementById('invBulkBar');
+  if(bar){
+    if(canSel&&INVSEL.size){
+      const selPre=R.list.filter(h=>INVSEL.has(h.no)).reduce((a,h)=>a+h.pre,0);
+      const keep=(document.getElementById('invBulkRep')||{}).value||'';
+      bar.style.display='';
+      bar.innerHTML='<b>'+INVSEL.size.toLocaleString()+' selected</b> <span class="hint">'+money(selPre)+' pre-tax</span> &nbsp; '+
+        '<select id="invBulkRep" style="width:auto;max-width:180px">'+peopleOptions(keep,'— pick a salesperson —',true)+'</select> '+
+        '<button class="sm" onclick="invBulkAssign()">Assign</button> '+
+        '<button class="sm" onclick="invBulkClearRep()">Clear assignment</button> '+
+        (can('admin_security')?'<button class="sm" onclick="invBulkRemove()" style="color:var(--red)">Remove from tracker</button> ':'')+
+        '<button class="sm" onclick="invSelNone()">Deselect</button>';
+    } else { bar.style.display='none'; bar.innerHTML=''; }
+  }
+  const allSel=INV_FILTERED.length&&INV_FILTERED.every(n=>INVSEL.has(n));
+  const selTh=canSel?'<th style="width:26px"><input type="checkbox" title="select every invoice matching the filters"'+(allSel?' checked':'')+' onchange="invSelAll(this.checked)"></th>':'';
+  const cols=canSel?11:10;
   if(!L.length){
     t.innerHTML='<tbody><tr><td class="empty">'+(R.list.length?'No invoices match those filters.':'Import the invoice audit, paid invoices, or balances on the Revenue tab and the register builds itself.')+'</td></tr></tbody>';
   } else {
-    t.innerHTML='<thead><tr><th>Invoice</th><th>Date</th><th>Client</th><th class="num">Pre-tax</th><th class="num">Total</th><th>Status</th><th>Sold by</th><th class="num">Lines</th><th>Sale</th><th>Health</th></tr></thead><tbody>'+
+    t.innerHTML='<thead><tr>'+selTh+'<th>Invoice</th><th>Date</th><th>Client</th><th class="num">Pre-tax</th><th class="num">Total</th><th>Status</th><th>Sold by</th><th class="num">Lines</th><th>Sale</th><th>Health</th></tr></thead><tbody>'+
       L.slice(0,500).map(h=>{
         const sales=saleMap[h.no]||[];
         const p=h.repId?person(h.repId):null;
-        return '<tr><td>'+invLink(h.no)+'</td><td class="mono">'+fmt(h.date)+'</td>'+
+        const jsNo=JSON.stringify(String(h.no)).replace(/"/g,'&quot;');
+        return '<tr>'+(canSel?'<td><input type="checkbox"'+(INVSEL.has(h.no)?' checked':'')+' onchange="invSelToggle('+jsNo+',this.checked)"></td>':'')+
+          '<td>'+invLink(h.no)+'</td><td class="mono">'+fmt(h.date)+'</td>'+
           '<td title="'+esc(h.addr)+'"><a href="#" onclick="openClient('+JSON.stringify(h.cli?h.cli.n:h.client).replace(/"/g,'&quot;')+');return false">'+esc(h.cli?h.cli.n:h.client||'—')+'</a>'+
             (h.cli?'':' <span class="pill no" title="no approved roster match">?</span>')+'</td>'+
           '<td class="num mono">'+(h.noMoney?'<span title="only the balance is known — import the audit weeks covering this invoice">—</span>':money2(h.pre))+'</td>'+
@@ -8923,7 +9031,7 @@ function renderInvoices(){
           '<td class="num">'+(h.lines.length||'—')+'</td>'+
           '<td>'+(sales.length===1?saleLink(sales[0].r.id,'1 linked'):sales.length?invLink(h.no,sales.length+' linked'):'—')+'</td>'+
           '<td>'+(h.health.length?'<span title="'+esc(h.health.map(k=>INV_HEALTH_LABEL[k]||k).join(' · '))+'" style="color:var(--red);font-weight:700">⚠ '+h.health.length+'</span>':'<span style="color:var(--grn-d)">✓</span>')+'</td></tr>';
-      }).join('')+'</tbody>'+(L.length>500?'<tbody><tr><td class="empty" colspan="10">Showing 500 of '+L.length.toLocaleString()+' — narrow the filters.</td></tr></tbody>':'');
+      }).join('')+'</tbody>'+(L.length>500?'<tbody><tr><td class="empty" colspan="'+cols+'">Showing 500 of '+L.length.toLocaleString()+' — narrow the filters.</td></tr></tbody>':'');
   }
   // billed by salesperson — register attribution, pre-tax; NOT production credit
   const byRep={};
