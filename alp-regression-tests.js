@@ -2806,6 +2806,41 @@
       } else {
         results.push({name:'TSHEET hours foundation exists', expected:true, actual:false, pass:false});
       }
+
+      /* ---------- OWNERSHIP: the source-of-truth registry ---------- */
+      if(typeof DATA_OWNERSHIP!=='undefined'&&typeof ownershipOf==='function'){
+        var wanted=['Business','Business Settings','Divisions','Employees','EOS Roles','Scorecards / KPIs',
+          'Clients','Leads','Properties','Sales','Estimates','Invoices','Payments','Commissions','Payouts',
+          'Hours (sales activity)','Timesheets (payroll)','Vehicles','Targets / Projections'];
+        var missing=wanted.filter(function(w){ return !ownershipOf(w); });
+        check('OWNERSHIP every listed domain answers', '', missing.join(','));
+        // Google may never be authoritative without an explicit recorded decision
+        var badGoogle=[];
+        DATA_OWNERSHIP.forEach(function(d){ (d.inbound||[]).forEach(function(i){
+          if(/google/i.test(i.src)&&i.cls==='authoritative'&&!(i.explicit&&i.why&&/DESIGN DECISION/.test(i.why)))
+            badGoogle.push(d.domain); }); });
+        check('OWNERSHIP Google is never silently authoritative', '', badGoogle.join(','));
+        // every authoritative inbound of ANY source carries the explicit decision
+        var badAuth=[];
+        DATA_OWNERSHIP.forEach(function(d){ (d.inbound||[]).forEach(function(i){
+          if(i.cls==='authoritative'&&!(i.explicit===true&&i.why)) badAuth.push(d.domain+':'+i.src); }); });
+        check('OWNERSHIP every authoritative source is an explicit recorded decision', '', badAuth.join(','));
+        // financial domains never accept external writes
+        checkTrue('OWNERSHIP the payout ledger accepts no inbound source at all',
+          ownershipOf('Payouts').inbound.length===0, 'inbound='+ownershipOf('Payouts').inbound.length);
+        checkTrue('OWNERSHIP commissions accept no inbound source at all',
+          ownershipOf('Commissions').inbound.length===0, 'ok');
+        // the gaps are named, not hidden
+        check('OWNERSHIP the known gaps are flagged AMBIGUOUS', 'AMBIGUOUS|AMBIGUOUS|AMBIGUOUS',
+          [ownershipOf('EOS Roles').owner,ownershipOf('Properties').owner,ownershipOf('Vehicles').owner].join('|'));
+        // defining the registry moved no data: it is a constant, provably inert
+        var b4=JSON.stringify({r:ROWS.length,p:PAYOUTS.length,c:(typeof CLIENTS!=='undefined'?CLIENTS.length:0)});
+        ownershipOf('Sales'); ownershipOf('Payouts'); ownershipOf('Clients');
+        check('OWNERSHIP reading the registry changes nothing', b4,
+          JSON.stringify({r:ROWS.length,p:PAYOUTS.length,c:(typeof CLIENTS!=='undefined'?CLIENTS.length:0)}));
+      } else {
+        results.push({name:'OWNERSHIP registry exists', expected:true, actual:false, pass:false});
+      }
     } catch(e){
       results.push({name:'HARNESS ERROR', expected:'no throw', actual:String(e&&e.message||e), pass:false});
     } finally {

@@ -2017,6 +2017,13 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
         <span class="note" id="bizSavedNote"></span></div>
     </section>
     <section class="adminsec">
+      <div class="hdr"><h3>🗺️ Who owns the truth</h3>
+        <span class="hint">the data-ownership registry — which system may write each domain, and how. Documentation of what the code actually does; Google is never authoritative unless a row says so explicitly.</span></div>
+      <details><summary>Show the registry (18 domains)</summary>
+        <div class="dbody"><div class="scroll"><table id="ownershipTable"></table></div></div>
+      </details>
+    </section>
+    <section class="adminsec">
       <div class="hdr"><h3>🩹 Health check</h3>
         <span class="hint">Six things that can go wrong quietly. This only reads — it never changes, deletes or saves anything.</span></div>
       <div id="healthBody"><button class="p" onclick="runHealthCheck()">Run the health check</button></div>
@@ -4063,6 +4070,92 @@ function openCompanySettings(){ setTab('admin');
   setTimeout(()=>{ const el=document.getElementById('bizCard'); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); },60); }
 
 /* ============================================================
+   DATA OWNERSHIP — who owns the truth, domain by domain.
+   The standing law: the APP is the canonical operational source of
+   truth. Service Autopilot / Elevation Advisor are external source
+   systems reconciled into canonical entities under the existing
+   mapping rules. Google Docs/Sheets are outputs, backups and
+   reference inputs — never authoritative for an operational domain
+   unless a row below says so EXPLICITLY, with the decision recorded.
+   Inbound classes: 'migration' (one-time seed), 'reference' (matching
+   signal only), 'review' (a person confirms before anything commits),
+   'authoritative' (may auto-apply — requires explicit:true + why).
+   This registry documents what the code ACTUALLY does; changing a row
+   here without changing the code it describes is lying.
+   ============================================================ */
+const DATA_OWNERSHIP=[
+ {domain:'Business', store:'BIZ (alp_biz_v1)', owner:'app',
+  inbound:[], outbound:[], srcIds:'permanent biz id (bizEnsure)',
+  conflict:'admin-write; server returns the stored copy to every non-admin save', auto:false},
+ {domain:'Business Settings', store:'BIZ tz/hours/weekStart/currency', owner:'app',
+  inbound:[], outbound:[], srcIds:'fields on the biz record',
+  conflict:'same as Business; every change audited with old and new', auto:false},
+ {domain:'Divisions', store:'BIZ.divisions', owner:'app',
+  inbound:[{src:'employee departments', cls:'migration', why:'seeded once by bizEnsure from data already recorded'}],
+  outbound:[], srcIds:'division ids (dv…)', conflict:'admin edits in Company settings', auto:false},
+ {domain:'Employees', store:'PEOPLE (alp_people_v1)', owner:'app',
+  inbound:[
+   {src:'Google Team-Members sheet', cls:'authoritative', explicit:true,
+    why:'DESIGN DECISION: the company sheet is the live source for CONTACT/PROFILE fields on matched people (title, phone, email additions, truck, ext, dept, photo) — comp fields never; new or look-alike rows wait for an admin'},
+   {src:'SA/EL/payroll names', cls:'reference', why:'match-only via resolveEmployee + aliases; imports never create a person'}],
+  outbound:[], srcIds:'permanent employee id + aliases + emails + extIds',
+  conflict:'matched contact fields update with an empLog entry; comp fields are server-protected admin writes', auto:true},
+ {domain:'EOS Roles', store:'(none — rides as title text)', owner:'AMBIGUOUS',
+  inbound:[{src:'Google sheet Role column', cls:'reference', why:'no canonical EOS-role entity exists yet'}],
+  outbound:[], srcIds:'none', conflict:'n/a — flagged gap, decide before EOS integration', auto:false},
+ {domain:'Scorecards / KPIs', store:'(derived, never stored)', owner:'app',
+  inbound:[], outbound:[{dst:'future Google publish', cls:'planned output only'}],
+  srcIds:'n/a', conflict:'recomputed from canonical engines on every read', auto:false},
+ {domain:'Clients', store:'CLIENTS (alp_clients_v1)', owner:'app',
+  inbound:[{src:'Service Autopilot client export', cls:'authoritative', explicit:true,
+    why:'DESIGN DECISION: SA is the operational CRM of record for the roster — sync refreshes fields, marks gone, detects conversions'}],
+  outbound:[], srcIds:'SA client id (c.u)', conflict:'sync replace with conversion detection; app owns the overlays (mappings) SA cannot touch', auto:true},
+ {domain:'Leads', store:'CLIENTS ct=Lead', owner:'app',
+  inbound:[{src:'Service Autopilot leads export', cls:'authoritative', explicit:true, why:'same decision as Clients'}],
+  outbound:[], srcIds:'SA id (c.u)', conflict:'as Clients', auto:true},
+ {domain:'Properties', store:'(none — address fields on the client)', owner:'AMBIGUOUS',
+  inbound:[], outbound:[], srcIds:'none',
+  conflict:'n/a — no separate entity yet; a property cannot change hands in this model. Known architecture gap.', auto:false},
+ {domain:'Sales', store:'ROWS (alp_rows_v1)', owner:'app',
+  inbound:[
+   {src:'SA/EL CSV imports', cls:'review', why:'mapped + previewed; srcId dedup; tombstones keep deliberate deletions deleted'},
+   {src:'invoice claim engine', cls:'review', why:'explicit admin wizard, idempotent by srcId inv:<no>'}],
+  outbound:[], srcIds:'row id + src/srcId per source system',
+  conflict:'srcId match updates in place; user-edited rows never overwritten by imports', auto:false},
+ {domain:'Estimates', store:'ROWS stages + OSCS', owner:'app',
+  inbound:[], outbound:[], srcIds:'row/osc ids',
+  conflict:'manual entry; no external estimate feed exists yet', auto:false},
+ {domain:'Invoices', store:'registry over INVOICES/PAIDINV/OPENINV + overlays', owner:'app (overlays) / SA (feeds)',
+  inbound:[{src:'SA invoice audit / paid invoices / balances', cls:'authoritative', explicit:true,
+    why:'DESIGN DECISION: SA bills the clients — the three feeds mirror it; number-keyed merge, partial files can never delete history'}],
+  outbound:[], srcIds:'invoice number, registry key SA|<no>',
+  conflict:'feeds replace by number; INVLINKS/INVCLIMAP/INVASSIGN are app-owned admin decisions with add-only sync', auto:true},
+ {domain:'Payments', store:'PAYMENTS (alp_payments_v1)', owner:'app (SA feed)',
+  inbound:[{src:'SA payments export', cls:'authoritative', explicit:true, why:'same decision as Invoices'}],
+  outbound:[], srcIds:'invoice number on the line', conflict:'date-window replace on import', auto:true},
+ {domain:'Commissions', store:'(derived: commFor + frozen row fields)', owner:'app',
+  inbound:[], outbound:[], srcIds:'row id',
+  conflict:'NO external system may ever write commission math; rates freeze at invoicing', auto:false},
+ {domain:'Payouts', store:'PAYOUTS ledger (alp_payouts_v1)', owner:'app',
+  inbound:[], outbound:[{dst:'future accountant report', cls:'planned output only'}],
+  srcIds:'entry id', conflict:'IMMUTABLE — append and void only; add-only cloud merge; server ignores every non-admin write', auto:false},
+ {domain:'Hours (sales activity)', store:'HOURS (alp_hours_v1)', owner:'app',
+  inbound:[{src:'pasted/CSV rep sheets', cls:'review', why:'mapped + previewed before commit'}],
+  outbound:[], srcIds:'entry id + employee id', conflict:'manual corrections', auto:false},
+ {domain:'Timesheets (payroll)', store:'TSHEET/PAYPER/TSIMP', owner:'app',
+  inbound:[{src:'payroll CSV/XLSX/PDF reports', cls:'review', why:'every row through the review screen; changed totals HELD as conflicts until an admin approves the correction'}],
+  outbound:[{dst:'per-period CSV export', cls:'output'}],
+  srcIds:'ts id + employee id + period id + import id', conflict:'duplicate=skip, changed=held, corrections audited old→new→why', auto:false},
+ {domain:'Vehicles', store:'(none — p.truck text)', owner:'AMBIGUOUS',
+  inbound:[{src:'Google sheet Truck column', cls:'reference', why:'no vehicle entity exists — text on the employee'}],
+  outbound:[], srcIds:'none', conflict:'n/a — flagged gap', auto:false},
+ {domain:'Targets / Projections', store:'BIZ.targets', owner:'app',
+  inbound:[], outbound:[], srcIds:'target id, one per metric+period',
+  conflict:'admin-only bizTargetSet, replace-in-place, audited', auto:false}
+];
+function ownershipOf(domain){ return DATA_OWNERSHIP.find(d=>norm(d.domain)===norm(domain))||null; }
+
+/* ============================================================
    PAYROLL TIMESHEETS — the Hours side of Total Compensation.
    NOT the sales-hours log (HOURS = time spent selling, feeding the
    sales cost model — that meaning is untouched). A TSHEET line is the
@@ -5324,6 +5417,14 @@ function renderAdmin(){
     return;
   }
   renderBiz();
+  const ot=document.getElementById('ownershipTable');
+  if(ot&&!ot.dataset.built){ ot.dataset.built='1';
+    ot.innerHTML='<thead><tr><th>Domain</th><th>Canonical store</th><th>Owner</th><th>Inbound</th><th>Conflict rule</th></tr></thead><tbody>'+
+      DATA_OWNERSHIP.map(d=>'<tr><td><b>'+esc(d.domain)+'</b></td><td class="note">'+esc(d.store)+'</td>'+
+        '<td>'+(d.owner==='AMBIGUOUS'?'<span class="pill no">AMBIGUOUS</span>':esc(d.owner))+'</td>'+
+        '<td class="note">'+(d.inbound.length?d.inbound.map(i=>'<b>'+esc(i.src)+'</b> — <span class="pill '+(i.cls==='authoritative'?'mid':'n')+'">'+i.cls.toUpperCase()+'</span> '+esc(i.why||'')).join('<br>'):'none — app only')+'</td>'+
+        '<td class="note">'+esc(d.conflict)+'</td></tr>').join('')+'</tbody>';
+  }
   const np=document.getElementById('nopinBlock'); if(np) np.remove();
 
   const me=currentAdmin();
