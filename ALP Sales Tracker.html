@@ -14724,9 +14724,7 @@ function renderHdrTools(){
   const el=document.getElementById('hdrTools'); if(!el) return;
   let items='<div class="phead">This page</div>'+
     '<button role="menuitem" onclick="closePops();window.print()">Print / PDF</button>'+
-    '<div class="pnote">Ctrl&#8202;+&#8202;P does the same thing.</div>'+
-    '<div class="phead">Appearance</div>'+
-    '<button role="menuitem" onclick="themeToggle()">'+(themeGet()==='dark'?'☀️ Switch to light theme':'🌙 Switch to dark theme')+'</button>';
+    '<div class="pnote">Ctrl&#8202;+&#8202;P does the same thing.</div>';
   if(userIsCompanyAdmin()) items+='<div class="phead">Company</div>'+
     '<button role="menuitem" onclick="closePops();openCompanySettings()">🏢 Company settings</button>';
   let data='';
@@ -14734,11 +14732,17 @@ function renderHdrTools(){
   if(can('admin_security')) data+='<button role="menuitem" onclick="closePops();backup()">Backup all</button>';
   if(data) items+='<div class="phead">Your data</div>'+data;
   // Build the shell once; the Google button lives in #gsiHost and must survive repaints.
+  // The theme toggle sits in the open, right beside the menu — not buried in it.
   if(!el.querySelector('.popwrap'))
-    el.insertAdjacentHTML('afterbegin','<span class="popwrap"><button class="gh sm caret" id="toolsBtn" onclick="toolsMenu(event)"'+
+    el.insertAdjacentHTML('afterbegin','<button class="gh sm" id="themeBtn" onclick="themeToggle()" aria-label="Switch theme" style="padding:5px 8px"></button>'+
+      '<span class="popwrap"><button class="gh sm caret" id="toolsBtn" onclick="toolsMenu(event)"'+
       ' aria-haspopup="menu" aria-expanded="false" aria-label="Tools"'+
       ' title="Print, export and backup"><span class="tlab">Tools</span></button>'+
       '<div class="pop" id="toolsPop" role="menu"></div></span>');
+  const tb=document.getElementById('themeBtn');
+  if(tb){ const dark=themeGet()==='dark';
+    tb.textContent=dark?'☀️':'🌙';
+    tb.title=dark?'Switch to light theme':'Switch to dark theme'; }
   document.getElementById('toolsPop').innerHTML=items;
   if(!document.getElementById('gsiHost')){ const g=document.createElement('div'); g.id='gsiHost'; el.appendChild(g); }
 }
