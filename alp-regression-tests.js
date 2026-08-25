@@ -2506,6 +2506,26 @@
       } else {
         results.push({name:'BASEDATE employee-start rule exists', expected:true, actual:false, pass:false});
       }
+
+      /* ---------- HAWKSTART: the Hawk sees a missing employee start date ---------- */
+      if(typeof runChecks==='function'){
+        var hs=function(){ var c=runChecks().filter(function(x){return x.id==='empstart';})[0];
+          return c?c.items.length+c.muted.length:0; };
+        ROWS=[];
+        PEOPLE=[mkPerson({id:'HS1', name:'No Start', payFrom:'', active:true})];
+        check('HAWKSTART an active employee without a start date is flagged', 1, hs());
+        PEOPLE=[mkPerson({id:'HS1', name:'No Start', payFrom:'2026-01-01', active:true})];
+        check('HAWKSTART a recorded start date clears the finding', 0, hs());
+        PEOPLE=[mkPerson({id:'HS1', name:'Left Already', payFrom:'', active:false})];
+        check('HAWKSTART former staff are not flagged', 0, hs());
+        PEOPLE=[mkPerson({id:(typeof EMP_UNASSIGNED!=='undefined'?EMP_UNASSIGNED:'emp_unassigned'), name:'Unassigned — needs review', payFrom:'', active:true})];
+        check('HAWKSTART the Unassigned infrastructure record is not flagged', 0, hs());
+        PEOPLE=[mkPerson({id:'HS2', name:'Linkable Person', payFrom:'', active:true})];
+        var c2=runChecks().filter(function(x){return x.id==='empstart';})[0];
+        checkTrue('HAWKSTART the finding links the person', c2&&c2.items[0].text.indexOf('openEmp')>-1, c2?c2.items[0].text.slice(0,80):'missing');
+      } else {
+        results.push({name:'HAWKSTART hawk exists', expected:true, actual:false, pass:false});
+      }
     } catch(e){
       results.push({name:'HARNESS ERROR', expected:'no throw', actual:String(e&&e.message||e), pass:false});
     } finally {

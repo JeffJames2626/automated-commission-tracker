@@ -10862,6 +10862,14 @@ function runChecks(){
     preplan.slice(0,40).map(r=>({text:'<b>'+cliLink(r.client)+'</b> · '+saleLink(r.id,money(bookedValue(r))),
       sub:fmt(r.date)+' · '+(person(r.rep)?empLink(r.rep)+' starts '+fmtY(person(r.rep).start):'')})));
 
+  /* --- active employee with no start date --- */
+  const noStart=PEOPLE.filter(p=>p.active && p.id!==EMP_UNASSIGNED && !p.payFrom);
+  add('empstart','warn','No employee start date',
+    'Base pay runs from the employee start date and only from there — with none recorded, no base pay accrues for this person no matter what their comp plan says. Set the date on their comp plan, or mute this for anyone who is commission-only on purpose.',
+    noStart.map(p=>({text:'<b>'+empLink(p.id)+'</b>'+(p.title?' · '+esc(p.title):''),
+      sub:'commission plan effective '+fmtY(p.start)+' · no base pay accrues until a start date is set',
+      act:'<button class="sm" onclick="setTab(\'plans\');selPerson(\''+p.id+'\')">Open their plan</button>'})));
+
   /* ============================================================
      🦅 TEN MORE SKILLS — every one of these is a failure mode a
      real audit actually caught. Detection here, decision by a human.
