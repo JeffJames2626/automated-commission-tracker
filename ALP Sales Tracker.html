@@ -1183,8 +1183,8 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
           <div><label>Name</label><input id="pName" oninput="savePlan()"></div>
           <div><label>Title</label><input id="pTitle" oninput="savePlan()"></div>
           <div><label>Google login email</label><input id="pEmail" type="email" placeholder="name@automatedlawnandpest.com" oninput="savePlan()"></div>
-          <div><label>Commission plan effective</label><input type="date" id="pStart" onchange="savePlan()"></div>
-          <div><label>On payroll since</label><input type="date" id="pPayFrom" onchange="savePlan()"></div>
+          <div><label>Commission plan effective</label><input type="date" id="pStart" onchange="savePlan()" title="Gates COMMISSION only — sales dated before this earn nothing. Never affects base pay."></div>
+          <div><label>Employee start date</label><input type="date" id="pPayFrom" onchange="savePlan()" title="Base pay runs from this date and only this date. Blank = no base pay accrues."></div>
           <div><label>Reports to</label><select id="pMgr" onchange="savePlan()"></select></div>
           <div><label class="chk"><input type="checkbox" id="pActive" onchange="savePlan()"> Active</label></div>
         </div>
@@ -3701,9 +3701,12 @@ function seasonShare(fromISO,toISO){
   return share;
 }
 
-// When base pay starts. Usually the same day the plan does, but somebody can be on the
-// payroll well before their commission plan kicks in.
-function payStart(p){ return (p.payFrom && p.payFrom<p.start) ? p.payFrom : p.start; }
+// The EMPLOYEE's start date — an employment fact, stored in p.payFrom. Base pay
+// runs from here and ONLY here. The comp plan's date (p.start) gates COMMISSION
+// alone — the plan is commissions-only, and a plan-date edit must never create
+// or move wages. No employee start date recorded = no base pay accrues; the app
+// does not guess when somebody joined the payroll.
+function payStart(p){ return p.payFrom||''; }
 
 const norm=x=>String(x||'').toLowerCase().replace(/[^a-z0-9]/g,'');
 
@@ -4182,7 +4185,11 @@ function monthlyGuarantee(p,monthIdx){
 function annualBase(p){ let t=0; for(let m=0;m<12;m++) t+=monthlyGuarantee(p,m); return t; }
 
 // Full payroll across a range — guaranteed hours, prorated by day. Ignores the sales split.
+// Clamped to the employee's start date HERE, at the source, so every caller —
+// commission report, scoreboard cost, hours tab — inherits the rule for free.
 function basePay(p,fromISO,toISO){
+  const es=payStart(p); if(!es) return 0;
+  if(fromISO<es) fromISO=es;
   if(toISO<fromISO) return 0;
   let total=0, cur=fromISO;
   while(cur<=toISO){
@@ -4197,7 +4204,10 @@ function basePay(p,fromISO,toISO){
 
 // The slice of payroll that belongs to sales. A month with logged hours is billed from
 // those hours; a month with none falls back to guaranteed hours x sales share.
+// Same employee-start clamp as basePay: no start date, no cost.
 function salesBase(p,fromISO,toISO){
+  const es=payStart(p); if(!es) return 0;
+  if(fromISO<es) fromISO=es;
   if(toISO<fromISO) return 0;
   const sp=(p.salesPct==null?100:p.salesPct)/100;
   let total=0, cur=fromISO;
@@ -5659,10 +5669,11 @@ function planLabels(p){
     : 'Splits time with the field. Full payroll is '+money(annualFull)+' a year; <b>'+money(annualFull*sp/100)+
       '</b> ('+num(sp,0)+'%) is charged to sales and used in every cost figure here.';
   const ps=payStart(p);
-  document.getElementById('payFromNote').innerHTML = (ps<p.start)
-    ? 'Drawing base pay since <b>'+fmtY(ps)+'</b>, commission from <b>'+fmtY(p.start)+'</b>. Monthly reports before '+
-      fmtY(p.start)+' will show base pay with no commission.'
-    : 'Leave blank when payroll and the commission plan start on the same day. Set it earlier for anyone already employed before their plan begins.';
+  document.getElementById('payFromNote').innerHTML = ps
+    ? 'Base pay since <b>'+fmtY(ps)+'</b> (employee start date) · commission from <b>'+fmtY(p.start)+'</b> (plan date). '+
+      'The two are independent — editing the plan date never moves wages.'
+    : '<b>No employee start date — no base pay accrues.</b> Commission runs from the plan date above. '+
+      'Set the start date only when this person actually draws guaranteed pay.';
   document.getElementById('scoredNote').innerHTML = scored
     ? 'Windows and 30-day reviews get a pass/fail against the numbers below.'
     : 'Cost-tracked only. Production, booked value, commission and pay all still track — the numbers below just feed the cost model, and nothing passes or fails.';
@@ -5879,13 +5890,14 @@ function monthBounds(ym){
 function commissionFor(p, ym, basis, opts){
   basis = basis || 'due'; opts=opts||{};
   const b=monthBounds(ym);
-  // Commission runs from the plan date; base pay runs from the payroll date. They are
-  // usually the same, but somebody can be on the books before their plan starts.
+  // Commission runs from the PLAN date; base pay runs from the EMPLOYEE start
+  // date. Two different facts, deliberately independent: editing the plan can
+  // never move wages, and no recorded start date means no base pay at all.
   const from = b.from < p.start ? p.start : b.from;
   const live = from<=b.to;
-  const ps = payStart(p);
-  const payFrom = b.from < ps ? ps : b.from;
-  const payLive = payFrom<=b.to;
+  const ps = payStart(p);                       // '' = employee start date unknown
+  const payFrom = ps && b.from < ps ? ps : b.from;
+  const payLive = !!ps && payFrom<=b.to;
   // 'sold' counts by the date it closed. 'due' counts by the date commission became
   // payable — invoice plus the waiting period — which is how it actually gets paid.
   // Primary rep, named on a split — OR somebody the ledger says was paid on it,
@@ -5973,7 +5985,8 @@ function commissionFor(p, ym, basis, opts){
           payable:Math.max(0,owed),                // this month alone; replaced by the balance engine below on the 'due' basis
           carry:Math.max(0,-owed),
           base, hrs, total:base+Math.max(0,owed),
-          partial: b.from < p.start && live,
+          partial: b.from < p.start && live,          // the COMMISSION window opened mid-month (plan date)
+          basePartial: payLive && payFrom>b.from,     // base pay opened mid-month (employee start date)
           payOnly: payLive && !live};
   // Balance engine: on the payable basis, what remains due carries month to month.
   if(basis==='due' && !opts.noBalance){
@@ -6048,9 +6061,10 @@ function renderComm(){
      '<th class="num" title="Guaranteed hours × hourly rate from the comp plan, prorated by day. This is the plan’s guarantee — NOT logged time. Hours logged in a month refine the cost model; they do not create this number.">Base pay</th><th class="num">Total comp</th>'+
      '</tr></thead><tbody>';
   reports.forEach(r=>{
-    const flag = r.payOnly ? '<div class="note" style="color:var(--red)">base pay only — commission starts '+fmtY(r.p.start)+'</div>'
-               : !r.live ? '<div class="note" style="color:var(--red)">plan starts '+fmtY(r.p.start)+'</div>'
-               : r.partial ? '<div class="note" style="color:var(--red)">part month from '+fmtY(r.from)+' — payroll date on the comp plan; base pay is the plan’s guarantee, not logged time</div>' : '';
+    const flag = (r.payOnly ? '<div class="note" style="color:var(--red)">base pay only — commission starts '+fmtY(r.p.start)+'</div>'
+               : !r.live ? '<div class="note" style="color:var(--red)">commission plan starts '+fmtY(r.p.start)+'</div>'
+               : r.partial ? '<div class="note" style="color:var(--red)">commission from '+fmtY(r.from)+' — plan effective mid-month</div>' : '')+
+      (r.basePartial ? '<div class="note" style="color:var(--red)">base pay from '+fmtY(r.payFrom)+' — employee start date; the plan’s guarantee, not logged time</div>' : '');
     h+='<tr><td><b>'+empLink(r.p.id,r.p.name)+'</b><div class="note">'+esc(r.p.title)+'</div>'+flag+'</td>'+
       '<td class="num">'+r.news.filter(x=>!isReversed(x)).length+'</td><td class="num">'+money(r.newV)+'</td>'+
       '<td class="num">'+r.ups.filter(x=>!isReversed(x)).length+'</td><td class="num">'+money(r.upV)+'</td>'+

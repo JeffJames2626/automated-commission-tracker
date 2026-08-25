@@ -2420,8 +2420,9 @@
         check('RPTMO the current month is not future', 'false', String(commMonthIsFuture(todayISO().slice(0,7))));
         check('RPTMO 2099 is future', 'true', String(commMonthIsFuture('2099-01')));
         // Deliberately navigating to a future month still shows the plan's
-        // guaranteed projection — the data layer is unchanged, only labeled.
-        var FP=mkPerson({start:'2099-01-01', payFrom:''});
+        // guaranteed projection — but only for someone with an employee start
+        // date on record (base pay never derives from the plan date).
+        var FP=mkPerson({start:'2099-01-01', payFrom:'2099-01-01'});
         PEOPLE=[FP]; ROWS=[];
         checkTrue('RPTMO future month still projects base pay when asked',
           commissionFor(FP,'2099-07','due').base>0, commissionFor(FP,'2099-07','due').base);
@@ -2473,6 +2474,37 @@
         SEL=null;
       } else {
         results.push({name:'PLANAUD plan-edit audit exists', expected:true, actual:false, pass:false});
+      }
+
+      /* ---------- BASEDATE: base pay follows the employee, commission follows the plan ---------- */
+      if(typeof payStart==='function'&&typeof basePay==='function'){
+        // No employee start date on record: no base pay, however live the plan is.
+        var B1=mkPerson({id:'B1', start:'2026-01-01', payFrom:''});
+        PEOPLE=[B1]; ROWS=[];
+        check('BASEDATE no employee start date means no base pay', 0, commissionFor(B1,'2026-06','sold').base);
+        check('BASEDATE …and payStart answers blank, never the plan date', '', payStart(B1));
+        // Base runs from the employee start date, prorated by day.
+        var B2=mkPerson({id:'B2', start:'2026-01-01', payFrom:'2026-06-11'});
+        PEOPLE=[B2];
+        var expB2=monthlyGuarantee(B2,5)*(20/30);
+        check('BASEDATE base runs from the employee start date, prorated', num(expB2), num(commissionFor(B2,'2026-06','sold').base));
+        checkTrue('BASEDATE …flagged as base-partial for the report', commissionFor(B2,'2026-06','sold').basePartial, 'basePartial');
+        // Editing the PLAN date moves no wages.
+        var B3=mkPerson({id:'B3', start:'2026-06-15', payFrom:'2026-06-01'});
+        PEOPLE=[B3];
+        var b3before=commissionFor(B3,'2026-06','sold').base;
+        B3.start='2026-06-25';
+        check('BASEDATE a plan-date edit moves zero wages', num(b3before), num(commissionFor(B3,'2026-06','sold').base));
+        // Commission stays plan-gated regardless of employment.
+        var B4=mkPerson({id:'B4', start:'2026-06-15', payFrom:'2026-01-01'});
+        PEOPLE=[B4]; ROWS=[mkRow({rep:'B4', type:'new', value:1000, date:'2026-06-05'})];
+        var c4=commissionFor(B4,'2026-06','sold');
+        check('BASEDATE a pre-plan sale earns zero commission', 0, c4.commission);
+        checkTrue('BASEDATE …while employment-based base still accrues', c4.base>0, c4.base);
+        // The cost model inherits the same clamp.
+        check('BASEDATE salesBase without a start date is zero', 0, salesBase(B1,'2026-06-01','2026-06-30'));
+      } else {
+        results.push({name:'BASEDATE employee-start rule exists', expected:true, actual:false, pass:false});
       }
     } catch(e){
       results.push({name:'HARNESS ERROR', expected:'no throw', actual:String(e&&e.message||e), pass:false});
