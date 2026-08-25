@@ -5672,13 +5672,22 @@ function planLabels(p){
   });
 }
 
+// The fields where a change moves money. Every edit to one of these is audited
+// with old and new value — comp plans were the ONE money-bearing record the
+// audit trail could not see, and an autosaved date input can commit
+// intermediate values (arrow through "day 31" and it is saved) with no trace.
+const PLAN_AUDIT_FIELDS=['start','payFrom','rate','hrsIn','hrsOff','offMonths',
+  'commNew','commUp','commRenew','commOv','salesPct','active','mgr'];
 function savePlan(){
   const p=person(SEL); if(!p)return;
   const g=id=>document.getElementById(id);
+  const before={}; PLAN_AUDIT_FIELDS.forEach(k=>{ before[k]=JSON.stringify(p[k]===undefined?null:p[k]); });
   p.name=g('pName').value.trim()||'Unnamed';
   p.title=g('pTitle').value.trim();
   p.email=g('pEmail').value.trim().toLowerCase();
-  p.start=g('pStart').value||PLAN_DEFAULT.start;
+  // An empty date input keeps the CURRENT plan date — it must never silently
+  // jump to the template default.
+  p.start=g('pStart').value||p.start||PLAN_DEFAULT.start;
   p.active=g('pActive').checked;
   p.note=g('pNote').value.trim();
   p.payFrom=g('pPayFrom').value||'';
@@ -5702,6 +5711,15 @@ function savePlan(){
   p.unit=g('pUnit').value;
   p.acv=Math.max(1,pNum(g('acv').value)||ACV_DEFAULT);
   p.offMonths=[].slice.call(document.querySelectorAll('#pMonths input:checked')).map(e=>+e.dataset.m);
+  // Audit what actually changed. Date and number inputs fire onchange (one event
+  // per committed value), so this stays one entry per real edit.
+  PLAN_AUDIT_FIELDS.forEach(k=>{
+    const now=JSON.stringify(p[k]===undefined?null:p[k]);
+    if(before[k]!==now){
+      auditRecord('plan-edit',{emp:p.id, name:p.name, k, was:before[k].slice(0,120), now:now.slice(0,120)});
+      if(typeof empLog==='function') empLog(p,'plan-edit',{k, from:JSON.parse(before[k]), to:p[k]});
+    }
+  });
   save(K_PEOPLE,PEOPLE);
   planSavedFlash();
   planLabels(p);
@@ -6027,12 +6045,12 @@ function renderComm(){
      '<th class="num">Commission</th><th class="num">Override</th>'+
      '<th class="num">Paid (ledger)</th>'+
      '<th class="num">Adjust.</th><th class="num">Chargeback</th><th class="num">Payable now</th>'+
-     '<th class="num">Base pay</th><th class="num">Total comp</th>'+
+     '<th class="num" title="Guaranteed hours × hourly rate from the comp plan, prorated by day. This is the plan’s guarantee — NOT logged time. Hours logged in a month refine the cost model; they do not create this number.">Base pay</th><th class="num">Total comp</th>'+
      '</tr></thead><tbody>';
   reports.forEach(r=>{
     const flag = r.payOnly ? '<div class="note" style="color:var(--red)">base pay only — commission starts '+fmtY(r.p.start)+'</div>'
                : !r.live ? '<div class="note" style="color:var(--red)">plan starts '+fmtY(r.p.start)+'</div>'
-               : r.partial ? '<div class="note" style="color:var(--red)">part month from '+fmtY(r.from)+'</div>' : '';
+               : r.partial ? '<div class="note" style="color:var(--red)">part month from '+fmtY(r.from)+' — payroll date on the comp plan; base pay is the plan’s guarantee, not logged time</div>' : '';
     h+='<tr><td><b>'+empLink(r.p.id,r.p.name)+'</b><div class="note">'+esc(r.p.title)+'</div>'+flag+'</td>'+
       '<td class="num">'+r.news.filter(x=>!isReversed(x)).length+'</td><td class="num">'+money(r.newV)+'</td>'+
       '<td class="num">'+r.ups.filter(x=>!isReversed(x)).length+'</td><td class="num">'+money(r.upV)+'</td>'+

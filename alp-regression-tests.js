@@ -2429,6 +2429,51 @@
       } else {
         results.push({name:'RPTMO report-month guards exist', expected:true, actual:false, pass:false});
       }
+
+      /* ---------- PLANAUD: comp-plan edits leave a trail ---------- */
+      if(typeof savePlan==='function'&&typeof PLAN_AUDIT_FIELDS!=='undefined'&&document.getElementById('pStart')){
+        var PP=mkPerson({id:'PAUD', name:'Audit Target', start:'2026-01-01'});
+        PEOPLE=[PP]; ROWS=[]; SEL='PAUD';
+        var gg=function(id){ return document.getElementById(id); };
+        // set the form to exactly the fixture so the baseline save changes nothing
+        gg('pName').value='Audit Target'; gg('pTitle').value=''; gg('pEmail').value='';
+        gg('pStart').value='2026-01-01'; gg('pPayFrom').value=''; gg('pNote').value='';
+        gg('pActive').checked=true; gg('pMgr').value='';
+        gg('pRate').value='20'; gg('pHrsIn').value='40'; gg('pHrsOff').value='0';
+        gg('pSalesPct').value='100'; gg('pCommNew').value='10'; gg('pCommUp').value='5';
+        gg('pCommOv').value='0'; gg('pCommRenew').value='5';
+        gg('pStd').value='1'; gg('pWin').value='1'; gg('pVal').value='0'; gg('pHit').value='0';
+        gg('pGoal').value='0'; gg('pFloor').value='0';
+        gg('pUpsellVal').checked=false; gg('pScored').checked=true;
+        gg('pUnit').value='clients'; gg('acv').value='900';
+        savePlan();
+        var a0=AUDIT.length;
+        savePlan();
+        check('PLANAUD an unchanged save writes no audit entries', a0, AUDIT.length);
+        gg('pRate').value='31';
+        savePlan();
+        var last=AUDIT[AUDIT.length-1]||{};
+        checkTrue('PLANAUD a rate change writes one audited entry', AUDIT.length===a0+1, AUDIT.length-a0);
+        checkTrue('PLANAUD …carrying field, old and new value',
+          last.k==='plan-edit'||JSON.stringify(last).indexOf('"rate"')>-1&&JSON.stringify(last).indexOf('31')>-1, JSON.stringify(last).slice(0,120));
+        checkTrue('PLANAUD …and lands on the employee timeline', (PP.log||[]).some(function(l){return l.what==='plan-edit';}), (PP.log||[]).length);
+        // the date trap: an EMPTY date input keeps the current date — no silent
+        // jump to the template default (Oct 2026), no invented payroll history
+        gg('pStart').value='';
+        var a1=AUDIT.length;
+        savePlan();
+        check('PLANAUD empty date input keeps the existing plan date', '2026-01-01', PP.start);
+        check('PLANAUD …and audits nothing for it', a1, AUDIT.length);
+        // an intermediate date that DOES commit is at least on the record now
+        gg('pStart').value='2026-07-31';
+        savePlan();
+        checkTrue('PLANAUD a committed date change is audited with the old date',
+          JSON.stringify(AUDIT[AUDIT.length-1]).indexOf('2026-01-01')>-1&&JSON.stringify(AUDIT[AUDIT.length-1]).indexOf('2026-07-31')>-1,
+          JSON.stringify(AUDIT[AUDIT.length-1]).slice(0,140));
+        SEL=null;
+      } else {
+        results.push({name:'PLANAUD plan-edit audit exists', expected:true, actual:false, pass:false});
+      }
     } catch(e){
       results.push({name:'HARNESS ERROR', expected:'no throw', actual:String(e&&e.message||e), pass:false});
     } finally {
