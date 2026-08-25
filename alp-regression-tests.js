@@ -73,6 +73,8 @@
                PAYPER:(typeof PAYPER!=='undefined'?PAYPER:undefined),
                TSIMP:(typeof TSIMP!=='undefined'?TSIMP:undefined),
                EOSROLES:(typeof EOSROLES!=='undefined'?EOSROLES:undefined),
+               OVERRIDES:(typeof OVERRIDES!=='undefined'?OVERRIDES:undefined),
+               CKPTS:(typeof CKPTS!=='undefined'?CKPTS:undefined),
                EOSASSIGN:(typeof EOSASSIGN!=='undefined'?EOSASSIGN:undefined),
                ADMIN:(typeof ADMIN!=='undefined'?ADMIN:undefined) };
     // Nothing a test run may COST localStorage. Stubbing save() is not enough:
@@ -3028,6 +3030,55 @@
       } else {
         results.push({name:'EOSWIZ wizard exists', expected:true, actual:false, pass:false});
       }
+
+      /* ---------- SOT: source-of-truth — field authority, overrides, recovery ---------- */
+      if(typeof fieldAuthority==='function'&&typeof ovSet==='function'){
+        ADMIN=true; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+        OVERRIDES=[]; CKPTS=[];
+        // field authority classes
+        check('SOT client id is app-canonical', AUTHORITY.CANONICAL, fieldAuthority('client','u'));
+        check('SOT employee active is app-canonical', AUTHORITY.CANONICAL, fieldAuthority('employee','active'));
+        check('SOT payout fields are frozen', AUTHORITY.FROZEN, fieldAuthority('payout','amount'));
+        check('SOT sale commRate is frozen', AUTHORITY.FROZEN, fieldAuthority('sale','commRate'));
+        check('SOT an ordinary client field is external-owned by default', AUTHORITY.EXTERNAL, fieldAuthority('client','ph'));
+        check('SOT importer may write an external field', true, importMayWrite('client','ph'));
+        check('SOT importer may NOT write a canonical field', false, importMayWrite('client','u'));
+        check('SOT importer may NOT write a frozen field', false, importMayWrite('payout','amount'));
+        // the manual-correction guarantee (test #25): an override outranks a later import
+        CLIENTS=[{u:'SOT1', n:'Jonathan Smith', ct:'Client', ph:'509-000-0000', gone:false}];
+        if(typeof invDirty==='function') invDirty();
+        ovSet('client','SOT1','n','Jonathan Smith');   // admin correction
+        check('SOT an overridden field becomes admin-override authority', AUTHORITY.OVERRIDE, fieldAuthority('client','n','SOT1'));
+        check('SOT …so an importer may not write it', false, importMayWrite('client','n','SOT1'));
+        // simulate an OLD import bringing the previous name back
+        CLIENTS[0].n='John Smith';
+        ovApply();
+        check('SOT ovApply re-asserts the correction over the stale import', 'Jonathan Smith', CLIENTS[0].n);
+        // clearing an override is a tombstone that survives add-only sync
+        ovClear('client','SOT1','n');
+        checkTrue('SOT a cleared override is tombstoned, not deleted',
+          OVERRIDES.some(function(o){return o.field==='n'&&o.cleared;}), 'tombstoned');
+        // cross-device merge: newest timestamp wins, including the tombstone
+        OVERRIDES=[{id:'ovX',dom:'client',ref:'SOT1',field:'ph',value:'OLD',t:'2026-01-01T00:00:00Z'}];
+        ovMerge([{id:'ovX',dom:'client',ref:'SOT1',field:'ph',value:'NEW',t:'2026-06-01T00:00:00Z'}]);
+        check('SOT override merge keeps the newer value', 'NEW', ovGet('client','SOT1','ph'));
+        ovMerge([{id:'ovX',dom:'client',ref:'SOT1',field:'ph',value:'STALE',t:'2025-01-01T00:00:00Z'}]);
+        check('SOT …and rejects an older one', 'NEW', ovGet('client','SOT1','ph'));
+        // overrides ride the backup snapshot
+        checkTrue('SOT overrides ride the backup snapshot', Array.isArray(stateSnapshot().overrides), 'array');
+        // non-admin cannot set or clear
+        ADMIN=false; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+        check('SOT non-admin cannot set an override', false, ovSet('client','SOT1','n','Hacked'));
+        ADMIN=true; if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;
+        // recovery checkpoints: metadata is created, and it is NOT part of the synced doc
+        var ck=checkpointCreate('test point','manual');
+        checkTrue('SOT a checkpoint records counts', ck&&ck.counts&&typeof ck.counts.clients==='number', 'counts');
+        checkTrue('SOT the checkpoint is listed', checkpointList().some(function(m){return m.id===ck.id;}), 'listed');
+        check('SOT checkpoints are NOT written into the synced state document', undefined, stateSnapshot().ckpts);
+        check('SOT …and never rode as CKPTS in a snapshot', undefined, stateSnapshot().checkpoints);
+      } else {
+        results.push({name:'SOT source-of-truth architecture exists', expected:true, actual:false, pass:false});
+      }
     } catch(e){
       results.push({name:'HARNESS ERROR', expected:'no throw', actual:String(e&&e.message||e), pass:false});
     } finally {
@@ -3064,6 +3115,8 @@
       if(typeof PAYPER!=='undefined' && snap.PAYPER!==undefined) PAYPER=snap.PAYPER;
       if(typeof TSIMP!=='undefined' && snap.TSIMP!==undefined) TSIMP=snap.TSIMP;
       if(typeof EOSROLES!=='undefined' && snap.EOSROLES!==undefined) EOSROLES=snap.EOSROLES;
+      if(typeof OVERRIDES!=='undefined' && snap.OVERRIDES!==undefined) OVERRIDES=snap.OVERRIDES;
+      if(typeof CKPTS!=='undefined' && snap.CKPTS!==undefined) CKPTS=snap.CKPTS;
       if(typeof EOSASSIGN!=='undefined' && snap.EOSASSIGN!==undefined) EOSASSIGN=snap.EOSASSIGN;
       if(typeof ADMIN!=='undefined' && snap.ADMIN!==undefined) ADMIN=snap.ADMIN;
       if(typeof bizDirty==='function') bizDirty();

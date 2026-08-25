@@ -293,7 +293,7 @@ function mergeProtected(incomingRaw, storedRaw, email) {
   });
   // Payroll timesheets, pay periods and their import history are written where
   // payroll is run — never from a non-admin session, not even their own row.
-  ['tsheet', 'payper', 'tsimp', 'eosroles', 'eosassign'].forEach(k => {
+  ['tsheet', 'payper', 'tsimp', 'eosroles', 'eosassign', 'overrides'].forEach(k => {
     inc[k] = Array.isArray(stored[k]) ? stored[k] : [];
   });
   // Business Details are the ORG's record — everyone reads them, only an admin

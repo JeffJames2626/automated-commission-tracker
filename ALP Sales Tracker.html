@@ -2032,6 +2032,13 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
         <span class="hint">the canonical seats — separate from job titles, divisions, and app permissions. The role id is identity; names are display. Google text is reference, never authority.</span></div>
       <div id="eosPanel"></div>
     </section>
+    <section class="adminsec" id="recoveryCard">
+      <div class="hdr"><h3>💾 Recovery checkpoints</h3>
+        <span class="hint">Backup is not sync. These snapshots live only in this browser (and as files you download) — synchronizing bad data cannot touch them. A checkpoint is taken automatically before any large import.</span></div>
+      <div style="margin-bottom:8px"><button class="p sm" onclick="checkpointCreate('manual checkpoint','manual');renderRecovery()">Take a checkpoint now</button>
+        <span class="note">Download the file for a copy that outlives this browser.</span></div>
+      <div id="recoveryList"></div>
+    </section>
     <section class="adminsec">
       <div class="hdr"><h3>🗺️ Who owns the truth</h3>
         <span class="hint">the data-ownership registry — which system may write each domain, and how. Documentation of what the code actually does; Google is never authoritative unless a row says so explicitly.</span></div>
@@ -2968,6 +2975,9 @@ const K_PAYPER='alp_payper_v1';   // pay periods
 const K_TSIMP='alp_tsimp_v1';     // timesheet import history
 const K_EOSROLES='alp_eosroles_v1';   // canonical EOS Roles (seats) — id-keyed, app-owned
 const K_EOSASSIGN='alp_eosassign_v1'; // role assignment history — who holds/held each seat
+const K_OVERRIDE='alp_overrides_v1';  // ADMIN_OVERRIDE: manual field corrections that survive imports
+const K_CKPTMETA='alp_ckpt_meta_v1';  // recovery-checkpoint index (metadata only)
+const K_CKPT='alp_ckpt_';             // per-checkpoint snapshot key prefix — NOT part of the synced doc
 const K_REV='alp_roster_rev_v2';
 const K_ADMINREV='alp_admin_user_v1';
 const K_OSC='alp_osc_v1';
@@ -3027,6 +3037,8 @@ let PAYPER   = load(K_PAYPER,[]);    // pay periods {id, from, to, check?}
 let TSIMP    = load(K_TSIMP,[]);     // timesheet import history, newest last, capped 60
 let EOSROLES = load(K_EOSROLES,[]);  // EOS seats — the role IS the id, the name is display
 let EOSASSIGN= load(K_EOSASSIGN,[]); // seat occupancy history — open entries have to:''
+let OVERRIDES= load(K_OVERRIDE,[]);  // {id,dom,ref,field,value,by,on,t} — admin corrections that outrank imports
+let CKPTS    = load(K_CKPTMETA,[]);  // recovery checkpoint index — snapshots live in K_CKPT+id, never synced
 const POLICY_DEFAULT={
   raiseDays:30,       // rep has this long to dispute a figure
   respondDays:10,     // ALP responds within this many business days
@@ -4199,6 +4211,160 @@ function eosProposals(){
     return {p, title:p.title||'', dept:p.dept||'', cur, suggest:exact||null,
       status:cur.length?'assigned':(exact?'suggested':'review')};
   });
+}
+
+/* ============================================================
+   FIELD AUTHORITY — the smallest possible answer to "who owns THIS field?"
+   Six classes. Imports and future integrations consult ONE resolver
+   before writing, so authority lives in one place, never scattered.
+   ============================================================ */
+const AUTHORITY={CANONICAL:'app-canonical', OVERRIDE:'admin-override',
+  EXTERNAL:'external-source', CALCULATED:'calculated', FROZEN:'frozen', SYSTEM:'system'};
+// Fields the app owns absolutely (identity) or that are journaled/derived —
+// no importer may touch these, ever. Everything else defaults to EXTERNAL
+// (a source may set it) UNLESS an admin has pinned an OVERRIDE on that field.
+const FIELD_AUTHORITY={
+  client:   {id:AUTHORITY.CANONICAL, u:AUTHORITY.CANONICAL, canonId:AUTHORITY.CANONICAL,
+             gone:AUTHORITY.CANONICAL, goneOn:AUTHORITY.CANONICAL, converted:AUTHORITY.CANONICAL},
+  employee: {id:AUTHORITY.CANONICAL, active:AUTHORITY.CANONICAL, ended:AUTHORITY.CANONICAL,
+             aliases:AUTHORITY.CANONICAL, log:AUTHORITY.CANONICAL, caps:AUTHORITY.CANONICAL,
+             admin:AUTHORITY.CANONICAL, roles:AUTHORITY.CANONICAL,
+             rate:AUTHORITY.FROZEN, commNew:AUTHORITY.FROZEN, commUp:AUTHORITY.FROZEN},
+  invoice:  {i:AUTHORITY.CANONICAL},
+  payout:   {'*':AUTHORITY.FROZEN},
+  sale:     {id:AUTHORITY.CANONICAL, src:AUTHORITY.CANONICAL, srcId:AUTHORITY.CANONICAL,
+             commRate:AUTHORITY.FROZEN, paid:AUTHORITY.FROZEN, paidAmt:AUTHORITY.FROZEN}
+};
+function fieldAuthority(dom, field, ref){
+  if(ref!=null && ovGet(dom,ref,field)!==undefined) return AUTHORITY.OVERRIDE;
+  const m=FIELD_AUTHORITY[dom]; if(!m) return AUTHORITY.EXTERNAL;
+  return m[field]||m['*']||AUTHORITY.EXTERNAL;
+}
+// May an inbound source write this field on this record? No for canonical,
+// frozen, or admin-overridden fields; yes for genuinely external-owned ones.
+function importMayWrite(dom, field, ref){
+  const a=fieldAuthority(dom, field, ref);
+  return a===AUTHORITY.EXTERNAL;
+}
+
+/* ============================================================
+   ADMIN OVERRIDES — a manual correction outranks every future import.
+   The overlay is add-only-with-newest-wins across sync, so an edit or a
+   clear survives cloud pull and restore and never resurrects a stale
+   source value (the invoice-overlay resurrection bug, avoided by design).
+   ============================================================ */
+function ovKey(dom,ref,field){ return dom+'|'+String(ref)+'|'+field; }
+function ovGet(dom,ref,field){ const r=OVERRIDES.find(o=>o.dom===dom&&String(o.ref)===String(ref)&&o.field===field);
+  return r?r.value:undefined; }
+function ovSet(dom,ref,field,value){
+  if(!can('admin_security')){ toast('Corrections are an admin action'); return false; }
+  const prev=OVERRIDES.find(o=>o.dom===dom&&String(o.ref)===String(ref)&&o.field===field);
+  const rec={id:prev?prev.id:uid('ov'), dom, ref:String(ref), field, value,
+    by:empWho()||'', on:todayISO(), t:new Date().toISOString()};
+  OVERRIDES=OVERRIDES.filter(o=>o!==prev).concat([rec]);
+  save(K_OVERRIDE,OVERRIDES);
+  auditRecord('override-set',{dom, ref:String(ref), field, value:String(value).slice(0,120), was:prev?String(prev.value).slice(0,120):null});
+  ovApply(); render();
+  return true;
+}
+function ovClear(dom,ref,field){
+  if(!can('admin_security')){ toast('Corrections are an admin action'); return false; }
+  const prev=OVERRIDES.find(o=>o.dom===dom&&String(o.ref)===String(ref)&&o.field===field);
+  if(!prev) return false;
+  // A cleared override is a RECORD (value stays but tombstoned) so add-only sync
+  // cannot resurrect the old correction from a stale device.
+  OVERRIDES=OVERRIDES.filter(o=>o!==prev).concat([Object.assign({},prev,{cleared:true, t:new Date().toISOString(), by:empWho()||''})]);
+  save(K_OVERRIDE,OVERRIDES);
+  auditRecord('override-clear',{dom, ref:String(prev.ref), field:prev.field});
+  return true;
+}
+// Re-assert every live override onto its canonical record. Called after any
+// inbound merge (import, cloud pull, restore) and at boot — the override is
+// the durable truth, the record just carries a copy for display.
+function ovApply(){
+  let cliTouched=false;
+  OVERRIDES.forEach(o=>{
+    if(o.cleared) return;
+    if(o.dom==='client'){ const c=CLIENTS.find(x=>String(x.u)===String(o.ref)||String(x.n)===String(o.ref));
+      if(c && c[o.field]!==o.value){ c[o.field]=o.value; cliTouched=true; } }
+    else if(o.dom==='employee'){ const p=person(o.ref); if(p && p[o.field]!==o.value) p[o.field]=o.value; }
+  });
+  if(cliTouched){ try{ save(K_CLIENTS,CLIENTS); }catch(e){} geoDirty(); invDirty(); }
+}
+// Merge overrides across devices: newest timestamp per (dom,ref,field) wins,
+// including the cleared tombstone — a correction made anywhere reaches everywhere.
+function ovMerge(incoming){
+  if(!Array.isArray(incoming)) return;
+  const by={}; OVERRIDES.forEach(o=>{ by[ovKey(o.dom,o.ref,o.field)]=o; });
+  incoming.forEach(o=>{ if(!o||!o.dom) return; const k=ovKey(o.dom,o.ref,o.field);
+    const cur=by[k]; if(!cur || String(o.t||'')>String(cur.t||'')) by[k]=o; });
+  OVERRIDES=Object.values(by);
+}
+
+/* ============================================================
+   RECOVERY CHECKPOINTS — backup is not sync. Snapshots live in their own
+   localStorage keys (K_CKPT+id), are NEVER written into the synced state
+   document, and can be downloaded as a file — so synchronizing bad data
+   can never destroy the recovery copy. Capped and quota-safe.
+   ============================================================ */
+const CKPT_KEEP=4;   // in-browser quick-restore snapshots; the download is the durable copy
+function checkpointCounts(){
+  return {clients:CLIENTS.length, leads:CLIENTS.filter(isLead).length, people:PEOPLE.length,
+    rows:ROWS.length, invoices:INVOICES.length, payments:PAYMENTS.length, payouts:PAYOUTS.length,
+    tsheet:TSHEET.length, eosroles:EOSROLES.length, overrides:OVERRIDES.length};
+}
+function checkpointCreate(label,kind){
+  const id=uid('ck'), snap=stateSnapshot();
+  const meta={id, label:label||'checkpoint', kind:kind||'manual', t:new Date().toISOString(),
+    on:todayISO(), by:empWho()||'', biz:bizId(), counts:checkpointCounts()};
+  let stored=false;
+  try{ localStorage.setItem(K_CKPT+id, JSON.stringify(snap)); stored=true; }
+  catch(e){ // quota: drop the oldest snapshots and retry once
+    CKPTS.slice().sort((a,b)=>String(a.t).localeCompare(b.t)).forEach(m=>{ if(!stored){ try{ localStorage.removeItem(K_CKPT+m.id); }catch(_){} } });
+    try{ localStorage.setItem(K_CKPT+id, JSON.stringify(snap)); stored=true; }catch(e2){}
+  }
+  meta.inBrowser=stored;
+  CKPTS.push(meta);
+  // keep only the newest CKPT_KEEP in-browser snapshots; metadata for the rest stays as a record
+  const withSnap=CKPTS.filter(m=>m.inBrowser).sort((a,b)=>String(b.t).localeCompare(a.t));
+  withSnap.slice(CKPT_KEEP).forEach(m=>{ try{ localStorage.removeItem(K_CKPT+m.id); }catch(e){} m.inBrowser=false; m.evicted=true; });
+  try{ localStorage.setItem(K_CKPTMETA, JSON.stringify(CKPTS)); }catch(e){}
+  auditRecord('checkpoint',{id, label:meta.label, kind:meta.kind, counts:meta.counts});
+  return meta;
+}
+function checkpointList(){ return CKPTS.slice().sort((a,b)=>String(b.t).localeCompare(a.t)); }
+function checkpointDownload(id){
+  const raw=localStorage.getItem(K_CKPT+id); if(!raw){ toast('That checkpoint is no longer stored in this browser'); return; }
+  const m=CKPTS.find(x=>x.id===id)||{};
+  dl(new Blob([raw],{type:'application/json'}), 'alp-checkpoint-'+(m.on||todayISO())+'-'+id.slice(-5)+'.json');
+}
+function checkpointRestore(id){
+  if(!can('admin_security')){ toast('Restore is an admin action'); return false; }
+  const raw=localStorage.getItem(K_CKPT+id); if(!raw){ toast('That checkpoint is not stored in this browser — restore from its downloaded file instead'); return false; }
+  let snap; try{ snap=JSON.parse(raw); }catch(e){ toast('That checkpoint is unreadable'); return false; }
+  const m=CKPTS.find(x=>x.id===id)||{};
+  const now=checkpointCounts();
+  if(!confirm('Restore the checkpoint from '+fmtDT(m.t)+'?\n\n'+
+    'This replaces current data with that snapshot:\n'+
+    '  clients '+now.clients+' → '+(m.counts?m.counts.clients:'?')+'\n'+
+    '  invoices '+now.invoices+' → '+(m.counts?m.counts.invoices:'?')+'\n'+
+    '  payouts '+now.payouts+' → '+(m.counts?m.counts.payouts:'?')+'\n\n'+
+    'A safety checkpoint of the CURRENT state is taken first, so this is reversible.')) return false;
+  checkpointCreate('before restore of '+(m.label||id),'auto-before-restore');
+  // Feed the snapshot through the existing restore-merge path (never regenerates
+  // ids, never reopens payouts) rather than clobbering stores wholesale.
+  ckptApplySnapshot(snap);
+  auditRecord('checkpoint-restore',{id, label:m.label});
+  toast('Restored the checkpoint from '+fmtDT(m.t));
+  render();
+  return true;
+}
+// Applies a snapshot object to the live stores using the same additive,
+// id-preserving merge restore() uses — so a restore cannot duplicate records,
+// regenerate ids, or reopen the payout ledger.
+function ckptApplySnapshot(snap){
+  try{ cloudApply(snap); }catch(e){ toast('Restore hit an error and stopped — nothing partially applied'); }
+  ovApply();
 }
 
 /* ============================================================
@@ -5439,6 +5605,22 @@ function render(){
 function setHWho(v){ HWHO=v; renderHoursTab(); }
 
 
+/* ---- Recovery checkpoints panel ---- */
+function renderRecovery(){
+  const box=document.getElementById('recoveryList'); if(!box) return;
+  const list=checkpointList().slice(0,12);
+  if(!list.length){ box.innerHTML='<div class="note">No checkpoints yet. One is taken automatically before a large import.</div>'; return; }
+  box.innerHTML='<div class="scroll"><table><thead><tr><th>When</th><th>What</th><th class="num">Clients</th><th class="num">Invoices</th><th class="num">Payouts</th><th></th></tr></thead><tbody>'+
+    list.map(m=>'<tr><td class="mono">'+fmtDT(m.t)+'</td>'+
+      '<td>'+esc(m.label)+'<div class="note">'+esc(m.kind)+(m.by?' · '+esc(m.by):'')+'</div></td>'+
+      '<td class="num">'+((m.counts||{}).clients||0).toLocaleString()+'</td>'+
+      '<td class="num">'+((m.counts||{}).invoices||0).toLocaleString()+'</td>'+
+      '<td class="num">'+((m.counts||{}).payouts||0)+'</td>'+
+      '<td>'+(m.inBrowser
+        ? '<button class="sm" onclick="checkpointDownload(\''+m.id+'\')">Download</button> <button class="sm" onclick="checkpointRestore(\''+m.id+'\');renderRecovery()">Restore</button>'
+        : '<span class="note">file only — download was your copy</span>')+'</td></tr>').join('')+'</tbody></table></div>';
+}
+
 /* ---- EOS SETUP WIZARD — enable → set up → review → complete ----
    Six short steps, resumable at any point (the step rides on the business
    record), every screen reads and writes the CANONICAL structures — divisions,
@@ -5759,6 +5941,7 @@ function renderAdmin(){
     return;
   }
   renderBiz();
+  renderRecovery();
   const eosCard=document.getElementById('eosCard');
   if(eosCard) eosCard.style.display=businessUsesEOS()?'':'none';
   if(businessUsesEOS()) renderEos();
@@ -8579,6 +8762,7 @@ function cliApply(){
     if(conv.length){ CONVERSIONS=CONVERSIONS.concat(conv); save(K_CONV,CONVERSIONS); }
   }
 
+  if(typeof checkpointCreate==='function' && CLI_PARSED.length>=25) checkpointCreate('before client import ('+CLI_PARSED.length+' rows)','auto-before-import');
   const byKey={}; CLIENTS.forEach(c=>byKey[cliKey(c)]=c);
   CLI_PARSED.forEach(c=>{
     // The SA salesperson value is kept exactly as exported. Takeover rules are
@@ -8594,6 +8778,7 @@ function cliApply(){
       'Nothing was saved. Try exporting only active clients from Service Autopilot.');
     CLIENTS=load(K_CLIENTS,[]); return;
   }
+  if(typeof ovApply==='function') ovApply();   // manual corrections win over the freshly-imported values
   geoDirty(); invDirty();
   SYNCLOG.push({on:todayISO(),t:new Date().toISOString(),at:new Date().toISOString().slice(11,16),kind:kind,
     added:d.added.length,changed:d.changed.length,gone:markGone?d.gone.length:0,
@@ -13229,7 +13414,9 @@ function renderAlerts(){
     h+='<div class="alert report"><div class="big">Weekly</div><div class="txt">'+
       '<b>No invoice history imported yet.</b> The Invoice Audit Summary is what tells you which work actually '+
       'got billed, and by whom.</div><button onclick="setTab(&quot;rev&quot;)">Set it up</button></div>';
-  } else if(invAge!=null && invAge>=7){
+  } else if(invAge!=null && invAge>=7 && !bizSetupComplete()){
+    // Once the company is established the app is the source of truth — no
+    // file-freshness nags. This staleness prompt only shows before setup.
     h+='<div class="alert report"><div class="big">'+invAge+'d</div><div class="txt">'+
       '<b>Invoice import is '+invAge+' days old.</b> Last covered through '+fmtY(ils.to)+'.'+
       '</div><button onclick="setTab(&quot;rev&quot;)">Import this week</button></div>';
@@ -15226,7 +15413,7 @@ function stateSnapshot(){   // v6: employee identity fields (first/last/photo/al
     takeovers:TAKEOVERS,openinv:OPENINV,balsyncs:BALSYNC,paidinv:PAIDINV,pdisyncs:PDISYNC,
     invlinks:INVLINKS,invclimap:INVCLIMAP,invassign:INVASSIGN,
     tombstones:TOMBSTONES,oscs:OSCS,global:GLOBAL,biz:BIZ,
-    tsheet:TSHEET,payper:PAYPER,tsimp:TSIMP,eosroles:EOSROLES,eosassign:EOSASSIGN};
+    tsheet:TSHEET,payper:PAYPER,tsimp:TSIMP,eosroles:EOSROLES,eosassign:EOSASSIGN,overrides:OVERRIDES};
 }
 function backup(){
   // Gated in the header too, but the guard belongs in the function: a whole-state
@@ -15274,6 +15461,7 @@ function restore(e){
     if(Array.isArray(d.tsimp)&&!TSIMP.length){ TSIMP=d.tsimp; save(K_TSIMP,TSIMP); }
     if(Array.isArray(d.eosroles)&&!EOSROLES.length){ EOSROLES=d.eosroles; save(K_EOSROLES,EOSROLES); }
     if(Array.isArray(d.eosassign)&&!EOSASSIGN.length){ EOSASSIGN=d.eosassign; save(K_EOSASSIGN,EOSASSIGN); }
+    if(Array.isArray(d.overrides)){ ovMerge(d.overrides); save(K_OVERRIDE,OVERRIDES); ovApply(); }
     const key=r=>r.rep+'|'+r.date+'|'+String(r.client).toLowerCase()+'|'+bookedValue(r).toFixed(2);
     // Restored sales are given fresh ids, so the payout ledger has to be told where each
     // one went. Without this map, every restored payout still pointed at the backup's old
@@ -17276,10 +17464,12 @@ function cloudApply(d){
   // Business Details sync across devices like settings do — replace-style.
   if(d.biz&&typeof d.biz==='object'){ BIZ=d.biz; put(K_BIZ,BIZ); bizDirty(); }
   TSHEET=A(d.tsheet,TSHEET); put(K_TSHEET,TSHEET);
+  if(typeof ovApply==='function') setTimeout(ovApply,0);
   PAYPER=A(d.payper,PAYPER); put(K_PAYPER,PAYPER);
   TSIMP=A(d.tsimp,TSIMP); put(K_TSIMP,TSIMP);
   EOSROLES=A(d.eosroles,EOSROLES); put(K_EOSROLES,EOSROLES);
   EOSASSIGN=A(d.eosassign,EOSASSIGN); put(K_EOSASSIGN,EOSASSIGN);
+  if(Array.isArray(d.overrides)){ ovMerge(d.overrides); put(K_OVERRIDE,OVERRIDES); }
   bizEnsure();   // a pulled doc from before the business root existed still gets its id
   setTimeout(renderCompanyGate,0);
   histDirty(); geoDirty(); invDirty();
@@ -17434,6 +17624,7 @@ payoutMigrate();
 reversalMigrate();
 bizEnsure();   // the business gets its permanent root id exactly once
 companyMemberEnsure();
+if(typeof ovApply==='function') ovApply();   // manual corrections outrank whatever loaded
 
 render();
 cloudInit();
