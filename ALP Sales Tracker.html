@@ -4,15 +4,67 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ALP Sales Tracker</title>
+<script>
+/* Theme applies before first paint — no flash. Dark is the primary direction;
+   the choice persists per device (alp_theme_v1). */
+(function(){ try{ document.documentElement.setAttribute('data-theme',
+  localStorage.getItem('alp_theme_v1')||'dark'); }catch(e){} })();
+</script>
 <style>
+/* ==========================================================================
+   THEME TOKENS — one semantic layer, two environments.
+   Components consume the SEMANTIC names (or the legacy aliases beneath them,
+   which every existing rule already uses). Dark and light are the same
+   product; only the environment changes.
+   ========================================================================== */
 :root{
-  --ink:#1c2119; --ink-2:#2c342a; --muted:#6b7469; --line:#dfe3da;
-  --paper:#ffffff; --sand:#f5f6f2; --band:#eef1ea;
-  --grn:#3d6b3a; --grn-d:#2c5029; --grn-l:#e8f0e5;
-  --gold:#c9a227; --gold-l:#fdf6e0;
-  --red:#a8332a; --red-l:#fbeceb;
-  --blue:#2f5d7c; --blue-l:#e9f0f5;
+  color-scheme:light;
+  /* semantic */
+  --bg-app:#f5f6f2; --bg-surface:#ffffff; --bg-elevated:#eef1ea;
+  --bg-header:#1c2119;                      /* the cockpit strip stays dark in both themes */
+  --border:#dfe3da; --border-strong:#c9cfc3;
+  --text-primary:#1c2119; --text-secondary:#6b7469;
+  --accent:#ee4f9a; --accent-hover:#d63f87; --accent-soft:#fdeaf4;
+  --success:#3d6b3a; --success-strong:#2c5029; --success-soft:#e8f0e5;
+  --warning:#c9a227; --warning-soft:#fdf6e0;
+  --danger:#a8332a; --danger-soft:#fbeceb;
+  --info:#2f5d7c; --info-soft:#e9f0f5;
   --shadow:0 1px 2px rgba(28,33,25,.06),0 4px 14px rgba(28,33,25,.05);
+  /* legacy aliases — the 800+ existing rules keep working untouched */
+  --ink:var(--text-primary); --ink-2:#2c342a; --muted:var(--text-secondary); --line:var(--border);
+  --paper:var(--bg-surface); --sand:var(--bg-app); --band:var(--bg-elevated);
+  --grn:var(--success); --grn-d:var(--success-strong); --grn-l:var(--success-soft);
+  --gold:var(--warning); --gold-l:var(--warning-soft);
+  --red:var(--danger); --red-l:var(--danger-soft);
+  --blue:var(--info); --blue-l:var(--info-soft);
+}
+html[data-theme="dark"]{
+  color-scheme:dark;
+  --bg-app:#0c0f0d; --bg-surface:#131714; --bg-elevated:#1a1f1b;
+  --bg-header:#090c0a;
+  --border:#232a25; --border-strong:#313a33;
+  --text-primary:#edf1ec; --text-secondary:#98a39a;
+  --accent:#ee4f9a; --accent-hover:#f36eae; --accent-soft:rgba(238,79,154,.14);
+  --success:#79c47b; --success-strong:#93d494; --success-soft:rgba(121,196,123,.13);
+  --warning:#d9bd55; --warning-soft:rgba(217,189,85,.13);
+  --danger:#e58d82; --danger-soft:rgba(229,141,130,.13);
+  --info:#82b4d8; --info-soft:rgba(130,180,216,.13);
+  --shadow:0 1px 2px rgba(0,0,0,.35),0 6px 20px rgba(0,0,0,.30);
+  --ink-2:#d4dbd2;
+}
+/* Paper is paper: whatever the screen theme, anything printed uses light ink. */
+@media print{
+  html[data-theme="dark"]{ color-scheme:light;
+    --bg-app:#fff; --bg-surface:#fff; --bg-elevated:#eef1ea; --bg-header:#1c2119;
+    --border:#dfe3da; --border-strong:#c9cfc3;
+    --text-primary:#1c2119; --text-secondary:#6b7469;
+    --accent-soft:#fdeaf4;
+    --success:#3d6b3a; --success-strong:#2c5029; --success-soft:#e8f0e5;
+    --warning:#c9a227; --warning-soft:#fdf6e0;
+    --danger:#a8332a; --danger-soft:#fbeceb;
+    --info:#2f5d7c; --info-soft:#e9f0f5;
+    --shadow:none; --ink-2:#2c342a;
+  }
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
@@ -31,7 +83,7 @@ h3{font-size:16px;font-weight:650}
    Lower deck = where you can go (nav) + what you can do (Tools). Action only.
    Doctrine: nothing on the strip is lit while everything is normal.
    ========================================================================== */
-header{background:var(--ink);color:#f3f5f0;padding:0}
+header{background:var(--bg-header);color:#f3f5f0;padding:0}
 header .wrap{position:relative}
 .hspace{flex:1}   /* generic spacer — modal footers and toolbars lean on it */
 
@@ -46,7 +98,7 @@ header h1.brand{margin:0;flex:0 0 auto;font-size:13.5px;font-weight:650;line-hei
 .brandbtn{display:flex;align-items:center;gap:9px;background:none;border:0;padding:0;
   margin:0;font:inherit;color:#9aa596;cursor:pointer;transition:color .12s}
 .brandbtn:hover{color:#e6eae2;background:none;border:0}
-.brandbtn:focus-visible{outline:2px solid var(--gold);outline-offset:3px;border-radius:5px}
+.brandbtn:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:5px}
 .brandbtn svg{display:block;flex:0 0 auto}
 .wm{white-space:nowrap}
 .wm b{font-weight:inherit}
@@ -72,7 +124,7 @@ header h1.brand{margin:0;flex:0 0 auto;font-size:13.5px;font-weight:650;line-hei
   font:inherit;color:inherit;text-align:left;white-space:nowrap;transition:background .12s}
 button.rd{cursor:pointer}
 button.rd:hover{background:#262d23;border:0}
-button.rd:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+button.rd:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .rd .rail{flex:0 0 auto;width:3px;height:26px;border-radius:2px;background:#4a5346;
   transition:background .14s}
 .rd .txt{display:flex;flex-direction:column;min-width:0}
@@ -92,7 +144,7 @@ button.rd:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
   font:inherit;font-size:12.5px;font-weight:650;color:#e8a89f;cursor:pointer;
   text-decoration:underline;text-underline-offset:3px}
 .hretry:hover{background:none;border:0;color:#f4d7d3}
-.hretry:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+.hretry:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 /* Backup is overdue and the cloud is not holding a copy: the one red in a resting header. */
 .rd .warndot{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:#e8a89f;
   margin-left:1px;align-self:center}
@@ -103,7 +155,7 @@ nav button{background:transparent;border:none;border-radius:8px 8px 0 0;color:#c
   padding:9px 14px;font-size:13.5px;line-height:16px;font-weight:650;cursor:pointer;
   border-bottom:3px solid transparent;white-space:nowrap}
 nav button:hover{color:#e6eae2;background:#262d23}
-nav button.on{background:var(--sand);color:var(--ink);border-bottom-color:var(--gold)}
+nav button.on{background:var(--sand);color:var(--ink);border-bottom-color:var(--accent)}
 
 /* the one control on the lower deck */
 .hbtns{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:0 0 auto;padding-bottom:5px}
@@ -133,7 +185,7 @@ nav button.on{background:var(--sand);color:var(--ink);border-bottom-color:var(--
   background:transparent;font:inherit;font-size:13px;font-weight:650;color:#f3f5f0;
   white-space:nowrap;cursor:pointer;font-variant-numeric:tabular-nums}
 .master:hover{background:#262d23;border:0}
-.master:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+.master:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .master .rail{flex:0 0 auto;width:3px;height:22px;border-radius:2px;background:#4a5346}
 .master .mtxt{margin-left:-3px}
 .master.s-quiet{color:#a9b3a5}
@@ -182,13 +234,13 @@ nav button.on{background:var(--sand);color:var(--ink);border-bottom-color:var(--
 
 button,.btn{font:inherit;font-size:13.5px;font-weight:600;border-radius:7px;padding:8px 13px;
   border:1px solid var(--line);background:var(--paper);color:var(--ink);cursor:pointer;transition:.12s;white-space:nowrap}
-button:hover{border-color:#b9c2b2;background:#fbfcfa}
-button.p{background:var(--grn);border-color:var(--grn);color:#fff}
-button.p:hover{background:var(--grn-d);border-color:var(--grn-d)}
+button:hover{border-color:var(--border-strong);background:var(--bg-elevated)}
+button.p{background:var(--accent);border-color:var(--accent);color:#fff}
+button.p:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
 button.gh{background:transparent;border-color:#4a5346;color:#e6eae2}
 button.gh:hover{background:#2c342a;border-color:#69735f}
 button.sm{padding:5px 9px;font-size:12.5px;font-weight:550}
-button.danger{color:var(--red);border-color:#e6c8c5}
+button.danger{color:var(--red);border-color:var(--danger)}
 button.danger:hover{background:var(--red-l)}
 
 section{margin:24px 0}
@@ -198,8 +250,8 @@ section{margin:24px 0}
 .sechead .hint{font-size:12.5px;color:var(--muted)}
 
 .verdict{border-radius:11px;padding:20px 22px;display:flex;gap:22px;align-items:center;flex-wrap:wrap;border:1px solid}
-.verdict.pass{background:var(--grn-l);border-color:#bcd3b6}
-.verdict.fail{background:var(--red-l);border-color:#eec9c6}
+.verdict.pass{background:var(--grn-l);border-color:var(--success)}
+.verdict.fail{background:var(--red-l);border-color:var(--danger)}
 .verdict.wait{background:var(--band);border-color:var(--line)}
 .vmark{font-size:30px;font-weight:800;letter-spacing:-.02em;line-height:1}
 .verdict.pass .vmark{color:var(--grn-d)}.verdict.fail .vmark{color:var(--red)}.verdict.wait .vmark{color:var(--muted)}
@@ -217,7 +269,7 @@ section{margin:24px 0}
 .tile .sub{font-size:12.5px;color:var(--muted);margin-top:4px;overflow-wrap:anywhere}
 .tile.ok .val{color:var(--grn-d)}.tile.bad .val{color:var(--red)}
 .tile.click{cursor:pointer;transition:.12s}
-.tile.click:hover{border-color:#b9c2b2;box-shadow:0 5px 18px rgba(28,33,25,.13);transform:translateY(-1px)}
+.tile.click:hover{border-color:var(--border-strong);box-shadow:var(--shadow);transform:translateY(-1px)}
 .bar{height:5px;border-radius:3px;background:var(--band);margin-top:9px;overflow:hidden}
 .bar i{display:block;height:100%;border-radius:3px;background:var(--grn)}
 .bar i.bad{background:var(--red)}
@@ -253,7 +305,7 @@ a.emplink:hover{color:var(--grn-d);border-bottom-color:var(--grn)}
 .roster{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;margin-bottom:4px}
 .rtools{display:flex;gap:8px;align-items:center;margin-bottom:12px}
 .rtools input{flex:1 1 auto;min-width:0}
-.rtools button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.rtools button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
 .rgroup{margin:16px 0 8px;display:flex;align-items:baseline;gap:9px}
 .rgroup h3{margin:0}
 .rgroup .n{font-size:12px;color:var(--muted)}
@@ -270,7 +322,7 @@ a.emplink:hover{color:var(--grn-d);border-bottom-color:var(--grn)}
 .rcard .nmrow{display:flex;align-items:center;gap:7px;min-width:0}
 /* team pulse */
 .pulse{display:grid;grid-template-columns:minmax(300px,1.4fr) repeat(auto-fit,minmax(150px,1fr));grid-auto-flow:dense;gap:12px;margin-bottom:14px}
-.pulse .hero{grid-row:span 2;background:var(--ink);color:#f3f5f0;border-radius:13px;padding:20px 22px;display:flex;flex-direction:column;justify-content:space-between;min-height:190px}
+.pulse .hero{grid-row:span 2;background:var(--bg-header);color:#f3f5f0;border-radius:13px;padding:20px 22px;display:flex;flex-direction:column;justify-content:space-between;min-height:190px}
 @media(max-width:700px){.pulse{grid-template-columns:1fr 1fr}.pulse .hero{grid-column:1/-1;grid-row:auto}}
 .pulse .hero .lab{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:#b9c2b2}
 .pulse .hero .big{font-size:48px;font-weight:700;letter-spacing:-.03em;line-height:1;margin:8px 0 6px}
@@ -300,7 +352,7 @@ a.emplink:hover{color:var(--grn-d);border-bottom-color:var(--grn)}
 .feed .ev{display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-top:1px solid var(--line);font-size:13px}
 .feed .ev:first-child{border-top:none}
 .feed .ev .w{font-size:11px;color:var(--muted);font-family:ui-monospace,Menlo,Consolas,monospace;white-space:nowrap;padding-top:2px}
-.segs.pulse-per button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.segs.pulse-per button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
 /* 30,000 ft */
 .flow{display:flex;gap:0;align-items:stretch;flex-wrap:wrap;margin-bottom:14px}
 .flow .fstep{flex:1 1 150px;min-width:150px;background:var(--paper);border:1px solid var(--line);border-radius:11px;padding:13px 15px;box-shadow:var(--shadow);position:relative;margin-right:26px}
@@ -337,7 +389,7 @@ nav button.moreBtn{opacity:.85}
   #subnav{gap:8px;margin:12px 0 -6px}
   #subnav button{min-height:44px;padding:5px 15px;font-size:13.5px}
 }
-#subnav button.on{background:var(--ink);border-color:var(--ink);color:#f3f5f0}
+#subnav button.on{background:var(--accent);border-color:var(--accent);color:#fff}
 .homesw{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
 .homesw .note{margin-right:2px}
 .hverdict{background:var(--paper);border:1px solid var(--line);border-radius:11px;box-shadow:var(--shadow);padding:13px 15px;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
@@ -369,7 +421,7 @@ details.hcheck .hbody{padding:0 14px 12px}
 .ephead .meta{font-size:13px;color:var(--muted);margin-top:2px}
 .ephead .pills{margin-top:6px;display:flex;gap:5px;flex-wrap:wrap}
 .epsecs{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 14px}
-.epsecs button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.epsecs button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
 .tl{border-left:2px solid var(--line);margin:4px 0 0 9px;padding-left:16px}
 .tl .ev{position:relative;padding:5px 0 11px}
 .tl .ev:before{content:"";position:absolute;left:-22px;top:10px;width:9px;height:9px;border-radius:50%;background:#b9c2b2;border:2px solid var(--paper)}
@@ -759,7 +811,7 @@ nav button.lock{opacity:.35;cursor:not-allowed}
 .recent .r:last-child{border-bottom:none}
 .recent .r .g{flex:1}
 .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:80;
-  background:var(--ink);color:#fff;padding:11px 18px;border-radius:9px;font-size:13.5px;font-weight:600;
+  background:var(--bg-header);color:#f3f5f0;padding:11px 18px;border-radius:9px;border:1px solid var(--border-strong);font-size:13.5px;font-weight:600;
   box-shadow:0 6px 20px rgba(28,33,25,.3);opacity:0;pointer-events:none;transition:opacity .18s}
 .toast.on{opacity:1}
 /* On a phone the type/source controls need the full width or the last option clips. */
@@ -13945,12 +13997,20 @@ document.addEventListener('keydown',function(e){ if(e.key==='Escape') closePops(
 // Freshness ("Live · 2m") drifts even when nothing repaints — nudge it along.
 setInterval(function(){ if(document.getElementById('rdSync')) renderHdrStrip(); },60000);
 
+/* ---- theme: dark is the primary direction; the choice persists per device ---- */
+function themeGet(){ try{ return localStorage.getItem('alp_theme_v1')||'dark'; }catch(e){ return 'dark'; } }
+function themeSet(t){ try{ localStorage.setItem('alp_theme_v1',t); }catch(e){}
+  document.documentElement.setAttribute('data-theme',t); renderHdrTools(); }
+function themeToggle(){ themeSet(themeGet()==='dark'?'light':'dark'); }
+
 // Exports carry whatever the person can see — and nothing they cannot.
 function renderHdrTools(){
   const el=document.getElementById('hdrTools'); if(!el) return;
   let items='<div class="phead">This page</div>'+
     '<button role="menuitem" onclick="closePops();window.print()">Print / PDF</button>'+
-    '<div class="pnote">Ctrl&#8202;+&#8202;P does the same thing.</div>';
+    '<div class="pnote">Ctrl&#8202;+&#8202;P does the same thing.</div>'+
+    '<div class="phead">Appearance</div>'+
+    '<button role="menuitem" onclick="themeToggle()">'+(themeGet()==='dark'?'☀️ Switch to light theme':'🌙 Switch to dark theme')+'</button>';
   let data='';
   if(can('export_data')||scopeOf('sales')!=='none') data+='<button role="menuitem" onclick="closePops();exportCSV()">Export CSV</button>';
   if(can('admin_security')) data+='<button role="menuitem" onclick="closePops();backup()">Backup all</button>';
