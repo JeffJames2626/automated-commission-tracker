@@ -293,6 +293,14 @@ th.sortable{cursor:pointer;user-select:none}
 th.sortable:hover{color:var(--ink)}
 th.sortable .arr{font-size:9px;opacity:.85}
 
+/* Roster bulk selection + action bar */
+.bulkbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:10px;
+  padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--band)}
+.bulkbar .note{margin-left:2px}
+.bulkbar select{max-width:150px}
+td.selcell,th.selcell{width:26px;padding-right:2px}
+.clisel{cursor:pointer;width:15px;height:15px;accent-color:var(--grn-d)}
+
 /* ==========================================================================
    OWNER COMMAND CENTER — the 30,000 ft KPI stage.
    One surface, six numbers, three lenses. Hierarchy comes from type scale,
@@ -1515,6 +1523,7 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
             <option value="">Any time</option><option value="30">Last 30 days</option>
             <option value="90">Last 90 days</option><option value="365">Last year</option></select></div>
         </div>
+        <div id="cliBulkBar" class="bulkbar" style="display:none"></div>
       </div>
       <div class="scroll tallscroll"><table id="clientTable"></table></div>
     </div>
@@ -2789,6 +2798,33 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
       <button onclick="gearBrief()" id="gBriefBtn">Claude, brief this route</button>
       <span class="hspace"></span>
       <button onclick="closeGear()">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="bulkSvcModal" onclick="if(event.target===this)closeBulkSvc()">
+  <div class="sheet">
+    <div class="top">
+      <h3>&#128197; Schedule a service</h3>
+      <button class="x" onclick="closeBulkSvc()" title="Close (Esc)">&times;</button>
+    </div>
+    <div class="body">
+      <div class="note" id="bsWho" style="margin-bottom:10px"></div>
+      <div class="frow">
+        <div><label>Service</label><select id="bsSvc"></select></div>
+        <div><label>Day</label><input type="date" id="bsDate"></div>
+        <div><label>First stop</label><input type="time" id="bsTime" value="08:00"></div>
+        <div><label>Minutes per stop</label><input type="number" id="bsMins" value="30" step="5" min="10"></div>
+        <div><label>Assigned to</label><select id="bsRep"></select></div>
+      </div>
+      <div class="note" style="margin-top:10px">Downloads one calendar file with an event per client — open it and
+        Google Calendar or Outlook imports the whole day. Scheduling of record still lives in Service Autopilot;
+        this plans the day, it does not change SA.</div>
+    </div>
+    <div class="foot">
+      <button class="p" onclick="bulkSvcGo()">Download the day (.ics)</button>
+      <span class="hspace"></span>
+      <button onclick="closeBulkSvc()">Cancel</button>
     </div>
   </div>
 </div>
@@ -8950,6 +8986,182 @@ function cliSort(k){
   else CLI_SORT={key:k, dir:(k==='name'||k==='type'||k==='city'||k==='src'||k==='owner')?1:-1};
   renderClients();
 }
+
+/* ============================================================
+   ROSTER BULK ACTIONS — select clients, act on all of them
+   ------------------------------------------------------------
+   Selection is keyed by cliKey (SA UserName, name as fallback)
+   so it survives filtering, sorting, and re-renders. Checkbox
+   clicks repaint only the action bar — never the table — so the
+   scroll position holds. Actions: book the selection as today's
+   OSC route (lands on the Pipeline tab, same as the gear),
+   download a service day as one .ics, open the driving route,
+   or copy the list.
+   ============================================================ */
+let CLI_SEL={};             // key -> 1
+let CLI_FILTERED_KEYS=[];   // every key the current filters allow, beyond the 400 drawn
+function cliSelClients(){
+  const byKey={}; CLIENTS.forEach(c=>{ byKey[cliKey(c)]=byKey[cliKey(c)]||c; });
+  return Object.keys(CLI_SEL).map(k=>byKey[k]).filter(Boolean);
+}
+function cliToggleSel(el){
+  const k=el.dataset.k;
+  if(el.checked) CLI_SEL[k]=1; else delete CLI_SEL[k];
+  const all=document.getElementById('cliSelAll');
+  if(all) all.checked=CLI_FILTERED_KEYS.length>0 && CLI_FILTERED_KEYS.every(x=>CLI_SEL[x]);
+  renderCliBulkBar();
+}
+function cliSelAllToggle(on){
+  CLI_FILTERED_KEYS.forEach(k=>{ if(on) CLI_SEL[k]=1; else delete CLI_SEL[k]; });
+  document.querySelectorAll('#clientTable input.clisel').forEach(el=>{ el.checked=!!CLI_SEL[el.dataset.k]; });
+  renderCliBulkBar();
+}
+function cliSelClear(){
+  CLI_SEL={};
+  document.querySelectorAll('#clientTable input.clisel').forEach(el=>{ el.checked=false; });
+  const all=document.getElementById('cliSelAll'); if(all) all.checked=false;
+  renderCliBulkBar();
+}
+function renderCliBulkBar(){
+  const bar=document.getElementById('cliBulkBar'); if(!bar) return;
+  const n=Object.keys(CLI_SEL).length;
+  if(!n){ bar.style.display='none'; bar.innerHTML=''; return; }
+  const prev=document.getElementById('cbRep'); const cur=prev?prev.value:'';
+  bar.style.display='';
+  bar.innerHTML='<b>'+n+' selected</b>'+
+    '<button class="sm" onclick="cliSelClear()">Clear</button>'+
+    '<span class="note">Salesperson</span><select id="cbRep"></select>'+
+    '<button class="sm p" onclick="cliBulkOscUI()">&#128205; Add to OSC route today</button>'+
+    '<button class="sm" onclick="openBulkSvc()">&#128197; Schedule a service&hellip;</button>'+
+    '<button class="sm" onclick="cliBulkRoute()">&#128506; Route in Google Maps</button>'+
+    '<button class="sm" onclick="cliBulkCopy()">&#128203; Copy list</button>';
+  fillPeople('cbRep', cur||GLOBAL.lastRep||'');
+}
+
+// The bookable core, separated from the UI so it can be tested: chained
+// times, one OSC per client, and anyone with an estimate already booked
+// is skipped rather than double-booked.
+function cliBulkBookOSC(names,rep,date,startMins,perMins){
+  const pending={}; OSCS.forEach(o=>{ if(o.outcome==='booked') pending[norm(o.client)]=1; });
+  const byName={}; CLIENTS.forEach(c=>{ const k=norm(c.n); if(k&&!byName[k]) byName[k]=c; });
+  const booked=[], skipped=[];
+  let t=startMins;
+  names.forEach(n=>{
+    if(pending[norm(n)]){ skipped.push(n); return; }
+    const c=byName[norm(n)];
+    const hh=String(Math.floor(t/60)%24).padStart(2,'0'), mm=String(Math.round(t%60)).padStart(2,'0');
+    booked.push({id:uid('o'),rep,client:n,when:date+'T'+hh+':'+mm+':00',mins:perMins||45,
+      addr:c?gearAddr(c):'', want:'', outcome:'booked', booked:todayISO(),
+      note:'Added from the client roster'});
+    t+=perMins||45;
+  });
+  return {booked,skipped};
+}
+function cliBulkOscUI(){
+  const sel=cliSelClients();
+  if(!sel.length){ toast('Nothing selected'); return; }
+  const rep=(document.getElementById('cbRep')||{}).value;
+  if(!rep){ toast('Pick a salesperson first'); return; }
+  if(sel.length>12){ toast('An OSC day caps at 12 stops — narrow the selection'); return; }
+  // first stop: the next quarter-hour, but never before 8:30
+  const now=new Date();
+  let start=Math.max(8.5*60, Math.ceil((now.getHours()*60+now.getMinutes())/15)*15);
+  const R=cliBulkBookOSC(sel.map(c=>c.n), rep, todayISO(), start, 45);
+  if(!R.booked.length){ toast('Every one of them already has an estimate booked'); return; }
+  if(!confirm('Book '+R.booked.length+' estimate'+(R.booked.length===1?'':'s')+' for today?'+
+    (R.skipped.length?BR2+R.skipped.length+' already booked and skipped: '+R.skipped.join(', ')+'.':'')+
+    BR2+'They land on the Pipeline tab, each with its own calendar link.')) return;
+  R.booked.forEach(o=>OSCS.push(o)); save(K_OSC,OSCS);
+  GLOBAL.lastRep=rep; save(K_GLOBAL,GLOBAL);
+  cliSelClear(); render();
+  toast('Booked '+R.booked.length+' — Pipeline tab has the calendar links');
+}
+function cliBulkRoute(){
+  const sel=cliSelClients();
+  if(!sel.length){ toast('Nothing selected'); return; }
+  const withAddr=sel.filter(c=>c.addr);
+  if(!withAddr.length){ toast('None of the selected clients have an address on file'); return; }
+  if(withAddr.length>10) toast('Google Maps takes 10 stops — routing the first 10');
+  const pts=withAddr.slice(0,10).map(c=>encodeURIComponent(gearAddr(c)));
+  window.open('https://www.google.com/maps/dir/'+pts.join('/'),'_blank','noopener');
+}
+function cliBulkCopy(){
+  const sel=cliSelClients();
+  if(!sel.length){ toast('Nothing selected'); return; }
+  const text=sel.map(c=>[c.n, gearAddr(c), c.ph||'', c.em||''].filter(Boolean).join(' — ')).join('\n');
+  const done=()=>toast('Copied '+sel.length+' client'+(sel.length===1?'':'s'));
+  if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done,()=>prompt('Copy the list:',text));
+  else prompt('Copy the list:',text);
+}
+
+/* ---- schedule a service for the selection: one .ics, one event per client ---- */
+function nextMonday(){
+  const d=dObj(todayISO());
+  const add=((8-d.getDay())%7)||7;      // always NEXT week's Monday, even on a Monday
+  return addDays(todayISO(),add);
+}
+function icsForMany(evs){
+  const CRLF=String.fromCharCode(13)+String.fromCharCode(10);
+  const st=d=>gcalStamp(d.toISOString()).slice(0,15)+'Z';
+  const esc2=t=>String(t||'').replace(/[\\;,]/g,m=>'\\'+m).replace(/\n/g,'\\n');
+  const L=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//ALP Sales Tracker//EN','CALSCALE:GREGORIAN'];
+  evs.forEach(o=>{
+    const s=new Date(o.when), e=new Date(s.getTime()+(+o.mins||30)*60000);
+    L.push('BEGIN:VEVENT','UID:'+o.id+'@alp-tracker','DTSTAMP:'+st(new Date()),
+      'DTSTART:'+st(s),'DTEND:'+st(e),'SUMMARY:'+esc2(o.title),
+      'DESCRIPTION:'+esc2(o.details),'LOCATION:'+esc2(o.location),'END:VEVENT');
+  });
+  L.push('END:VCALENDAR');
+  return L.join(CRLF);
+}
+// The plannable core, also separated for the tests: chained events in
+// selection order, every client gets exactly one.
+function cliBulkSvcEvents(clients,svc,date,startMins,perMins,repName){
+  let t=startMins;
+  return clients.map(c=>{
+    const hh=String(Math.floor(t/60)%24).padStart(2,'0'), mm=String(Math.round(t%60)).padStart(2,'0');
+    const ev={id:uid('ev'), title:svc+' — '+c.n, when:date+'T'+hh+':'+mm+':00', mins:perMins,
+      location:gearAddr(c),
+      details:svc+' for '+c.n+'.'+(repName?String.fromCharCode(10)+'Assigned: '+repName:'')+
+        String.fromCharCode(10)+'Planned from the ALP Sales Tracker roster — scheduling of record is Service Autopilot.'};
+    t+=perMins;
+    return ev;
+  });
+}
+function openBulkSvc(){
+  const sel=cliSelClients();
+  if(!sel.length){ toast('Nothing selected'); return; }
+  const names=sel.map(c=>c.n);
+  document.getElementById('bsWho').innerHTML='<b>'+sel.length+' client'+(sel.length===1?'':'s')+'</b> — '+
+    esc(names.slice(0,6).join(', '))+(names.length>6?' … and '+(names.length-6)+' more':'');
+  const sv=document.getElementById('bsSvc');
+  if(!sv.options.length){
+    const seen={}, cats={};
+    SA_SERVICES.forEach(s=>{ if(seen[s.n]) return; seen[s.n]=1; (cats[s.c]=cats[s.c]||[]).push(s.n); });
+    sv.innerHTML=Object.keys(cats).map(c=>'<optgroup label="'+esc(c)+'">'+
+      cats[c].map(n=>'<option'+(n==='Weekly Mowing'?' selected':'')+'>'+esc(n)+'</option>').join('')+'</optgroup>').join('');
+  }
+  const d=document.getElementById('bsDate'); if(!d.value) d.value=nextMonday();
+  fillPeople('bsRep', GLOBAL.lastRep||'');
+  document.getElementById('bulkSvcModal').classList.add('on');
+}
+function closeBulkSvc(){ document.getElementById('bulkSvcModal').classList.remove('on'); }
+function bulkSvcGo(){
+  const sel=cliSelClients();
+  if(!sel.length){ toast('Nothing selected'); closeBulkSvc(); return; }
+  const svc=document.getElementById('bsSvc').value;
+  const date=document.getElementById('bsDate').value;
+  if(!date){ toast('Pick a day'); return; }
+  const tm=document.getElementById('bsTime').value||'08:00';
+  const startMins=(+tm.slice(0,2))*60+(+tm.slice(3,5));
+  const perMins=Math.max(10,Math.round(pNum(document.getElementById('bsMins').value))||30);
+  const rp=person(document.getElementById('bsRep').value);
+  const evs=cliBulkSvcEvents(sel,svc,date,startMins,perMins,rp?rp.name:'');
+  dl(new Blob([icsForMany(evs)],{type:'text/calendar;charset=utf-8'}),
+     'alp-'+norm(svc).replace(/\s+/g,'-').slice(0,24)+'-'+date+'.ics');
+  closeBulkSvc();
+  toast(evs.length+' event'+(evs.length===1?'':'s')+' in the file — open it and your calendar imports the day');
+}
 function renderClients(){
   const clients=CLIENTS.filter(c=>isClient(c)&&!c.gone);
   const leads=CLIENTS.filter(c=>isLead(c)&&!c.gone);
@@ -9038,21 +9250,29 @@ function renderClients(){
   document.getElementById('cliCount').textContent=rows.length+(rows.length!==CLIENTS.length?' of '+CLIENTS.length:'');
 
   const t=document.getElementById('clientTable');
+  CLI_FILTERED_KEYS=rows.map(cliKey);
   if(!rows.length){
     t.innerHTML='<tbody><tr><td class="empty">'+(CLIENTS.length?'Nothing matches.':'No roster yet — run a sync above.')+'</td></tr></tbody>';
+    renderCliBulkBar();
     return;
   }
+  const allSel=CLI_FILTERED_KEYS.length>0 && CLI_FILTERED_KEYS.every(k=>CLI_SEL[k]);
   const th=(k,lab,cls)=>'<th class="sortable'+(cls?' '+cls:'')+'" onclick="cliSort(\''+k+'\')" title="Sort by '+lab+'">'+lab+
     (CLI_SORT.key===k?' <span class="arr">'+(CLI_SORT.dir>0?'▲':'▼')+'</span>':'')+'</th>';
-  let x='<thead><tr>'+th('name','Name')+th('type','Type')+th('city','City')+th('since','Since / acquired')+th('src','Source')+
+  let x='<thead><tr><th class="selcell"><input type="checkbox" class="clisel" id="cliSelAll"'+(allSel?' checked':'')+
+    ' onclick="cliSelAllToggle(this.checked)" title="Select everything the filters allow — all '+rows.length+'"></th>'+
+    th('name','Name')+th('type','Type')+th('city','City')+th('since','Since / acquired')+th('src','Source')+
     th('owner','Owner')+th('inv','Last invoice','num')+th('billed','Billed 12 mo','num')+th('sales','Sales logged','num')+'</tr></thead><tbody>';
   rows.slice(0,400).forEach(c=>{
     const nSales=saleCount[norm(c.n)]||0;
     const kpi=billedBy[norm(c.n)];
+    const selK=cliKey(c);
     const repId=clientRepId(c);
     const lead=isLead(c);
     const age=lead&&c.lead?Math.round((dObj(todayISO())-dObj(c.lead))/86400000):null;
     x+='<tr'+(c.gone?' style="opacity:.45"':'')+'>'+
+      '<td class="selcell"><input type="checkbox" class="clisel" data-k="'+esc(selK)+'"'+(CLI_SEL[selK]?' checked':'')+
+        ' onchange="cliToggleSel(this)"></td>'+
       '<td><a href="#" onclick="openClient('+JSON.stringify(c.n).replace(/"/g,'&quot;')+');return false;"><b>'+
         esc(c.n)+'</b></a>'+(mapHref(c)?'<a class="maplink ico" href="'+mapHref(c)+'" target="_blank" rel="noopener" title="'+esc(mapQuery(c))+' — open in Google Maps">📍</a>':'')+
         (lead?' <span class="pill mid">LEAD</span>':'')+
@@ -9069,8 +9289,10 @@ function renderClients(){
         (kpi&&kpi.visits>1?'<div class="note">'+kpi.visits+' visits</div>':'')+'</td>'+
       '<td class="num">'+(nSales?nSales:'<span class="note">none</span>')+'</td></tr>';
   });
-  if(rows.length>400) x+='<tr><td colspan="9" class="empty">Showing 400 of '+rows.length+'.</td></tr>';
+  if(rows.length>400) x+='<tr><td colspan="10" class="empty">Showing 400 of '+rows.length+
+    '.<div class="note">Select-all still selects every one of the '+rows.length+' the filters allow.</div></td></tr>';
   t.innerHTML=x+'</tbody>';
+  renderCliBulkBar();
 }
 
 // Who owns the open leads, how stale they are, and what has converted since syncing began.

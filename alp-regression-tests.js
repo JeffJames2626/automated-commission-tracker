@@ -3116,6 +3116,35 @@
       } else {
         results.push({name:'CLIKPI client KPI engine exists', expected:true, actual:false, pass:false});
       }
+
+      /* ---------- CLIBULK: roster bulk actions — select clients, act on all ---------- */
+      if (typeof cliBulkBookOSC==='function'){
+        CLIENTS=[
+          {n:'Route One', u:'R1', ct:'Client', at:'Residential', addr:'1 A St', city:'Spokane'},
+          {n:'Route Two', u:'R2', ct:'Client', at:'Residential', addr:'2 B St', city:'Spokane'},
+          {n:'Route Three', u:'R3', ct:'Client', at:'Residential', addr:'3 C St', city:'Spokane'}
+        ];
+        OSCS=[{id:'oX', rep:'TP', client:'Route Two', when:'2099-01-01T09:00:00', mins:45,
+               addr:'', want:'', outcome:'booked', booked:'2099-01-01', note:''}];
+        var RB=cliBulkBookOSC(['Route One','Route Two','Route Three'],'TP','2099-02-01',510,45);
+        check('CLIBULK books everyone without a pending estimate', 2, RB.booked.length);
+        check('CLIBULK skips a client already booked', 'Route Two', RB.skipped[0]||'');
+        check('CLIBULK first stop lands at the start time', '2099-02-01T08:30:00', RB.booked[0].when);
+        check('CLIBULK stops chain 45 minutes apart', '2099-02-01T09:15:00', RB.booked[1].when);
+        check('CLIBULK the address rides along', '1 A St, Spokane', RB.booked[0].addr);
+        checkTrue('CLIBULK every booking is a booked outcome', RB.booked.every(function(o){return o.outcome==='booked';}), 'outcomes');
+        var evs=cliBulkSvcEvents(CLIENTS,'Weekly Mowing','2099-02-02',480,30,'Test Rep');
+        check('CLIBULK service day has one event per client', 3, evs.length);
+        check('CLIBULK event titles carry the service', 'Weekly Mowing — Route One', evs[0].title);
+        check('CLIBULK service events chain by the visit length', '2099-02-02T09:00:00', evs[2].when);
+        var ics=icsForMany(evs);
+        check('CLIBULK the .ics holds every event', 3, (ics.match(/BEGIN:VEVENT/g)||[]).length);
+        checkTrue('CLIBULK the .ics is one well-formed calendar', ics.indexOf('BEGIN:VCALENDAR')===0 && /END:VCALENDAR$/.test(ics), 'wrapper');
+        var nm=nextMonday();
+        checkTrue('CLIBULK next Monday is a Monday in the future', dObj(nm).getDay()===1 && nm>todayISO(), nm);
+      } else {
+        results.push({name:'CLIBULK roster bulk actions exist', expected:true, actual:false, pass:false});
+      }
     } catch(e){
       results.push({name:'HARNESS ERROR', expected:'no throw', actual:String(e&&e.message||e), pass:false});
     } finally {
