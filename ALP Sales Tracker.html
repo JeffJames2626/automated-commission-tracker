@@ -275,6 +275,24 @@ section{margin:24px 0}
 .bar i{display:block;height:100%;border-radius:3px;background:var(--grn)}
 .bar i.bad{background:var(--red)}
 
+/* Client KPI cards — top 3 / bottom 3 per measure */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}
+.kcard{background:var(--paper);border:1px solid var(--line);border-radius:11px;padding:13px 15px;box-shadow:var(--shadow);min-width:0}
+.kcard .lab{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.kcard .khint{font-size:12px;color:var(--muted);margin-top:2px}
+.kcard .kgrp{margin-top:10px}
+.kcard .kgt{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
+.kcard .kgt.top{color:var(--grn-d)} .kcard .kgt.low{color:var(--red)}
+.kcard .krow{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:4px 0;border-bottom:1px dashed var(--line);font-size:13px;min-width:0}
+.kcard .krow:last-child{border-bottom:0}
+.kcard .krow .kn{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kcard .krow .kv{white-space:nowrap;font-weight:650}
+.kcard .krow .note{font-weight:400}
+.kcard .kempty{font-size:12.5px;color:var(--muted);padding:4px 0}
+th.sortable{cursor:pointer;user-select:none}
+th.sortable:hover{color:var(--ink)}
+th.sortable .arr{font-size:9px;opacity:.85}
+
 /* ==========================================================================
    OWNER COMMAND CENTER — the 30,000 ft KPI stage.
    One surface, six numbers, three lenses. Hierarchy comes from type scale,
@@ -1473,6 +1491,36 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
   </section>
 
   <section>
+    <div class="sechead"><h3>Client KPIs — VIPs &amp; watchlist</h3>
+      <span class="hint">Top 3 and bottom 3 on each measure, last 12 months of billing. Click a name to open their page.</span></div>
+    <div class="kpis" id="cliKpis"></div>
+  </section>
+
+  <section>
+    <div class="card">
+      <div class="pad" style="padding-bottom:8px">
+        <div class="sechead"><h3>Roster <span class="pill n" id="cliCount">0</span></h3></div>
+        <div class="frow" style="margin-top:6px">
+          <div><label>Search</label><input id="cliSearch" placeholder="name, city, email…" oninput="renderClients()"></div>
+          <div><label>Salesperson</label><select id="cliRep" onchange="renderClients()"></select></div>
+          <div><label>Population</label><select id="cliPop" onchange="renderClients()">
+            <option value="Client">Clients</option><option value="Lead">Leads</option>
+            <option value="">Both</option></select></div>
+          <div><label>Type</label><select id="cliType" onchange="renderClients()">
+            <option value="">All</option><option value="Residential">Residential</option>
+            <option value="Commercial">Commercial</option></select></div>
+          <div><label>Status</label><select id="cliStatus" onchange="renderClients()">
+            <option value="">All</option><option value="active">Active</option><option value="gone">Gone</option></select></div>
+          <div><label>Since</label><select id="cliSince" onchange="renderClients()">
+            <option value="">Any time</option><option value="30">Last 30 days</option>
+            <option value="90">Last 90 days</option><option value="365">Last year</option></select></div>
+        </div>
+      </div>
+      <div class="scroll tallscroll"><table id="clientTable"></table></div>
+    </div>
+  </section>
+
+  <section>
     <div class="card">
       <div class="pad" style="padding-bottom:6px">
         <div class="sechead"><h3>Where the work comes from</h3>
@@ -1543,30 +1591,6 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
         <summary>Sync history</summary>
         <div class="dbody"><div class="scroll"><table id="syncTable"></table></div></div>
       </details>
-    </div>
-  </section>
-
-  <section>
-    <div class="card">
-      <div class="pad" style="padding-bottom:8px">
-        <div class="sechead"><h3>Roster <span class="pill n" id="cliCount">0</span></h3></div>
-        <div class="frow" style="margin-top:6px">
-          <div><label>Search</label><input id="cliSearch" placeholder="name, city, email…" oninput="renderClients()"></div>
-          <div><label>Salesperson</label><select id="cliRep" onchange="renderClients()"></select></div>
-          <div><label>Population</label><select id="cliPop" onchange="renderClients()">
-            <option value="Client">Clients</option><option value="Lead">Leads</option>
-            <option value="">Both</option></select></div>
-          <div><label>Type</label><select id="cliType" onchange="renderClients()">
-            <option value="">All</option><option value="Residential">Residential</option>
-            <option value="Commercial">Commercial</option></select></div>
-          <div><label>Status</label><select id="cliStatus" onchange="renderClients()">
-            <option value="">All</option><option value="active">Active</option><option value="gone">Gone</option></select></div>
-          <div><label>Since</label><select id="cliSince" onchange="renderClients()">
-            <option value="">Any time</option><option value="30">Last 30 days</option>
-            <option value="90">Last 90 days</option><option value="365">Last year</option></select></div>
-        </div>
-      </div>
-      <div class="scroll tallscroll"><table id="clientTable"></table></div>
     </div>
   </section>
 
@@ -8821,6 +8845,111 @@ function cliJump(pop,days){
   document.getElementById('cliSearch').scrollIntoView({behavior:'smooth',block:'center'});
   document.getElementById('cliSearch').focus({preventScroll:true});
 }
+/* ============================================================
+   CLIENT KPIs — who the money actually comes from
+   ------------------------------------------------------------
+   Trailing-12-month billing per client. Numbered invoices come
+   through the registry (approved name mappings, paid-feed money
+   included, one invoice = one visit); number-less audit lines
+   join by exact name — the same convention as everywhere else.
+   Owed comes from the balances snapshot, the paid/unpaid
+   authority. Bottom-3 lists only consider ACTIVE roster clients,
+   so a client who already left is never flagged as "worst".
+   ============================================================ */
+const CLI_KPI_WINDOW=365;
+const KPI_PROJ_CATS={'Irrigation Project Income':1,'Landscaping Project Income':1};
+const KPI_REC_CATS={'Contract Income':1,'Maintenance/Mowing Income':1,
+  'Spray/Chemical Income':1,'Irrigation Service Income':1};
+function cliKpiData(){
+  const cut=addDays(todayISO(),-CLI_KPI_WINDOW);
+  const by={};
+  const g=name=>{ const k=norm(name); if(!k) return null;
+    return by[k]||(by[k]={k, n:name, total:0, rec:0, proj:0, visits:0, last:'', owed:0, _d:{}, active:false}); };
+  invoiceRegistry().list.forEach(h=>{
+    if(!h.date||h.date<cut||h.noMoney) return;
+    const s=g(h.cli?h.cli.n:h.client); if(!s) return;
+    s.total+=(+h.pre||0); s.visits++;
+    if(h.date>s.last) s.last=h.date;
+    h.lines.forEach(x=>{
+      if(KPI_PROJ_CATS[x.k]) s.proj+=(+x.v||0);
+      else if(KPI_REC_CATS[x.k]) s.rec+=(+x.v||0);
+    });
+  });
+  INVOICES.forEach(x=>{
+    if(String(x.i||'').trim()) return;   // numbered lines already counted through the registry
+    if(!x.d||x.d<cut) return;
+    const s=g(x.c); if(!s) return;
+    s.total+=(+x.v||0);
+    if(!s._d[x.d]){ s._d[x.d]=1; s.visits++; }   // number-less lines on one day = one visit
+    if(x.d>s.last) s.last=x.d;
+    if(KPI_PROJ_CATS[x.k]) s.proj+=(+x.v||0);
+    else if(KPI_REC_CATS[x.k]) s.rec+=(+x.v||0);
+  });
+  OPENINV.forEach(x=>{ const s=by[norm(x.c)]; if(s) s.owed+=(+x.t||0); });
+  const cliByK={}; CLIENTS.forEach(c=>{ const k=norm(c.n); if(k&&!cliByK[k]) cliByK[k]=c; });
+  const list=Object.keys(by).map(k=>{ const s=by[k]; delete s._d;
+    s.total=Math.round(s.total*100)/100; s.rec=Math.round(s.rec*100)/100;
+    s.proj=Math.round(s.proj*100)/100; s.owed=Math.round(s.owed*100)/100;
+    const c=cliByK[k]; s.active=!!(c&&isClient(c)&&!c.gone);
+    return s; });
+  return {list, by};
+}
+function kpiCard(title,hint,top,low,val,sub,lowLabel){
+  const row=s=>'<div class="krow"><span class="kn">'+cliLink(s.n)+(s.active?'':' <span class="pill n">GONE</span>')+
+    (sub?'<span class="note"> · '+sub(s)+'</span>':'')+'</span><span class="kv mono">'+val(s)+'</span></div>';
+  let h='<div class="kcard"><div class="lab">'+title+'</div><div class="khint">'+hint+'</div>';
+  h+='<div class="kgrp"><div class="kgt top">Top 3</div>'+
+    (top.length?top.map(row).join(''):'<div class="kempty">Nothing here yet.</div>')+'</div>';
+  if(low) h+='<div class="kgrp"><div class="kgt low">'+(lowLabel||'Bottom 3')+'</div>'+
+    (low.length?low.map(row).join('')
+      :'<div class="kempty">'+(top.length?'The top 3 is everyone on this measure.':'Nothing here yet.')+'</div>')+'</div>';
+  return h+'</div>';
+}
+function renderClientKpis(K){
+  const box=document.getElementById('cliKpis'); if(!box) return;
+  if(!INVOICES.length && !PAIDINV.length){
+    box.innerHTML='<div class="kcard"><div class="lab">No billing data yet</div>'+
+      '<div class="khint">Import the Invoice Audit Summary on the Money tab and the client KPIs light up here.</div></div>';
+    return;
+  }
+  const list=(K||cliKpiData()).list;
+  const desc=f=>(a,b)=>f(b)-f(a), asc=f=>(a,b)=>f(a)-f(b);
+  const top=(arr,f)=>arr.slice().sort(desc(f)).slice(0,3);
+  // bottom 3: active clients only, and never anyone already celebrated in the top 3
+  const low=(arr,f)=>{ const t=top(arr,f);
+    return arr.filter(s=>s.active&&t.indexOf(s)<0).sort(asc(f)).slice(0,3); };
+  let h='';
+  const billed=list.filter(s=>s.total>0);
+  h+=kpiCard('💎 VIP — total billed','Everything billed in the last 12 months, before tax.',
+    top(billed,s=>s.total), low(billed,s=>s.total),
+    s=>money(s.total), s=>s.visits+' visit'+(s.visits===1?'':'s'));
+  const rec=list.filter(s=>s.rec>0);
+  h+=kpiCard('🔁 Recurring — maint & contract','Contract, maintenance/mowing, spray &amp; chemical, irrigation service income.',
+    top(rec,s=>s.rec), low(rec,s=>s.rec),
+    s=>money(s.rec), s=>s.total?Math.round(s.rec/s.total*100)+'% of their billing':'');
+  const proj=list.filter(s=>s.proj>0);
+  h+=kpiCard('🏗️ Projects','Landscaping and irrigation project income.',
+    top(proj,s=>s.proj), low(proj,s=>s.proj),
+    s=>money(s.proj), s=>s.total?Math.round(s.proj/s.total*100)+'% of their billing':'');
+  const eff=list.filter(s=>s.total>0&&s.visits>=2);
+  h+=kpiCard('⚡ Efficiency — $ per visit','Billed ÷ invoices. High = big tickets per stop; low = many small stops. Needs 2+ invoices.',
+    top(eff,s=>s.total/s.visits), low(eff,s=>s.total/s.visits),
+    s=>money(s.total/s.visits), s=>money(s.total)+' over '+s.visits);
+  const owed=list.filter(s=>s.owed>0).sort(desc(s=>s.owed));
+  h+=kpiCard('⚠️ Worst — money owed','Unpaid balance per the balances snapshot'+
+      (owed.length?' · '+owed.length+' client'+(owed.length===1?'':'s')+' owe '+money(owed.reduce((a,s)=>a+s.owed,0)):'')+'.',
+    owed.slice(0,3), null,
+    s=>money(s.owed), s=>s.total?Math.round(Math.min(999,s.owed/s.total*100))+'% of 12-mo billing unpaid':'nothing billed in 12 mo');
+  box.innerHTML=h;
+}
+
+/* Roster sorting — click a column header; click again to flip. */
+let CLI_SORT={key:'since',dir:-1};
+function cliSort(k){
+  if(CLI_SORT.key===k) CLI_SORT.dir=-CLI_SORT.dir;
+  else CLI_SORT={key:k, dir:(k==='name'||k==='type'||k==='city'||k==='src'||k==='owner')?1:-1};
+  renderClients();
+}
 function renderClients(){
   const clients=CLIENTS.filter(c=>isClient(c)&&!c.gone);
   const leads=CLIENTS.filter(c=>isLead(c)&&!c.gone);
@@ -8887,9 +9016,24 @@ function renderClients(){
     rows=rows.filter(c=>{ const d=isLead(c)?(c.lead||c.since):(c.since||''); return d&&d>=cut; });
   }
   if(rp){ const p=person(rp); if(p) rows=rows.filter(c=>clientRepId(c)===rp); }
+
+  const KPI=cliKpiData();
+  renderClientKpis(KPI);
+  const saleCount={}; ROWS.forEach(r=>{ const k=norm(r.client); if(k) saleCount[k]=(saleCount[k]||0)+1; });
+  const billedBy=KPI.by;
+  const ownerName=c=>{ const id=clientRepId(c); return id?empShort(person(id)):(c.sp||''); };
+  const V={
+    name:c=>c.n||'', type:c=>c.at||'', city:c=>c.city||'',
+    since:c=>c.since||c.lead||'', src:c=>c.src||'', owner:ownerName,
+    inv:c=>+c.liV||0, billed:c=>{ const s=billedBy[norm(c.n)]; return s?s.total:0; },
+    sales:c=>saleCount[norm(c.n)]||0
+  };
+  const get=V[CLI_SORT.key]||V.since, dir=CLI_SORT.dir;
   rows.sort((a,b)=>{
-    const ka=a.since||a.lead||'', kb=b.since||b.lead||'';
-    return kb<ka?-1:1;
+    const va=get(a), vb=get(b);
+    if(typeof va==='number') return (va-vb)*dir || String(a.n).localeCompare(String(b.n));
+    if(!va&&vb) return 1; if(va&&!vb) return -1;   // blanks sink regardless of direction
+    return String(va).localeCompare(String(vb))*dir || String(a.n).localeCompare(String(b.n));
   });
   document.getElementById('cliCount').textContent=rows.length+(rows.length!==CLIENTS.length?' of '+CLIENTS.length:'');
 
@@ -8898,10 +9042,13 @@ function renderClients(){
     t.innerHTML='<tbody><tr><td class="empty">'+(CLIENTS.length?'Nothing matches.':'No roster yet — run a sync above.')+'</td></tr></tbody>';
     return;
   }
-  let x='<thead><tr><th>Name</th><th>Type</th><th>City</th><th>Since / acquired</th><th>Source</th>'+
-    '<th>Owner</th><th class="num">Last invoice</th><th class="num">Sales logged</th></tr></thead><tbody>';
+  const th=(k,lab,cls)=>'<th class="sortable'+(cls?' '+cls:'')+'" onclick="cliSort(\''+k+'\')" title="Sort by '+lab+'">'+lab+
+    (CLI_SORT.key===k?' <span class="arr">'+(CLI_SORT.dir>0?'▲':'▼')+'</span>':'')+'</th>';
+  let x='<thead><tr>'+th('name','Name')+th('type','Type')+th('city','City')+th('since','Since / acquired')+th('src','Source')+
+    th('owner','Owner')+th('inv','Last invoice','num')+th('billed','Billed 12 mo','num')+th('sales','Sales logged','num')+'</tr></thead><tbody>';
   rows.slice(0,400).forEach(c=>{
-    const mine=ROWS.filter(r=>norm(r.client)===norm(c.n));
+    const nSales=saleCount[norm(c.n)]||0;
+    const kpi=billedBy[norm(c.n)];
     const repId=clientRepId(c);
     const lead=isLead(c);
     const age=lead&&c.lead?Math.round((dObj(todayISO())-dObj(c.lead))/86400000):null;
@@ -8918,9 +9065,11 @@ function renderClients(){
       '<td>'+(repId?'<span class="dot" style="background:'+pColor(repId)+'"></span>'+empLink(repId,empShort(person(repId)))
               :'<span class="note">'+esc(c.sp||'—')+'</span>')+'</td>'+
       '<td class="num mono">'+(c.liV?money(c.liV):'—')+(c.liD?'<div class="note">'+fmt(c.liD)+'</div>':'')+'</td>'+
-      '<td class="num">'+(mine.length?mine.length:'<span class="note">none</span>')+'</td></tr>';
+      '<td class="num mono">'+(kpi&&kpi.total?money(kpi.total):'—')+
+        (kpi&&kpi.visits>1?'<div class="note">'+kpi.visits+' visits</div>':'')+'</td>'+
+      '<td class="num">'+(nSales?nSales:'<span class="note">none</span>')+'</td></tr>';
   });
-  if(rows.length>400) x+='<tr><td colspan="8" class="empty">Showing 400 of '+rows.length+'.</td></tr>';
+  if(rows.length>400) x+='<tr><td colspan="9" class="empty">Showing 400 of '+rows.length+'.</td></tr>';
   t.innerHTML=x+'</tbody>';
 }
 

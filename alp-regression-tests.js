@@ -3079,6 +3079,43 @@
       } else {
         results.push({name:'SOT source-of-truth architecture exists', expected:true, actual:false, pass:false});
       }
+
+      /* ---------- CLIKPI: client KPIs — VIPs & watchlist ---------- */
+      if (typeof cliKpiData==='function'){
+        var kd=function(n){ return addDays(todayISO(),-n); };
+        CLIENTS=[
+          {n:'Vip Client', u:'VC1', ct:'Client', at:'Residential', since:kd(400)},
+          {n:'Small Client', u:'SC1', ct:'Client', at:'Residential', since:kd(400)},
+          {n:'Gone Client', u:'GC1', ct:'Client', at:'Residential', since:kd(400), gone:kd(5)}
+        ];
+        ROWS=[]; PAIDINV=[]; INVLINKS=[]; INVCLIMAP=[]; INVASSIGN=[];
+        INVOICES=[
+          // Vip: two numbered invoices in the window, one ancient one outside it
+          {c:'Vip Client', i:'K1', d:kd(30), s:'Mow', v:600, k:'Maintenance/Mowing Income', t:0, a:'', r:''},
+          {c:'Vip Client', i:'K1', d:kd(30), s:'Patio', v:400, k:'Landscaping Project Income', t:0, a:'', r:''},
+          {c:'Vip Client', i:'K2', d:kd(10), s:'Spray', v:250, k:'Spray/Chemical Income', t:0, a:'', r:''},
+          {c:'Vip Client', i:'K0', d:kd(400), s:'Old', v:9999, k:'Maintenance/Mowing Income', t:0, a:'', r:''},
+          // Small: a number-less audit line joins by exact name
+          {c:'Small Client', i:'', d:kd(20), s:'Mow', v:80, k:'Maintenance/Mowing Income', t:0, a:'', r:''},
+          // Gone: billed in the window, but no longer on the active roster
+          {c:'Gone Client', i:'K3', d:kd(15), s:'Mow', v:50, k:'Maintenance/Mowing Income', t:0, a:'', r:''}
+        ];
+        OPENINV=[{i:'K2', d:kd(10), c:'Vip Client', addr:'', city:'', t:250, s:'Open'}];
+        invDirty();
+        var KD=cliKpiData();
+        var kVip=KD.by[norm('Vip Client')], kSml=KD.by[norm('Small Client')], kGone=KD.by[norm('Gone Client')];
+        check('CLIKPI 12-mo total sums the window, ignores older billing', 1250, kVip.total);
+        check('CLIKPI recurring split = maintenance + spray', 850, kVip.rec);
+        check('CLIKPI project split = landscaping project income', 400, kVip.proj);
+        check('CLIKPI one numbered invoice = one visit', 2, kVip.visits);
+        check('CLIKPI number-less lines join by exact name', 80, kSml.total);
+        check('CLIKPI owed comes from the balances snapshot', 250, kVip.owed);
+        checkTrue('CLIKPI active roster clients are flagged active', kVip.active===true && kSml.active===true, String(kVip.active)+'/'+String(kSml.active));
+        check('CLIKPI a gone client can never headline the bottom lists', false, kGone.active);
+        invDirty();
+      } else {
+        results.push({name:'CLIKPI client KPI engine exists', expected:true, actual:false, pass:false});
+      }
     } catch(e){
       results.push({name:'HARNESS ERROR', expected:'no throw', actual:String(e&&e.message||e), pass:false});
     } finally {
