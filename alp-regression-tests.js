@@ -76,6 +76,8 @@
                OVERRIDES:(typeof OVERRIDES!=='undefined'?OVERRIDES:undefined),
                CKPTS:(typeof CKPTS!=='undefined'?CKPTS:undefined),
                EOSASSIGN:(typeof EOSASSIGN!=='undefined'?EOSASSIGN:undefined),
+               PERFRULES:(typeof PERFRULES!=='undefined'?PERFRULES:undefined),
+               PERFEVENTS:(typeof PERFEVENTS!=='undefined'?PERFEVENTS:undefined),
                ADMIN:(typeof ADMIN!=='undefined'?ADMIN:undefined) };
     // Nothing a test run may COST localStorage. Stubbing save() is not enough:
     // cloudApply() writes through its own internal put() (raw localStorage.setItem),
@@ -3145,8 +3147,223 @@
       } else {
         results.push({name:'CLIBULK roster bulk actions exist', expected:true, actual:false, pass:false});
       }
+      /* ================================================================
+         PERFORMANCE SCORE — the win / strike / major-loss ledger.
+         Every assertion below drives the REAL engine in the app. The
+         tests never recompute a score themselves; if they did, they
+         would only be proving that two copies of the same mistake
+         agree with each other.
+         ================================================================ */
+      if(typeof perfScoreOf==='function'){
+        (function(){
+          var TODAY = todayISO();
+          var YR    = TODAY.slice(0,4);
+          var PRIOR = (parseInt(YR,10)-1)+'-06-15';   // same calendar slot, previous period
+          // Full rights for the engine's own permission gates; the projection
+          // and capability tests below flip these off deliberately.
+          ADMIN=true; if(typeof capsInvalidate==='function') capsInvalidate();
+          BIZ=Object.assign({}, (typeof bizGet==='function'?bizGet():{}), {
+            id:'biz_test', ops:{perf:{enabled:true, baseline:100, period:'calendar-year',
+              bands:PERF_DEFAULTS.bands.slice()}}});
+          if(typeof bizDirty==='function') bizDirty();
+
+          var A = mkPerson({id:'PS_A', name:'Alex Scored',  active:true, payFrom:'2020-03-10'});
+          var B = mkPerson({id:'PS_B', name:'Bea Scored',   active:true, payFrom:''});
+          var L = mkPerson({id:'PS_L', name:'Lee Leader',   active:true, inScore:false});
+          PEOPLE=[A,B,L];
+          PERFRULES=[]; PERFEVENTS=[];
+
+          var win  = perfRuleCreate('WIN',   'Client Compliment', 5);
+          var str  = perfRuleCreate('STRIKE','Tardy',            -5);
+          var maj  = perfRuleCreate('MAJOR', 'Safety Incident',  -30);
+
+          /* 1. baseline */
+          check('PERF.1 employee starts the period at the configured baseline', 100, perfScoreOf('PS_A'));
+
+          /* 2/3/4. events move the derived score */
+          perfLog('PS_A', win.id, {on:TODAY, note:'t'});
+          check('PERF.2 a + event raises the derived score', 105, perfScoreOf('PS_A'));
+          perfLog('PS_A', str.id, {on:TODAY, note:'t'});
+          check('PERF.3 a - event lowers the derived score', 100, perfScoreOf('PS_A'));
+          perfLog('PS_A', maj.id, {on:TODAY, note:'t'});
+          check('PERF.4 multiple events derive correctly', 70, perfScoreOf('PS_A'));
+
+          /* 5. the score is never stored — only the ledger is */
+          checkTrue('PERF.5 no current score is stored on the employee record',
+            A.score===undefined && A.currentScore===undefined && A.points===undefined,
+            'score fields on record: '+Object.keys(A).filter(function(k){return /score|points/i.test(k)&&k!=='inScore';}).join(',')||'(none)');
+          // Rebuilding the engine's answer from the ledger alone must agree with it.
+          var fromLedger = PERFEVENTS.filter(function(e){return e.emp==='PS_A'&&!e.void;})
+                                     .reduce(function(a,e){return a+e.points;}, 100);
+          check('PERF.5b the derived score equals the ledger summed independently', fromLedger, perfScoreOf('PS_A'));
+
+          /* 6. re-pricing a rule must not rewrite history */
+          perfRuleUpdate(win.id, {points:50});
+          check('PERF.6 re-pricing a rule does NOT rewrite past events', 70, perfScoreOf('PS_A'));
+          check('PERF.6b the past event keeps the points it was written with', 5,
+            PERFEVENTS.filter(function(e){return e.emp==='PS_A'&&e.rule===win.id;})[0].points);
+          perfLog('PS_A', win.id, {on:TODAY, note:'after re-price'});
+          check('PERF.6c a NEW event uses the new price', 120, perfScoreOf('PS_A'));
+          perfRuleUpdate(win.id, {points:5});
+          perfVoid(PERFEVENTS[PERFEVENTS.length-1].id, 'test cleanup');
+          check('PERF.6d back to the pre-reprice score', 70, perfScoreOf('PS_A'));
+
+          /* 7-10. identity is the permanent id — nothing else */
+          A.name='Alexandra Renamed-Smith'; A.first='Alexandra'; A.last='Renamed-Smith';
+          check('PERF.7 renaming the employee preserves the score', 70, perfScoreOf('PS_A'));
+          A.email='new.address@automatedlawnandpest.com';
+          check('PERF.8 changing the email preserves the score', 70, perfScoreOf('PS_A'));
+          A.dept='Pest'; check('PERF.10 changing division preserves the score', 70, perfScoreOf('PS_A'));
+          A.active=false;
+          check('PERF.9 becoming a former team member preserves the history', 3,
+            perfLedgerOf('PS_A').filter(function(e){return !e.void;}).length);
+          A.active=true;
+
+          /* 11. unscored is not a fake 100 */
+          check('PERF.11 an excluded employee scores null, never 100', 'null', String(perfScoreOf('PS_L')));
+          checkTrue('PERF.11b an excluded employee is not in the ranking',
+            perfStandings().filter(function(r){return r.id==='PS_L';})[0].rank===null, 'rank');
+          checkTrue('PERF.11c an excluded employee cannot be given an event',
+            perfLog('PS_L', win.id, {on:TODAY, note:'should refuse'})===null, 'refused');
+
+          /* 12. missing start date does not fabricate tenure */
+          check('PERF.12 no employment start date = no tenure, not a guess', 'null', String(perfTenureText(B)));
+          checkTrue('PERF.12b a recorded start date does produce tenure',
+            typeof perfTenureText(A)==='string' && perfTenureText(A).length>0, perfTenureText(A));
+
+          /* 13. photo fallback */
+          checkTrue('PERF.13 an employee with no photo falls back to initials',
+            !A.photo && typeof empInitials(A)==='string' && empInitials(A).length>0, empInitials(A));
+
+          /* 14/15. ranking, and ties on purpose */
+          PERFEVENTS=[]; PERFRULES=[win,str,maj];
+          perfLog('PS_A', str.id, {on:TODAY, note:'t'});          // A = 95
+          check('PERF.14 rank recalculates from the current ledger', 1,
+            perfStandings().filter(function(r){return r.id==='PS_B';})[0].rank);   // B = 100
+          perfLog('PS_B', str.id, {on:TODAY, note:'t'});          // both 95
+          var st=perfStandings();
+          var rA=st.filter(function(r){return r.id==='PS_A';})[0].rank;
+          var rB=st.filter(function(r){return r.id==='PS_B';})[0].rank;
+          check('PERF.15 a tie shares the rank rather than inventing a winner', String(rA), String(rB));
+          check('PERF.15b both tied employees are rank 1', 1, rA);
+
+          /* 16. period boundary: the derived score resets, history survives */
+          PERFEVENTS=[];
+          perfLog('PS_A', str.id, {on:TODAY, note:'this period'});
+          PERFEVENTS.push({id:'se_prior', biz:'biz_test', emp:'PS_A', rule:str.id, cat:'STRIKE',
+            label:'Tardy', points:-5, note:'last period', on:PRIOR, period:PRIOR.slice(0,4),
+            t:PRIOR+'T12:00:00.000Z', by:'test', void:false});
+          check('PERF.16 a prior-period event does not count toward this period', 95, perfScoreOf('PS_A'));
+          check('PERF.16b the prior period still computes its own score', 95,
+            perfScoreOf('PS_A', perfPeriodOf(PRIOR)));
+          checkTrue('PERF.16c the prior event was preserved, not destroyed',
+            PERFEVENTS.some(function(e){return e.id==='se_prior';}), 'kept');
+
+          /* 17/18. authorization is in the engine, not the button */
+          PERFEVENTS=PERFEVENTS.filter(function(e){return e.id!=='se_prior';});
+          var before=perfScoreOf('PS_A');
+          ADMIN=false; PEOPLE.forEach(function(x){ x.roles=[]; x.caps=[]; });
+          if(typeof capsInvalidate==='function') capsInvalidate();
+          checkTrue('PERF.17 a user without log_score_event cannot log one',
+            perfLog('PS_A', str.id, {on:TODAY, note:'unauthorized'})===null, 'refused');
+          check('PERF.17b the score is unchanged after the refused attempt', before, perfScoreOf('PS_A'));
+          checkTrue('PERF.17c a user without manage_score_rules cannot create a rule',
+            perfRuleCreate('WIN','Sneaky rule',999)===null, 'refused');
+          checkTrue('PERF.17d a user without log_score_event cannot void an event',
+            perfVoid(PERFEVENTS[0].id,'unauthorized')===false, 'refused');
+          ADMIN=true; if(typeof capsInvalidate==='function') capsInvalidate();
+          checkTrue('PERF.18 an authorized admin CAN log an event',
+            !!perfLog('PS_A', win.id, {on:TODAY, note:'authorized'}), 'logged');
+
+          /* 19. every event is auditable on its own */
+          var ev=PERFEVENTS[PERFEVENTS.length-1];
+          checkTrue('PERF.19 an event records who/what/points/why/when/recorded-by',
+            !!ev.emp && !!ev.label && typeof ev.points==='number' && !!ev.note &&
+            !!ev.on && !!ev.t && ev.by!==undefined && !!ev.rule,
+            JSON.stringify({emp:!!ev.emp,label:!!ev.label,pts:typeof ev.points,note:!!ev.note,on:!!ev.on,t:!!ev.t,rule:!!ev.rule}));
+          check('PERF.19b the event carries the rule value AS IT WAS at the time', 5, ev.points);
+
+          /* 20. a correction preserves the evidence */
+          var n0=perfLedgerOf('PS_A').length, s0=perfScoreOf('PS_A');
+          perfVoid(ev.id, 'logged against the wrong person');
+          check('PERF.20 voiding keeps the row in the history', n0, perfLedgerOf('PS_A').length);
+          check('PERF.20b voiding removes the points from the score', s0-5, perfScoreOf('PS_A'));
+          checkTrue('PERF.20c the void records who did it and why',
+            ev.void===true && ev.voidWhy==='logged against the wrong person' && !!ev.voidOn, 'recorded');
+          checkTrue('PERF.20d a voided event is excluded from the counting view',
+            perfEventsOf('PS_A').every(function(x){return x.id!==ev.id;}), 'excluded');
+          checkTrue('PERF.20e nothing was deleted from the ledger',
+            PERFEVENTS.some(function(x){return x.id===ev.id;}), 'row still present');
+
+          /* Future dating: refused at the door, so the ledger and the score can
+             never disagree the way the reference prototype's could. */
+          var far=(parseInt(YR,10)+1)+'-01-01';
+          checkTrue('PERF.x a future-dated event is refused, not silently banked',
+            perfLog('PS_A', win.id, {on:far, note:'typo year'})===null, 'refused');
+
+          /* An adjustment must carry a reason. */
+          var adj=perfRuleCreate('ADJUST','Manual adjustment',10);
+          checkTrue('PERF.y an adjustment with no reason is refused',
+            perfLog('PS_A', adj.id, {on:TODAY, note:''})===null, 'refused');
+          checkTrue('PERF.y2 an adjustment WITH a reason is accepted',
+            !!perfLog('PS_A', adj.id, {on:TODAY, note:'agreed at review'}), 'accepted');
+
+          /* 21. the standings link to the canonical profile, and carry no
+             employee record of their own. */
+          var row=perfStandings().filter(function(r){return r.id==='PS_A';})[0];
+          checkTrue('PERF.21 a standings row IS the canonical employee, by reference',
+            row.p===A && row.id===A.id, 'same object identity');
+
+          /* 27. company scoping: an event stamped to another business is not ours */
+          PERFEVENTS.push({id:'se_other', biz:'biz_OTHER', emp:'PS_A', rule:str.id, cat:'STRIKE',
+            label:'Other company strike', points:-40, note:'', on:TODAY, period:YR,
+            t:new Date().toISOString(), by:'other', void:false});
+          checkTrue('PERF.27 every event carries the business id it belongs to',
+            PERFEVENTS.filter(function(e){return e.id!=='se_other';}).every(function(e){return e.biz==='biz_test';}),
+            'all stamped');
+          PERFEVENTS=PERFEVENTS.filter(function(e){return e.id!=='se_other';});
+
+          /* 28. backup carries the catalog AND the ledger */
+          var snapshot = (typeof stateSnapshot==='function') ? stateSnapshot() : {};
+          checkTrue('PERF.28 a backup includes the rule catalog',
+            Array.isArray(snapshot.perfrules) && snapshot.perfrules.length===PERFRULES.length, 'included');
+          checkTrue('PERF.28b a backup includes the score ledger',
+            Array.isArray(snapshot.perfevents) && snapshot.perfevents.length===PERFEVENTS.length, 'included');
+          checkTrue('PERF.28c the backup ledger keeps voided rows too',
+            snapshot.perfevents.some(function(e){return e.void===true;}), 'voids preserved');
+
+          /* Configuration, not hard-coded ALP policy. */
+          // B's ledger was cleared at PERF.16 and nothing has been logged against
+          // them since, so their score IS the baseline — which makes them the
+          // clean witness for the baseline being configuration rather than 100.
+          perfOpsSet({baseline:50});
+          check('PERF.c the baseline comes from company configuration, not a constant',
+            50, perfScoreOf('PS_B'));
+          check('PERF.c1 a re-baselined employee still derives from their own events',
+            45, (perfLog('PS_B', str.id, {on:TODAY, note:'t'}), perfScoreOf('PS_B')));
+          perfVoid(PERFEVENTS[PERFEVENTS.length-1].id, 'test cleanup');
+          perfOpsSet({baseline:100});
+          perfOpsSet({bands:[{id:'ok',min:90,label:'Great'},{id:'risk',min:null,label:'Not great'}]});
+          check('PERF.c2 bands come from company configuration', 'Not great', perfBandOf(80).label);
+          perfOpsSet({bands:PERF_DEFAULTS.bands.slice()});
+          check('PERF.c3 default bands classify at the boundary', 'On Track', perfBandOf(85).label);
+          check('PERF.c4 one point below a boundary drops a band', 'Needs Attention', perfBandOf(84).label);
+          check('PERF.c5 a deeply negative score still classifies', 'High Risk', perfBandOf(-40).label);
+          checkTrue('PERF.c6 turning the program off stops it scoring anyone',
+            (perfOpsSet({enabled:false}), businessUsesPerf()===false), 'off');
+          perfOpsSet({enabled:true});
+
+          /* The participation flag must not be the existing p.scored, which
+             already means something else on the same record. */
+          checkTrue('PERF.z participation is its own field, not the production-plan flag',
+            (A.scored=true, perfSetIncluded('PS_A', false, 'test'), perfScoreOf('PS_A')===null && A.scored===true),
+            'p.scored untouched');
+          perfSetIncluded('PS_A', true, 'test');
+        })();
+      }
     } catch(e){
       results.push({name:'HARNESS ERROR', expected:'no throw', actual:String(e&&e.message||e), pass:false});
+
     } finally {
       // restore every global, no matter what — and every alp_* localStorage key.
       // Removals run FIRST (freeing quota before the big feeds are written back),
@@ -3184,6 +3401,8 @@
       if(typeof OVERRIDES!=='undefined' && snap.OVERRIDES!==undefined) OVERRIDES=snap.OVERRIDES;
       if(typeof CKPTS!=='undefined' && snap.CKPTS!==undefined) CKPTS=snap.CKPTS;
       if(typeof EOSASSIGN!=='undefined' && snap.EOSASSIGN!==undefined) EOSASSIGN=snap.EOSASSIGN;
+      if(typeof PERFRULES!=='undefined' && snap.PERFRULES!==undefined) PERFRULES=snap.PERFRULES;
+      if(typeof PERFEVENTS!=='undefined' && snap.PERFEVENTS!==undefined) PERFEVENTS=snap.PERFEVENTS;
       if(typeof ADMIN!=='undefined' && snap.ADMIN!==undefined) ADMIN=snap.ADMIN;
       if(typeof bizDirty==='function') bizDirty();
       if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;

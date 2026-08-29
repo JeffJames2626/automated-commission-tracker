@@ -51,6 +51,11 @@
                {id:'p2',emp:'REP2',kind:'rep',amount:200,rowId:'r2'},
                {id:'p3',emp:'MGR',kind:'override',amount:50,rowId:'r1'}],
       disputes:[{id:'d1',rep:'REP',amount:10},{id:'d2',rep:'REP2',amount:20}],
+      perfrules:[{id:'sr1',biz:'b1',cat:'STRIKE',label:'Tardy',points:-5,archived:false},
+                 {id:'sr2',biz:'b1',cat:'WIN',label:'Compliment',points:5,archived:false}],
+      perfevents:[{id:'se1',biz:'b1',emp:'REP', rule:'sr1',cat:'STRIKE',label:'Tardy',points:-5,on:'2026-06-01',by:'jeff',void:false},
+                  {id:'se2',biz:'b1',emp:'REP2',rule:'sr1',cat:'STRIKE',label:'Tardy',points:-5,on:'2026-06-02',by:'jeff',void:false},
+                  {id:'se3',biz:'b1',emp:'MGR', rule:'sr2',cat:'WIN',   label:'Compliment',points:5,on:'2026-06-03',by:'jeff',void:false}],
       hours:[{id:'h1',rep:'REP',date:'2026-06-01',hours:40},{id:'h2',rep:'REP2',date:'2026-06-01',hours:50}],
       clients:[{id:'c1',name:'Acme'}],
       invoices:[{id:'i1',client:'Acme',total:900}],
@@ -281,6 +286,37 @@
       back(function(d){ d.rows.push(R('r2','REP2',1)); }, EM.mgr).rows.find(function(r){return r.id==='r2';}).value);
     check('WRITE a manager cannot change a report’s pay rate',10,
       find(back(function(d){ find(d,'REP').commNew=40; }, EM.mgr),'REP').commNew);
+
+
+    /* ---- Performance Score: the ledger is server-protected ----------
+       The button is hidden in the UI, but that is not the control. These
+       prove the SERVER refuses the write and declines the read, which is
+       what stands between a rep and their own strike record. */
+    check('SCORE a rep is not sent other people\u2019s score events', 1,
+      see(EM.rep).perfevents.length);
+    check('SCORE the one event a rep IS sent is their own', 'REP',
+      see(EM.rep).perfevents[0].emp);
+    check('SCORE a tech with no scorecard capability is sent none', 0,
+      see(EM.tech).perfevents.length);
+    ok('SCORE a manager (view_scorecard) is sent the whole ledger',
+      see(EM.mgr).perfevents.length===3, see(EM.mgr).perfevents.length);
+
+    check('WRITE a rep cannot delete their own strike', 3,
+      back(function(d){ d.perfevents=d.perfevents.filter(function(e){return e.emp!=='REP';}); }, EM.rep).perfevents.length);
+    check('WRITE a rep cannot flip their strike into a win', -5,
+      back(function(d){ d.perfevents.forEach(function(e){ if(e.emp==='REP') e.points=50; }); }, EM.rep)
+        .perfevents.find(function(e){return e.id==='se1';}).points);
+    check('WRITE a rep cannot invent a win for themselves', 3,
+      back(function(d){ d.perfevents.push({id:'se9',emp:'REP',cat:'WIN',label:'Self-awarded',points:99,on:'2026-06-09'}); }, EM.rep)
+        .perfevents.length);
+    check('WRITE a rep cannot un-void a correction', 3,
+      back(function(d){ d.perfevents=[]; }, EM.rep).perfevents.length);
+    check('WRITE a rep cannot re-price the rule catalog', -5,
+      back(function(d){ d.perfrules.forEach(function(r){ r.points=100; }); }, EM.rep)
+        .perfrules.find(function(r){return r.id==='sr1';}).points);
+    check('WRITE a manager cannot write the ledger either \u2014 logging happens admin-side', 3,
+      back(function(d){ d.perfevents.push({id:'se8',emp:'REP',cat:'MAJOR',label:'x',points:-30,on:'2026-06-08'}); }, EM.mgr)
+        .perfevents.length);
 
     // Client/server bundles must not drift
     ok('The server’s role bundles match the app’s',

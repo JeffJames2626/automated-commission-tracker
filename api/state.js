@@ -91,7 +91,8 @@ const WRITE_PROTECTED = COMP_FIELDS.concat(['admin']);
 // the app; the two are compared by the projection tests.
 const ROLE_CAPS = {
   manager:  ['view_own_sales','view_team_sales','view_own_commission','view_team_commission',
-             'view_clients','edit_clients','view_properties','edit_sales','view_data_hawk','view_revenue'],
+             'view_clients','edit_clients','view_properties','edit_sales','view_data_hawk','view_revenue',
+             'view_scorecard','log_score_event'],
   sales:    ['view_own_sales','view_own_commission','view_clients','view_properties','edit_sales','edit_clients'],
   estimator:['view_own_sales','view_own_commission','view_clients','view_properties','edit_sales','edit_clients'],
   csr:      ['view_clients','edit_clients','view_properties','view_data_hawk'],
@@ -179,6 +180,12 @@ function projectState(raw, email) {
     doc.disputes = keepVisible(doc.disputes, x => ownedVisible(ctx, x, 'rep'));
     doc.hours    = keepVisible(doc.hours,    x => ownedVisible(ctx, x, 'rep'));
     doc.tsheet   = keepVisible(doc.tsheet,   x => ownedVisible(ctx, x, 'emp'));
+  }
+  // Performance Score: your own standing is yours to see; the team's is a
+  // management view. Without view_scorecard a session is sent its own events
+  // and nobody else's — the scoreboard cannot render what it never received.
+  if (!ctx.caps.view_scorecard && Array.isArray(doc.perfevents)) {
+    doc.perfevents = ctx.me ? doc.perfevents.filter(e => e && e.emp === ctx.me) : [];
   }
   // Client billing: invoices, payments and open balances are money owed to the
   // company, not to a rep. Only billing, managers and the owner get them.
@@ -293,7 +300,15 @@ function mergeProtected(incomingRaw, storedRaw, email) {
   });
   // Payroll timesheets, pay periods and their import history are written where
   // payroll is run — never from a non-admin session, not even their own row.
-  ['tsheet', 'payper', 'tsimp', 'eosroles', 'eosassign', 'overrides'].forEach(k => {
+  // The Performance Score ledger and its rule catalog sit here for the same
+  // reason payroll does: a score event is an employee-management record, and
+  // the person it is ABOUT is exactly the person who must not be able to write
+  // it. Logging and voting on rules happen from an admin session; a non-admin
+  // save gets the stored copy back verbatim, so a rep cannot delete their own
+  // strike, re-price a rule, or un-void a correction by editing the document
+  // their browser holds. Hiding the button is not the control — this is.
+  ['tsheet', 'payper', 'tsimp', 'eosroles', 'eosassign', 'overrides',
+   'perfrules', 'perfevents'].forEach(k => {
     inc[k] = Array.isArray(stored[k]) ? stored[k] : [];
   });
   // Business Details are the ORG's record — everyone reads them, only an admin

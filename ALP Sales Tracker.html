@@ -1027,6 +1027,27 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
   tr{break-inside:avoid}
   @page{margin:14mm}
 }
+
+/* ---- Standings: a roster of people, not a table of rows ---- */
+.standGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.standCard{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--line);
+  border-radius:10px;background:var(--paper);cursor:pointer;transition:border-color .12s,transform .12s}
+.standCard:hover,.standCard:focus{border-color:var(--accent);transform:translateY(-1px);outline:none}
+.standCard.un{opacity:.72}
+.standRank{min-width:38px;font-weight:700;font-size:17px;text-align:center;color:var(--muted)}
+.standWho{flex:1;min-width:0}
+.standWho .nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.standScore{text-align:right;min-width:92px}
+.standScore .num{font-size:26px;font-weight:700;line-height:1.1}
+@media(max-width:560px){
+  .standGrid{grid-template-columns:1fr}
+  .standRank{min-width:30px;font-size:15px}
+  .standScore .num{font-size:22px}
+}
+@media print{
+  .standCard{break-inside:avoid;page-break-inside:avoid;border-color:#bbb}
+  .standGrid{grid-template-columns:repeat(2,1fr)}
+}
 </style>
 </head>
 <body>
@@ -1464,6 +1485,17 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
 </div>
 
 
+
+<!-- ==================== STANDINGS (Performance Score) ==================== -->
+<!-- One canonical employee: this page ranks people and links straight into the
+     employee profile that already exists. It has no employee record, no photo
+     store and no permission model of its own. -->
+<div class="tab" id="tab-stand">
+  <section>
+    <div class="sechead"><h2>Standings</h2><span class="hint">Wins, strikes and where everyone stands this period</span></div>
+    <div id="standBody"></div>
+  </section>
+</div>
 
 <!-- ==================== CLIENTS ==================== -->
 <div class="tab" id="tab-roster">
@@ -3035,6 +3067,8 @@ const K_PAYPER='alp_payper_v1';   // pay periods
 const K_TSIMP='alp_tsimp_v1';     // timesheet import history
 const K_EOSROLES='alp_eosroles_v1';   // canonical EOS Roles (seats) — id-keyed, app-owned
 const K_EOSASSIGN='alp_eosassign_v1'; // role assignment history — who holds/held each seat
+const K_PERFRULES='alp_perfrules_v1';  // Performance Score rule catalog — company config, not app logic
+const K_PERFEVENTS='alp_perfevents_v1';// Performance Score ledger — append-only, void-not-delete
 const K_OVERRIDE='alp_overrides_v1';  // ADMIN_OVERRIDE: manual field corrections that survive imports
 const K_CKPTMETA='alp_ckpt_meta_v1';  // recovery-checkpoint index (metadata only)
 const K_CKPT='alp_ckpt_';             // per-checkpoint snapshot key prefix — NOT part of the synced doc
@@ -3097,6 +3131,8 @@ let PAYPER   = load(K_PAYPER,[]);    // pay periods {id, from, to, check?}
 let TSIMP    = load(K_TSIMP,[]);     // timesheet import history, newest last, capped 60
 let EOSROLES = load(K_EOSROLES,[]);  // EOS seats — the role IS the id, the name is display
 let EOSASSIGN= load(K_EOSASSIGN,[]); // seat occupancy history — open entries have to:''
+let PERFRULES = load(K_PERFRULES,[]);  // scoreable reasons {id,biz,cat,label,points,...} — the company's catalog
+let PERFEVENTS= load(K_PERFEVENTS,[]); // score ledger {id,biz,emp,rule,points,on,t,by,void} — never rewritten
 let OVERRIDES= load(K_OVERRIDE,[]);  // {id,dom,ref,field,value,by,on,t} — admin corrections that outrank imports
 let CKPTS    = load(K_CKPTMETA,[]);  // recovery checkpoint index — snapshots live in K_CKPT+id, never synced
 const POLICY_DEFAULT={
@@ -4195,6 +4231,485 @@ function companySetupSave(){
 function openCompanySettings(){ setTab('admin');
   setTimeout(()=>{ const el=document.getElementById('bizCard'); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); },60); }
 
+
+/* ---- PERFORMANCE SCORE — UI GLUE -------------------------------
+   Handlers and rendering only. Every one of them calls the engine
+   above and re-reads the result; none of them computes a score, and
+   none of them is the permission check — the engine refuses on its
+   own, so a hand-typed call from the console gets the same answer as
+   the button. */
+function perfLogUI(empId){
+  const r=document.getElementById('pfRule'), on=document.getElementById('pfOn'), nt=document.getElementById('pfNote');
+  if(!r||!r.value){ toast('Pick a reason'); return; }
+  const e=perfLog(empId, r.value, {on:on?on.value:todayISO(), note:nt?nt.value:''});
+  if(!e) return;
+  const p=person(empId);
+  toast((e.points>0?'+':'')+e.points+' · '+e.label+' logged for '+empShort(p)+' — score is now '+perfScoreOf(empId));
+  if(nt) nt.value='';
+  renderEmp(); render();
+}
+function perfVoidUI(eventId){
+  const e=PERFEVENTS.find(x=>x&&x.id===eventId); if(!e) return;
+  const why=prompt('Void this event ('+e.label+', '+(e.points>0?'+':'')+e.points+')?\n\nThe row stays in the history with your name on the correction. Why is it being voided?');
+  if(why===null) return;
+  if(!perfVoid(eventId, why)) return;
+  toast('Voided — the event stays in the record, it just stops counting');
+  renderEmp(); render();
+}
+// Trend line. Drawn from the same series the number comes from, so the
+// picture cannot tell a different story than the ledger.
+function perfSparkHTML(series,band){
+  if(!series||series.length<2)
+    return '<div class="note" style="margin:10px 0">No events yet this period — the line starts once something is logged.</div>';
+  const W=460,H=90,pad=8;
+  const vals=series.map(x=>x.score);
+  const bands=perfBands().map(b=>b.min).filter(m=>m!==null&&m!==undefined);
+  const lo=Math.min.apply(null,vals.concat(bands)), hi=Math.max.apply(null,vals.concat([perfOps().baseline]));
+  const span=(hi-lo)||1;
+  const pts=series.map((x,i)=>{
+    const px=pad+(i/(series.length-1))*(W-pad*2);
+    const py=H-pad-((x.score-lo)/span)*(H-pad*2);
+    return px.toFixed(1)+','+py.toFixed(1);
+  });
+  // Status tokens, not literal colours — both themes redefine these, so the
+  // trend line stays legible on light and dark without a second palette.
+  const col=band?('var(--'+({ok:'success',watch:'warning',pip:'warning',risk:'danger'}[band.id]||'ink')+')'):'var(--ink)';
+  const last=pts[pts.length-1].split(',');
+  return '<div style="margin:12px 0"><svg width="100%" height="'+H+'" style="height:'+H+'px;display:block" '+
+    'viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" role="img" aria-label="score trend">'+
+    '<polyline points="'+pts.join(' ')+'" fill="none" stroke="'+col+'" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>'+
+    '<circle cx="'+last[0]+'" cy="'+last[1]+'" r="3.5" fill="'+col+'"/></svg>'+
+    '<div class="note">'+esc(series[0].on)+' → '+esc(series[series.length-1].on)+' · every step is one logged event</div></div>';
+}
+
+/* ---- TEAM STANDINGS --------------------------------------------
+   A roster, not a spreadsheet: photo, name, role, division, rank,
+   score and band, with the honest cases shown as themselves. Every
+   card opens the CANONICAL employee profile — there is no second
+   employee page here, only a link into the one that exists. */
+let PERF_DIV='All', PERF_Q='', PERF_SHOWUN=true;
+function perfSetDiv(d){ PERF_DIV=d; render(); }
+function perfSetQ(v){ PERF_Q=v; renderStandings(); }
+function perfToggleUnscored(){ PERF_SHOWUN=!PERF_SHOWUN; render(); }
+function renderStandings(){
+  const box=document.getElementById('standBody'); if(!box) return;
+  if(!businessUsesPerf()){
+    box.innerHTML='<div class="note"><b>The score program is off.</b> '+esc(bizGet().name)+
+      ' has not turned on '+PERF_UI_NAME+'. An admin enables it under Admin → Company, which is also where the rule catalog lives. Nothing is scored until then.</div>';
+    return;
+  }
+  if(!can('view_scorecard')){
+    box.innerHTML='<div class="note">Team standings are a management view. Your own score is on your profile.</div>';
+    return;
+  }
+  const P=perfPeriodNow();
+  let rows=perfStandings();
+  const divs=['All'].concat(bizDivisions().map(d=>d.name));
+  if(PERF_DIV!=='All') rows=rows.filter(r=>r.div&&r.div.name===PERF_DIV);
+  const q=norm(PERF_Q);
+  if(q) rows=rows.filter(r=>norm(empName(r.p)).indexOf(q)>-1||norm(r.p.title||'').indexOf(q)>-1);
+  const scored=rows.filter(r=>r.score!==null), unscored=rows.filter(r=>r.score===null);
+  const shown=PERF_SHOWUN?scored.concat(unscored):scored;
+
+  let head='<div class="hdr"><h3>'+esc(P.label)+' standings</h3><span class="hint">'+
+    scored.length+' scored · everyone starts the period at '+perfOps().baseline+
+    ' · the number is recomputed from the ledger every time this page draws, never stored</span></div>';
+  head+='<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0 12px">'+
+    divs.map(d=>'<button class="sm'+(PERF_DIV===d?' on':'')+'" onclick="perfSetDiv(\''+esc(d).replace(/'/g,"\\'")+'\')">'+esc(d)+'</button>').join('')+
+    '<input id="perfQ" placeholder="Search name or role…" value="'+esc(PERF_Q)+'" oninput="perfSetQ(this.value)" style="margin-left:auto;max-width:220px">'+
+    '<button class="sm'+(PERF_SHOWUN?' on':'')+'" onclick="perfToggleUnscored()">Show not-scored</button>'+
+    '</div>';
+
+  if(!shown.length){ box.innerHTML=head+'<div class="note">Nobody matches that.</div>'; return; }
+  const bandCls={ok:'ok',watch:'mid',pip:'mid',risk:'bad'};
+  let h='<div class="standGrid">';
+  shown.forEach(r=>{
+    const p=r.p, un=r.score===null;
+    h+='<div class="standCard'+(un?' un':'')+'" onclick="openEmp(\''+esc(p.id)+'\')" role="button" tabindex="0" '+
+      'onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();openEmp(\''+esc(p.id)+'\')}">'+
+      '<div class="standRank">'+(r.rank?('#'+r.rank):'<span class="note">—</span>')+'</div>'+
+      empAvatar(p,56,false)+
+      '<div class="standWho"><div class="nm">'+esc(empName(p))+'</div>'+
+        '<div class="note">'+esc(p.title||'No title')+(r.div?' · '+esc(r.div.name):'')+'</div>'+
+        '<div class="note">'+(r.tenure?esc(perfTenureText(p)):'<span class="note">tenure not recorded</span>')+'</div></div>'+
+      '<div class="standScore">'+
+        (un?'<span class="pill n">NOT SCORED</span>'
+           :'<div class="num">'+r.score+'</div><span class="pill '+(bandCls[r.band.id]||'n')+'">'+esc(r.band.label)+'</span>'+
+            '<div class="note">'+r.events+' event'+(r.events===1?'':'s')+'</div>')+
+      '</div></div>';
+  });
+  h+='</div>';
+  if(unscored.length&&PERF_SHOWUN) h+='<div class="note" style="margin-top:10px">'+unscored.length+
+    ' '+(unscored.length===1?'person is':'people are')+' not part of the score program — shown as <b>Not scored</b> rather than given a number nobody earned.</div>';
+  box.innerHTML=head+h;
+}
+
+/* ============================================================
+   PERFORMANCE SCORE — the win / strike / major-loss ledger.
+
+   NAMING. This app already uses two neighbouring words for other
+   things: the "Scoreboard" tab is sales production against the comp
+   standard, and "Scorecard" is reserved for the EOS weekly KPI
+   feature. This domain is neither, so it is Performance Score
+   throughout (namespace: perf*). Renaming it later is a label change
+   in PERF_UI_NAME, not a data migration.
+
+   ARCHITECTURE.
+   - The score is DERIVED on every read: baseline + the points on the
+     employee's un-voided events inside the current period. No current
+     score is ever stored, so nothing can drift from the ledger.
+   - Events are APPEND-ONLY. Points are COPIED onto the event when it
+     is recorded, so re-pricing a rule tomorrow cannot rewrite what
+     happened yesterday. A mistake is voided (with a reason, by a
+     named person, at a recorded time) — never deleted, never edited.
+   - Identity is the permanent employee id and nothing else. Renames,
+     email changes, division moves and becoming a former team member
+     leave the ledger untouched, because none of those are what the
+     ledger points at.
+   - ALP's numbers are COMPANY CONFIGURATION on the business record
+     (baseline, period, bands) plus a rule catalog the company owns —
+     not constants buried in this file. That is what makes the engine
+     sellable to a second business without a rewrite.
+   ============================================================ */
+const PERF_UI_NAME='Performance Score';
+// Shipped defaults = ALP's current policy, expressed as configuration.
+// A business that never opens the settings still gets sane behaviour;
+// one that does gets to disagree without a code change.
+const PERF_DEFAULTS={
+  enabled:false,          // opt-in, exactly like EOS — a product choice, never a permission
+  baseline:100,           // where every participating employee starts the period
+  period:'calendar-year', // the only shape implemented today; the seam is here for others
+  bands:[                 // ordered high→low; min is inclusive, the last one catches the rest
+    {id:'ok',   min:85, label:'On Track',      note:'Company standard.'},
+    {id:'watch',min:70, label:'Needs Attention',note:'Manager coaching and a 30-day check-in.'},
+    {id:'pip',  min:60, label:'Improvement Plan',note:'30–90 day plan; raises paused.'},
+    {id:'risk', min:null,label:'High Risk',    note:'Immediate plan or review.'}
+  ]
+};
+function perfOps(){
+  const o=(bizGet().ops||{}).perf;
+  const d=PERF_DEFAULTS;
+  if(!o||typeof o!=='object') return {enabled:d.enabled,baseline:d.baseline,period:d.period,bands:d.bands.slice()};
+  return {enabled:!!o.enabled,
+    baseline:(o.baseline===undefined||o.baseline===null||isNaN(+o.baseline))?d.baseline:+o.baseline,
+    period:o.period||d.period,
+    bands:(Array.isArray(o.bands)&&o.bands.length)?o.bands:d.bands.slice()};
+}
+function perfOpsSet(patch){
+  if(!can('admin_security')){ toast('The score program is an admin setting'); return null; }
+  const cur=(BIZ&&typeof BIZ==='object')?BIZ:bizGet();
+  BIZ=Object.assign({},cur);
+  Object.keys(BIZ).forEach(k=>{ if(k.charAt(0)==='_') delete BIZ[k]; });
+  BIZ.ops=Object.assign({},BIZ.ops||{});
+  const was=perfOps();
+  BIZ.ops.perf=Object.assign({},was,patch||{});
+  save(K_BIZ,BIZ); bizDirty();
+  auditRecord('perf-config',{was:JSON.stringify(was).slice(0,200), now:JSON.stringify(BIZ.ops.perf).slice(0,200)});
+  return perfOps();
+}
+function businessUsesPerf(){ return !!perfOps().enabled; }
+
+/* ---- PERIOD ----------------------------------------------------
+   Every period boundary in this engine goes through these two
+   functions and nowhere else, so a future quarterly or fiscal period
+   is one function, not a hunt for hard-coded January dates. Dates are
+   compared as YYYY-MM-DD strings against the BUSINESS clock, so a
+   manager in another timezone never sees a different period than the
+   shop does. */
+function perfPeriodOf(iso){
+  const d=String(iso||todayISO());
+  if(perfOps().period==='calendar-year'){
+    const y=d.slice(0,4);
+    return {id:y, label:y, from:y+'-01-01', to:y+'-12-31'};
+  }
+  const y=d.slice(0,4);   // unknown period shape: fall back to the year rather than inventing one
+  return {id:y, label:y, from:y+'-01-01', to:y+'-12-31'};
+}
+function perfPeriodNow(){ return perfPeriodOf(todayISO()); }
+
+/* ---- PARTICIPATION ---------------------------------------------
+   p.inScore is this program's own flag. It is deliberately NOT the
+   existing p.scored, which already means "this person's production
+   plan carries a pass/fail standard" — a different question with a
+   different answer for the same person.
+   Undefined means nobody has decided yet: an active employee takes
+   part by default, and an admin excludes leadership explicitly. No
+   name list is hard-coded here — who is exempt is ALP's decision to
+   record, not this file's to assume. */
+function perfIncluded(p){
+  if(!p||p.id===EMP_UNASSIGNED) return false;
+  if(p.inScore===false) return false;
+  if(p.inScore===true) return true;
+  return !!p.active;
+}
+function perfSetIncluded(empId,on,why){
+  if(!can('manage_employees')&&!can('admin_security')){ toast('That is not part of your access'); return false; }
+  const p=person(empId); if(!p) return false;
+  const was=perfIncluded(p);
+  p.inScore=!!on;
+  if(was!==!!on){
+    empLog(p,'score-participation',{from:was,to:!!on,why:String(why||'')});
+    auditRecord('perf-participation',{emp:empId,from:was,to:!!on,why:String(why||'').slice(0,140)});
+  }
+  save(K_PEOPLE,PEOPLE);
+  return true;
+}
+
+/* ---- RULE CATALOG ----------------------------------------------
+   The reasons a score can move, owned by the company. Editing a rule
+   changes what FUTURE events are worth and nothing else — every past
+   event carries its own frozen copy of the points. Rules are archived,
+   never deleted, so an old event can always name the rule it came
+   from. */
+function perfRuleOf(id){ return PERFRULES.find(r=>r.id===id)||null; }
+function perfRules(opts){
+  const all=(opts&&opts.includeArchived)?PERFRULES:PERFRULES.filter(r=>!r.archived);
+  const order={WIN:0,STRIKE:1,MAJOR:2,ADJUST:3};
+  return all.slice().sort((a,b)=>(order[a.cat]-order[b.cat])||((a.sort||0)-(b.sort||0))||String(a.label).localeCompare(String(b.label)));
+}
+const PERF_CATS={WIN:'Win', STRIKE:'Strike', MAJOR:'Major loss', ADJUST:'Adjustment'};
+function perfRuleCreate(cat,label,points,extra){
+  if(!can('manage_score_rules')){ toast('The rule catalog is an admin record'); return null; }
+  label=String(label||'').trim();
+  if(!PERF_CATS[cat]){ toast('Pick a category'); return null; }
+  if(!label){ toast('The rule needs a name'); return null; }
+  const pts=Math.round(+points);
+  if(!isFinite(pts)||pts===0){ toast('A rule that moves the score by zero is not a rule'); return null; }
+  const dup=PERFRULES.find(r=>norm(r.label)===norm(label)&&r.cat===cat&&!r.archived);
+  if(dup){ toast('“'+dup.label+'” already exists — that rule was reused, not duplicated'); return dup; }
+  const r=Object.assign({id:uid('sr'), biz:bizId(), cat:cat, label:label, points:pts,
+    note:'', sort:PERFRULES.filter(x=>x.cat===cat).length, archived:false,
+    on:todayISO(), t:new Date().toISOString(), by:empWho()||''}, extra||{});
+  PERFRULES.push(r); save(K_PERFRULES,PERFRULES);
+  auditRecord('perf-rule-create',{id:r.id,cat:r.cat,label:r.label,points:r.points});
+  return r;
+}
+function perfRuleUpdate(id,patch){
+  if(!can('manage_score_rules')){ toast('The rule catalog is an admin record'); return false; }
+  const r=perfRuleOf(id); if(!r) return false;
+  ['label','points','note','sort'].forEach(k=>{
+    if(patch[k]===undefined) return;
+    const now=(k==='points')?Math.round(+patch[k]):(k==='sort'?+patch[k]:patch[k]);
+    if(k==='points'&&(!isFinite(now)||now===0)) return;
+    if(String(r[k])===String(now)) return;
+    auditRecord('perf-rule-edit',{id,k,was:String(r[k]).slice(0,80),now:String(now).slice(0,80)});
+    r[k]=now;
+  });
+  save(K_PERFRULES,PERFRULES);
+  return true;
+}
+function perfRuleArchive(id,on){
+  if(!can('manage_score_rules')){ toast('The rule catalog is an admin record'); return false; }
+  const r=perfRuleOf(id); if(!r) return false;
+  r.archived=(on===undefined)?true:!!on;
+  save(K_PERFRULES,PERFRULES);
+  auditRecord('perf-rule-archive',{id,archived:r.archived});
+  return true;
+}
+
+/* ---- THE LEDGER ------------------------------------------------
+   One row per thing that happened. Written once, voided at most once,
+   edited never. Everything needed to answer "why is this number what
+   it is" a year from now travels ON the row: who it was about, what
+   the rule was called and what it was worth AT THE TIME, who recorded
+   it, when it happened, when it was written down, and the note. */
+function perfEventsOf(empId,period){
+  const P=period||perfPeriodNow();
+  return PERFEVENTS.filter(e=>e&&e.emp===empId&&!e.void&&e.on>=P.from&&e.on<=P.to);
+}
+function perfLedgerOf(empId,period){   // voided rows INCLUDED — this is the audit view
+  const P=period||perfPeriodNow();
+  return PERFEVENTS.filter(e=>e&&e.emp===empId&&e.on>=P.from&&e.on<=P.to)
+    .slice().sort((a,b)=>(a.on<b.on?1:a.on>b.on?-1:String(b.t||'').localeCompare(String(a.t||''))));
+}
+function perfLog(empId,ruleId,opts){
+  if(!can('log_score_event')){ toast('Logging a score event is not part of your access'); return null; }
+  const p=person(empId);
+  if(!p){ toast('No team member with that id'); return null; }
+  if(!perfIncluded(p)){ toast(empShort(p)+' is not part of the score program'); return null; }
+  const r=perfRuleOf(ruleId);
+  if(!r){ toast('Pick a reason from the catalog'); return null; }
+  if(r.archived){ toast('That rule is archived — pick a current one'); return null; }
+  const o=opts||{};
+  const on=String(o.on||todayISO()).slice(0,10);
+  // A date the business has not reached yet is a typo, not a plan. Accepting it
+  // would bank an event that shows in the ledger but not in the score — the
+  // reference app's silent divergence. Refuse it at the door instead.
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(on)){ toast('That is not a date'); return null; }
+  if(on>todayISO()){ toast('That date has not happened yet'); return null; }
+  const note=String(o.note||'').trim();
+  if(r.cat==='ADJUST'&&!note){ toast('An adjustment needs a reason'); return null; }
+  const e={id:uid('se'), biz:bizId(), emp:empId,
+    rule:r.id, cat:r.cat, label:r.label, points:Math.round(+r.points),   // frozen copy — history never re-prices
+    note:note, on:on, period:perfPeriodOf(on).id,
+    t:new Date().toISOString(), by:empWho()||'', byId:(empMe()||{}).id||'',
+    void:false};
+  PERFEVENTS.push(e); save(K_PERFEVENTS,PERFEVENTS);
+  empLog(p,'score-event',{rule:r.label,points:e.points,on:on});
+  auditRecord('perf-event',{id:e.id,emp:empId,name:empName(p),rule:r.label,points:e.points,on:on,note:note.slice(0,140)});
+  return e;
+}
+// A correction preserves the evidence: the row stays, marked void, with who
+// voided it, when, and why. The score stops counting it; the history never
+// stops showing it.
+function perfVoid(eventId,why){
+  if(!can('log_score_event')){ toast('That is not part of your access'); return false; }
+  const e=PERFEVENTS.find(x=>x&&x.id===eventId);
+  if(!e){ toast('No such score event'); return false; }
+  if(e.void){ toast('That event is already voided'); return false; }
+  why=String(why||'').trim();
+  if(!why){ toast('Voiding an event needs a reason'); return false; }
+  e.void=true; e.voidWhy=why; e.voidBy=empWho()||''; e.voidOn=todayISO(); e.voidT=new Date().toISOString();
+  save(K_PERFEVENTS,PERFEVENTS);
+  const p=person(e.emp); if(p) empLog(p,'score-void',{rule:e.label,points:e.points,why:why});
+  auditRecord('perf-void',{id:e.id,emp:e.emp,rule:e.label,points:e.points,why:why.slice(0,140)});
+  return true;
+}
+
+/* ---- DERIVED READS ---------------------------------------------
+   Nothing below is stored. Every one of these recomputes from the
+   ledger on each call, which is what makes the number on the screen
+   and the rows underneath it incapable of disagreeing. */
+function perfScoreOf(empId,period){
+  const p=person(empId);
+  if(!perfIncluded(p)) return null;                 // not scored — the caller must render that, not a 100
+  const base=perfOps().baseline;
+  return perfEventsOf(empId,period).reduce((s,e)=>s+(+e.points||0), base);
+}
+function perfBands(){ return perfOps().bands; }
+function perfBandOf(score){
+  if(score===null||score===undefined) return null;
+  const bands=perfBands();
+  for(let i=0;i<bands.length;i++){
+    const b=bands[i];
+    if(b.min===null||b.min===undefined||score>=b.min) return b;
+  }
+  return bands[bands.length-1]||null;
+}
+// The standings. Ties share a rank (1,2,2,4) — two people on 96 are not
+// first and second, and pretending otherwise would be the scoreboard
+// inventing a difference the ledger does not contain.
+function perfStandings(opts){
+  const P=(opts&&opts.period)||perfPeriodNow();
+  const inactive=!!(opts&&opts.includeInactive);
+  const rows=PEOPLE.filter(p=>p&&p.id!==EMP_UNASSIGNED&&(inactive||p.active)).map(p=>{
+    const score=perfScoreOf(p.id,P);
+    const ev=score===null?[]:perfEventsOf(p.id,P);
+    return {p:p, id:p.id, score:score, band:perfBandOf(score), events:ev.length,
+      div:empDivision(p), tenure:perfTenure(p), rank:null};
+  });
+  const scored=rows.filter(r=>r.score!==null).sort((a,b)=>b.score-a.score||String(empName(a.p)).localeCompare(String(empName(b.p))));
+  let last=null, lastRank=0;
+  scored.forEach((r,i)=>{ if(last!==null&&r.score===last) r.rank=lastRank; else { r.rank=i+1; lastRank=i+1; } last=r.score; });
+  return rows.sort((a,b)=>{
+    if(a.rank!==null&&b.rank!==null) return a.rank-b.rank||String(empName(a.p)).localeCompare(String(empName(b.p)));
+    if(a.rank!==null) return -1;
+    if(b.rank!==null) return 1;
+    return String(empName(a.p)).localeCompare(String(empName(b.p)));
+  });
+}
+// Running total through the period, for the trend line. Starts at the
+// baseline on day one and moves only where an event actually landed.
+function perfSeries(empId,period){
+  const P=period||perfPeriodNow();
+  const evs=perfEventsOf(empId,P).slice().sort((a,b)=>a.on<b.on?-1:a.on>b.on?1:String(a.t||'').localeCompare(String(b.t||'')));
+  let run=perfOps().baseline;
+  const out=[{on:P.from, score:run}];
+  evs.forEach(e=>{ run+=(+e.points||0); out.push({on:e.on, score:run}); });
+  return out;
+}
+// Tenure is always computed from the employment date the business already
+// records. No start date on file = null, and the UI says so. It is never
+// stored as a number that can go stale, and never guessed.
+function perfTenure(p){
+  // p.payFrom ONLY. p.start is the COMP PLAN date (commissions), and p.created is
+  // when the record was typed in — neither is an employment date, and using
+  // either as a fallback would invent a tenure the business never recorded.
+  const start=String((p&&p.payFrom)||'').slice(0,10);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(start)) return null;
+  const today=todayISO();
+  if(start>today) return null;
+  let months=(+today.slice(0,4)-+start.slice(0,4))*12+(+today.slice(5,7)-+start.slice(5,7));
+  if(+today.slice(8,10)<+start.slice(8,10)) months-=1;
+  if(months<0) months=0;
+  return {years:Math.floor(months/12), months:months%12, total:months};
+}
+function perfTenureText(p){
+  const t=perfTenure(p);
+  if(!t) return null;
+  if(t.total<1) return 'New hire';
+  if(!t.years) return t.months+' mo'+(t.months===1?'':'s');
+  if(!t.months) return t.years+' yr'+(t.years===1?'':'s');
+  return t.years+' yr'+(t.years===1?'':'s')+', '+t.months+' mo'+(t.months===1?'':'s');
+}
+// Who may see whose standing. Reading your own is not the same permission as
+// reading the team's, and neither is hidden behind a button — the callers ask
+// this, they do not check a UI flag.
+function perfCanSee(empId){
+  if(!businessUsesPerf()) return false;
+  if(can('view_scorecard')) return true;
+  const me=empMe();
+  return !!(me&&me.id===empId);
+}
+function perfCanLog(){ return businessUsesPerf()&&can('log_score_event'); }
+
+
+/* ---- ALP'S CATALOG AS CONFIGURATION -----------------------------
+   These are Automated Lawn & Pest's rules, transcribed from their
+   Scorecard workbook. They live here as SEED DATA for a one-time
+   admin action — not as engine constants — which is the whole point:
+   the engine above never reads this list, and a second company gets
+   its own catalog without touching a line of it.
+   Seeding is explicit and idempotent. It never runs at boot, never
+   re-adds a rule an admin archived or renamed, and never touches the
+   ledger. Nothing here is invented: no ALP score history existed in
+   any system before this, so none is backfilled. */
+const PERF_SEED_ALP=[
+ {cat:"WIN",label:"Client Compliment",points:5,sort:1,note:"Client calls or emails office to compliment a particular person or crew."},
+ {cat:"WIN",label:"Google Review / Facebook Recommendation",points:10,sort:2,note:"Customer mentions an employee by name in a review for a completed or maintained job. Also earns $20 cash."},
+ {cat:"WIN",label:"Leadership Team Compliment",points:5,sort:3,note:"A Leadership Team member is particularly impressed with something you did."},
+ {cat:"WIN",label:"Clean Clock-ins",points:5,sort:4,note:"Perfect in/out times on timesheet and all jobs/lunches/drives for 2 weeks straight."},
+ {cat:"WIN",label:"Clean Attendance",points:5,sort:5,note:"No late arrivals, no callouts for 4 weeks."},
+ {cat:"WIN",label:"Cleanest / Organized Truck or Trailer",points:5,sort:6,note:"Leadership checks trucks randomly; cleanest truck can be awarded points."},
+ {cat:"WIN",label:"Saturday Work — Full Day",points:5,sort:7},
+ {cat:"WIN",label:"Saturday Work — Half Day",points:3,sort:8},
+ {cat:"STRIKE",label:"Call Out",points:-5,sort:1,note:"Called out of work, for any reason."},
+ {cat:"STRIKE",label:"Tardy",points:-5,sort:2,note:"Clock in after posted/proposed start time, for any reason besides a doctor's excuse or advance notice."},
+ {cat:"STRIKE",label:"Gate Left Open on Property",points:-5,sort:3},
+ {cat:"STRIKE",label:"Crew Leader or LT Complaint",points:-5,sort:4,note:"Negative feedback about something you're doing/not doing outside company values or procedures."},
+ {cat:"STRIKE",label:"Truck Unorganized / Messy",points:-5,sort:5},
+ {cat:"STRIKE",label:"Failure to Clock In/Out",points:-5,sort:6,note:"Waived if a hardware/software issue is reported to the office immediately."},
+ {cat:"STRIKE",label:"No Gas",points:-5,sort:7,note:"Failure to fill gas cans/equipment at the end of a work day."},
+ {cat:"STRIKE",label:"General Language",points:-5,sort:8,note:"Using foul or unnecessary language, especially around customers, in office, or on jobsites."},
+ {cat:"STRIKE",label:"Supervisor Forces Callback",points:-5,sort:9,note:"After a job is marked complete, a superior (not the client) catches a problem."},
+ {cat:"STRIKE",label:"Client Complaint/Callback — No Damage",points:-10,sort:10,note:"Applies to crew leaders; applies to all crews, even 1-man crews."},
+ {cat:"STRIKE",label:"Bad Driving / Traffic Violation",points:-10,sort:11,note:"Called-in complaint, traffic ticket, or red-light ticket in a company truck."},
+ {cat:"STRIKE",label:"Complaint/Callback or Damage Under $50",points:-15,sort:12},
+ {cat:"STRIKE",label:"Complaint/Callback with Damage Over $50",points:-20,sort:13,note:"Includes truck and trailer damage (unless not at fault) and window breaks."},
+ {cat:"STRIKE",label:"Hand Snip Inspection Fail",points:-20,sort:14,note:"Non-spray techs must have hand snips present and working for the weekly Monday inventory meeting."},
+ {cat:"MAJOR",label:"No Call No Show",points:-25,sort:1,note:"Does not show up all day without calling. Possible termination, written warning."},
+ {cat:"MAJOR",label:"Failing to Meet a Core Value",points:-25,sort:2,note:"Acting unreasonably after feedback, 'that's not my job' attitude, shifting blame. Possible termination, written warning."},
+ {cat:"MAJOR",label:"Disrespectful to Supervisor or Client",points:-30,sort:3,note:"Possible termination, written warning."},
+ {cat:"MAJOR",label:"Drug or Alcohol Use During Work",points:-30,sort:4,note:"Zero tolerance. Likely termination, written warning."},
+ {cat:"MAJOR",label:"Consistently Negative Attitude",points:-30,sort:5,note:"Likely termination, written warning."},
+];
+function perfSeedCatalog(){
+  if(!can('manage_score_rules')){ toast('The rule catalog is an admin record'); return 0; }
+  let made=0, had=0;
+  PERF_SEED_ALP.forEach(spec=>{
+    // Match on the rule's own identity (category + name), including archived
+    // ones — re-running this must never resurrect something an admin retired.
+    if(PERFRULES.some(r=>r.cat===spec.cat&&norm(r.label)===norm(spec.label))){ had++; return; }
+    PERFRULES.push({id:uid('sr'), biz:bizId(), cat:spec.cat, label:spec.label,
+      points:spec.points, note:spec.note||'', sort:spec.sort||0, archived:false,
+      src:'alp-workbook', on:todayISO(), t:new Date().toISOString(), by:empWho()||''});
+    made++;
+  });
+  if(made){ save(K_PERFRULES,PERFRULES); auditRecord('perf-seed',{created:made,existing:had}); }
+  toast(made?(made+' rule'+(made===1?'':'s')+' added'+(had?' · '+had+' already there':'')):'Every rule is already in the catalog');
+  return made;
+}
+
 /* ============================================================
    EOS ROLES — the canonical seat, separate from job title, division,
    and system permissions. The ROLE ID is identity; the name is display
@@ -4371,7 +4886,8 @@ const CKPT_KEEP=4;   // in-browser quick-restore snapshots; the download is the 
 function checkpointCounts(){
   return {clients:CLIENTS.length, leads:CLIENTS.filter(isLead).length, people:PEOPLE.length,
     rows:ROWS.length, invoices:INVOICES.length, payments:PAYMENTS.length, payouts:PAYOUTS.length,
-    tsheet:TSHEET.length, eosroles:EOSROLES.length, overrides:OVERRIDES.length};
+    tsheet:TSHEET.length, eosroles:EOSROLES.length, overrides:OVERRIDES.length,
+    perfrules:PERFRULES.length, perfevents:PERFEVENTS.length};
 }
 function checkpointCreate(label,kind){
   const id=uid('ck'), snap=stateSnapshot();
@@ -4465,6 +4981,11 @@ const DATA_OWNERSHIP=[
   outbound:[{dst:'future Google Doc publish', cls:'planned output only'}],
   srcIds:'permanent role id (er…) + assignment ids (ea…); names are display',
   conflict:'the APP role wins unless an authorized user explicitly approves an inbound change; renames keep the id; occupancy history is append-and-close, never rewritten', auto:false},
+ {domain:'Performance Score', store:'PERFRULES + PERFEVENTS (alp_perfrules_v1 / alp_perfevents_v1)', owner:'app',
+  inbound:[{src:'ALP Scorecard workbook', cls:'migration', why:'the rule catalog is seeded once by an admin action; no score history existed anywhere before this, so nothing is backfilled or invented'}],
+  outbound:[], srcIds:'rule ids (sr…) + event ids (se…); events point at the permanent employee id',
+  conflict:'append-only ledger — an event is voided with a reason, never edited or deleted; the current score is DERIVED on every read and never stored; rule edits price future events only, because each event carries its own frozen points',
+  auto:false},
  {domain:'Scorecards / KPIs', store:'(derived, never stored)', owner:'app',
   inbound:[], outbound:[{dst:'future Google publish', cls:'planned output only'}],
   srcIds:'n/a', conflict:'recomputed from canonical engines on every read', auto:false},
@@ -5455,6 +5976,7 @@ const TABS=[
   ['hours','Hours','view_own_sales','Sales hours logged against the projection'],
   ['clients','Clients','view_clients','The Service Autopilot roster, leads and sources'],
   ['roster','Team','','Everyone on the roster'],
+  ['stand','Standings','view_scorecard','Where everyone stands on the Performance Score — wins, strikes and rank'],
   ['svc','Services','','What we do and when we do it'],
   ['prop','Property','view_properties','Property measurements against what gets sold'],
   ['map','Map','view_properties','Locations, proximity and canvassing prompts'],
@@ -5493,12 +6015,13 @@ const NAV_PRIMARY={view:['view','sales','clients','invoices','roster','comm'],
 const NAV_GROUPS={sales:['sales','pipe'],
                   clients:['clients','prop','map','svc'],
                   invoices:['invoices','rev'],
-                  roster:['roster','score','hours','team'],
+                  roster:['roster','stand','score','hours','team'],
                   comm:['comm','adj','plans']};
 // The More menu, grouped by what the pages are FOR — never again a flat
 // 17-item dropdown. Anything visible but unlisted lands in the last group,
 // so no tab can ever become unreachable by omission.
-const NAV_MORE=[['Selling',['pipe','score','hours']],
+const NAV_MORE=[['Team',['stand']],
+                ['Selling',['pipe','score','hours']],
                 ['Clients & field',['prop','map','svc']],
                 ['Money',['rev','adj','plans','team']],
                 ['Oversight',['hawk','import','admin']]];
@@ -5654,6 +6177,7 @@ function render(){
       if(can('admin_security')){ fillPeople('claimRep','','Pick a salesperson'); renderClaimPrev(); } }
     renderInvoices();
   }
+  if(TAB==='stand') renderStandings();
   if(TAB==='me') renderMeHome(); if(TAB==='mgr') renderMgrHome(); if(TAB==='cx') renderCxHome();
   if(TAB==='bill') renderBillHome(); if(TAB==='mine') renderMineHome();
   if(EP_ID) renderEmp();
@@ -15784,7 +16308,8 @@ function stateSnapshot(){   // v6: employee identity fields (first/last/photo/al
     takeovers:TAKEOVERS,openinv:OPENINV,balsyncs:BALSYNC,paidinv:PAIDINV,pdisyncs:PDISYNC,
     invlinks:INVLINKS,invclimap:INVCLIMAP,invassign:INVASSIGN,
     tombstones:TOMBSTONES,oscs:OSCS,global:GLOBAL,biz:BIZ,
-    tsheet:TSHEET,payper:PAYPER,tsimp:TSIMP,eosroles:EOSROLES,eosassign:EOSASSIGN,overrides:OVERRIDES};
+    tsheet:TSHEET,payper:PAYPER,tsimp:TSIMP,eosroles:EOSROLES,eosassign:EOSASSIGN,overrides:OVERRIDES,
+    perfrules:PERFRULES,perfevents:PERFEVENTS};
 }
 function backup(){
   // Gated in the header too, but the guard belongs in the function: a whole-state
@@ -15833,6 +16358,25 @@ function restore(e){
     if(Array.isArray(d.eosroles)&&!EOSROLES.length){ EOSROLES=d.eosroles; save(K_EOSROLES,EOSROLES); }
     if(Array.isArray(d.eosassign)&&!EOSASSIGN.length){ EOSASSIGN=d.eosassign; save(K_EOSASSIGN,EOSASSIGN); }
     if(Array.isArray(d.overrides)){ ovMerge(d.overrides); save(K_OVERRIDE,OVERRIDES); ovApply(); }
+    // Performance Score. The rule catalog restores wholesale only into an empty
+    // one (a rule id is referenced by events, so it keeps its id). The ledger
+    // merges BY EVENT ID and follows the employee through idMap, exactly like
+    // the sales rows above — a restore must never duplicate a strike, and must
+    // never leave one pointing at an employee id this device does not have.
+    // Voided rows come back voided: a correction is part of the history.
+    if(Array.isArray(d.perfrules)&&!PERFRULES.length){ PERFRULES=d.perfrules; save(K_PERFRULES,PERFRULES); }
+    if(Array.isArray(d.perfevents)){
+      const have=new Set(PERFEVENTS.map(e=>e&&e.id));
+      let addedS=0;
+      d.perfevents.forEach(be=>{
+        if(!be||have.has(be.id)) return;
+        const e=Object.assign({},be);
+        e.emp=idMap[be.emp]||be.emp;
+        if(!person(e.emp)) return;   // an event about nobody this device knows is dropped, not re-homed onto a stranger
+        have.add(e.id); PERFEVENTS.push(e); addedS++;
+      });
+      if(addedS){ save(K_PERFEVENTS,PERFEVENTS); restoreNotes.push(addedS+' score event'+(addedS===1?'':'s')+' restored'); }
+    }
     const key=r=>r.rep+'|'+r.date+'|'+String(r.client).toLowerCase()+'|'+bookedValue(r).toFixed(2);
     // Restored sales are given fresh ids, so the payout ledger has to be told where each
     // one went. Without this map, every restored payout still pointed at the backup's old
@@ -15966,12 +16510,17 @@ const CAP_LIST=[
   'view_clients','edit_clients','view_properties','view_client_financials',
   'edit_sales','manage_employees','manage_comp_plans','manage_imports',
   'view_data_hawk','resolve_data_hawk','view_team_cost','view_revenue',
-  'export_data','admin_security'
+  'export_data','admin_security',
+  // Performance Score. Reading someone's standing, changing it, and owning the
+  // rule catalog are three different jobs — a manager who may log a strike is
+  // not thereby allowed to redefine what a strike is worth.
+  'view_scorecard','log_score_event','manage_score_rules'
 ];
 const ROLE_CAPS={
   owner:    CAP_LIST.slice(),
   manager:  ['view_own_sales','view_team_sales','view_own_commission','view_team_commission',
-             'view_clients','edit_clients','view_properties','edit_sales','view_data_hawk','view_revenue'],
+             'view_clients','edit_clients','view_properties','edit_sales','view_data_hawk','view_revenue',
+             'view_scorecard','log_score_event'],
   sales:    ['view_own_sales','view_own_commission','view_clients','view_properties','edit_sales','edit_clients'],
   estimator:['view_own_sales','view_own_commission','view_clients','view_properties','edit_sales','edit_clients'],
   csr:      ['view_clients','edit_clients','view_properties','view_data_hawk'],
@@ -17296,6 +17845,10 @@ function renderEmp(){
   if(D.inv.length) secs.push(['invoices','Invoices ('+D.inv.length.toLocaleString()+')']);
   if(money$ && empIsSales(p) && D.rows.length) secs.push(['comm','Commissions']);
   if(D.accts.length) secs.push(['accounts','Accounts ('+D.accts.length.toLocaleString()+')']);
+  // The Performance Score is a SECTION of the canonical profile, not a second
+  // employee page. It appears only where the program is on and the viewer is
+  // allowed the standing (their own, or the team's).
+  if(perfCanSee(p.id)) secs.push(['score',PERF_UI_NAME]);
   secs.push(['history','History']); secs.push(['account','Account']);
   if(!secs.some(x=>x[0]===EP_SEC)) EP_SEC='overview';
   let h='<div class="ephead">'+empAvatar(p,72,true)+'<div style="flex:1;min-width:0"><div class="nm">'+esc(empName(p))+(empIsSales(p)?' <span class="pill sales" style="vertical-align:middle">SALES</span>':'')+'</div>'+
@@ -17485,6 +18038,67 @@ function renderEmp(){
       h+='<tr><td><a href="#" onclick="openClient('+JSON.stringify(c.n).replace(/"/g,'&quot;')+');return false"><b>'+esc(c.n)+'</b></a></td><td>'+esc(c.ct||'')+'</td><td class="note">'+(c.addr?mapLink(c):esc(c.city||''))+'</td><td class="mono">'+(c.since?fmtY(c.since):c.lead?fmtY(c.lead):'—')+'</td><td class="note">'+esc(c.sp||'')+(c.spWas?' <span class="note">(was '+esc(c.spWas)+')</span>':'')+'</td></tr>';
     });
     h+='</tbody></table></div>'+(D.accts.length>500?'<div class="note">Showing 500 of '+D.accts.length.toLocaleString()+'.</div>':'');
+  }
+  else if(EP_SEC==='score'){
+    const P=perfPeriodNow(), sc=perfScoreOf(p.id,P), bd=perfBandOf(sc);
+    const led=perfLedgerOf(p.id,P), live=led.filter(e=>!e.void);
+    const st=perfStandings({includeInactive:!p.active}).find(x=>x.id===p.id);
+    const ten=perfTenureText(p);
+    if(sc===null){
+      h+='<div class="note" style="margin-bottom:10px"><b>Not scored.</b> '+esc(empShort(p))+
+        ' is not part of the score program'+(p.active?'':' (former team member)')+
+        ', so there is no score to show — not a 100. An admin can change that on the Team record.</div>';
+    } else {
+      h+='<div class="tiles small">'+
+        epTile('Score',String(sc),'started the period at '+perfOps().baseline+' · '+
+          live.length+' event'+(live.length===1?'':'s')+' counted')+
+        epTile('Standing',bd?esc(bd.label):'—',bd&&bd.note?esc(bd.note):'')+
+        epTile('Rank',(st&&st.rank)?('#'+st.rank):'—',
+          (st&&st.rank)?('of '+perfStandings().filter(x=>x.score!==null).length+' scored'+
+            (perfStandings().filter(x=>x.score===sc&&x.score!==null).length>1?' · tied':'')):'not ranked')+
+        epTile('Period',esc(P.label),esc(P.from)+' → '+esc(P.to))+
+        epTile('Time with '+esc(bizGet().name),ten?esc(ten):'<span class="note">not recorded</span>',
+          ten?'from the employment start date':'no start date on file — nothing is guessed')+
+      '</div>';
+      h+=perfSparkHTML(perfSeries(p.id,P), bd);
+    }
+    if(perfCanLog()&&sc!==null){
+      const rules=perfRules();
+      if(!rules.length){
+        h+='<div class="note" style="margin:12px 0"><b>No rules yet.</b> The score cannot move until the company’s catalog exists — an admin sets it up under Admin.</div>';
+      } else {
+        const grp=['WIN','STRIKE','MAJOR','ADJUST'].filter(c=>rules.some(r=>r.cat===c));
+        h+='<div style="margin:14px 0;padding:12px;border:1px solid var(--line);border-radius:8px">'+
+          '<b>Log an event</b><div class="note" style="margin:2px 0 8px">Points are copied onto the event as it is written, so re-pricing this rule later cannot change what today was worth.</div>'+
+          '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end">'+
+          '<label style="flex:2;min-width:220px">Reason<select id="pfRule">'+
+            grp.map(c=>'<optgroup label="'+esc(PERF_CATS[c])+'">'+rules.filter(r=>r.cat===c)
+              .map(r=>'<option value="'+esc(r.id)+'">'+esc(r.label)+' ('+(r.points>0?'+':'')+r.points+')</option>').join('')+'</optgroup>').join('')+
+          '</select></label>'+
+          '<label style="flex:1;min-width:140px">Date<input type="date" id="pfOn" value="'+esc(todayISO())+'" max="'+esc(todayISO())+'"></label>'+
+          '<label style="flex:2;min-width:200px">Note<input id="pfNote" placeholder="what happened"></label>'+
+          '<button class="p sm" onclick="perfLogUI(\''+esc(p.id)+'\')">Log it</button>'+
+          '</div></div>';
+      }
+    }
+    h+='<h3 style="margin:16px 0 6px">This period’s events</h3>';
+    if(!led.length) h+='<div class="note">Nothing logged in '+esc(P.label)+' yet. The score is the baseline until something happens.</div>';
+    else {
+      h+='<div class="scroll"><table><thead><tr><th>Date</th><th>Reason</th><th class="num">Points</th><th>Note</th><th>Recorded</th><th></th></tr></thead><tbody>';
+      led.forEach(e=>{
+        const v=!!e.void;
+        h+='<tr'+(v?' style="opacity:.55"':'')+'><td>'+esc(e.on)+'</td>'+
+          '<td>'+esc(e.label)+' <span class="pill n">'+esc(PERF_CATS[e.cat]||e.cat)+'</span>'+
+            (v?' <span class="pill bad">VOID</span>':'')+'</td>'+
+          '<td class="num"'+(v?'':' style="font-weight:600"')+'>'+(v?'<s>':'')+(e.points>0?'+':'')+e.points+(v?'</s>':'')+'</td>'+
+          '<td class="note">'+esc(e.note||'')+(v?'<div class="note">voided: '+esc(e.voidWhy||'')+'</div>':'')+'</td>'+
+          '<td class="note">'+esc(String(e.t||'').replace('T',' ').slice(0,16))+(e.by?'<br>'+esc(e.by):'')+
+            (v?'<div class="note">void by '+esc(e.voidBy||'')+' '+esc(e.voidOn||'')+'</div>':'')+'</td>'+
+          '<td class="num">'+((!v&&perfCanLog())?'<button class="sm" onclick="perfVoidUI(\''+esc(e.id)+'\')">Void</button>':'')+'</td></tr>';
+      });
+      h+='</tbody></table></div>';
+      h+='<div class="note" style="margin-top:6px">A mistake is voided, never deleted — the row stays, with who voided it and why. Voided events stop counting toward the score the moment they are voided.</div>';
+    }
   }
   else if(EP_SEC==='history'){
     const T=empTimeline(D);
