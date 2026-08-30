@@ -29,6 +29,19 @@ Naming: this app already uses *Scoreboard* for sales production against the comp
 standard, and reserves *Scorecard* for the EOS weekly KPI feature. This is a
 third thing, so it is **Performance Score** throughout (`PERF_UI_NAME`).
 
+The rule catalog and bands were verified cell-by-cell against the live ALP
+Scorecard workbook (all 27 rules and the 100 / 85 / 70 / 60 bands match).
+
+## People Analyzer (GWC + core values)
+A second, separate evaluation dimension — never blended into the numeric score.
+Ratings (➕ / (+/-) / ➖ across Get It, Want It, Capacity, Diligent, Adaptable,
+Disciplined) are an append-only history keyed to the permanent employee id; the
+newest snapshot is current and THE BAR verdict (any ➖ fails; one (+/-) allowed)
+is derived on read. `gwcSeedFromWorkbook()` imports the workbook's ratings as a
+one-time admin action: names resolve through the roster, unmatched names are
+reported (never created), blanks stay blank, and re-running never duplicates.
+Both live under Admin → Company settings → Operating system.
+
 ## Running the tests
 Open `ALP Sales Tracker.html#selftest` in a browser, or call
 `ALP_runRegression()` from the console.

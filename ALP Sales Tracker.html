@@ -2073,6 +2073,9 @@ td input[type=date]{font-size:12.5px;padding:4px 6px;max-width:142px}
       <label style="display:flex;gap:7px;align-items:center;margin-top:5px;font-size:13px">
         <input type="checkbox" id="bizEos"> EOS / Traction — Roles, Accountability and Scorecard features
         <span id="bizEosStatus"></span></label>
+      <label style="display:flex;gap:7px;align-items:center;margin-top:5px;font-size:13px">
+        <input type="checkbox" id="bizPerf"> Performance Score — the win / strike / major-loss ledger and Standings page
+        <span id="bizPerfStatus"></span></label>
       <div style="margin-top:10px"><b style="font-size:12px">Divisions</b>
         <span class="hint">the service lines this business operates — one per line; employees link through the Department on their record</span></div>
       <textarea id="bizDivs" rows="4" style="width:100%;max-width:340px;margin-top:5px;font:inherit"></textarea>
@@ -3069,6 +3072,7 @@ const K_EOSROLES='alp_eosroles_v1';   // canonical EOS Roles (seats) — id-keye
 const K_EOSASSIGN='alp_eosassign_v1'; // role assignment history — who holds/held each seat
 const K_PERFRULES='alp_perfrules_v1';  // Performance Score rule catalog — company config, not app logic
 const K_PERFEVENTS='alp_perfevents_v1';// Performance Score ledger — append-only, void-not-delete
+const K_GWC='alp_gwc_v1';             // People Analyzer (GWC + core values) ratings — append-only history
 const K_OVERRIDE='alp_overrides_v1';  // ADMIN_OVERRIDE: manual field corrections that survive imports
 const K_CKPTMETA='alp_ckpt_meta_v1';  // recovery-checkpoint index (metadata only)
 const K_CKPT='alp_ckpt_';             // per-checkpoint snapshot key prefix — NOT part of the synced doc
@@ -3133,6 +3137,7 @@ let EOSROLES = load(K_EOSROLES,[]);  // EOS seats — the role IS the id, the na
 let EOSASSIGN= load(K_EOSASSIGN,[]); // seat occupancy history — open entries have to:''
 let PERFRULES = load(K_PERFRULES,[]);  // scoreable reasons {id,biz,cat,label,points,...} — the company's catalog
 let PERFEVENTS= load(K_PERFEVENTS,[]); // score ledger {id,biz,emp,rule,points,on,t,by,void} — never rewritten
+let GWC       = load(K_GWC,[]);        // People Analyzer snapshots {id,biz,emp,getIt..disciplined,on,t,by} — latest wins, history kept
 let OVERRIDES= load(K_OVERRIDE,[]);  // {id,dom,ref,field,value,by,on,t} — admin corrections that outrank imports
 let CKPTS    = load(K_CKPTMETA,[]);  // recovery checkpoint index — snapshots live in K_CKPT+id, never synced
 const POLICY_DEFAULT={
@@ -4248,6 +4253,28 @@ function perfLogUI(empId){
   if(nt) nt.value='';
   renderEmp(); render();
 }
+function gwcSeedUI(){
+  const out=gwcSeedFromWorkbook();
+  if(!out) return;
+  if(out.unmatched.length){
+    alert('Imported '+out.applied+' rating'+(out.applied===1?'':'s')+'.\n\n'+
+      'Not on the roster (nothing was created for them):\n· '+out.unmatched.join('\n· ')+'\n\n'+
+      'Add them on the Team tab (or confirm the name in the roster health panel), then run this import again — it only fills the gaps, it never duplicates.');
+  }
+  renderBiz(); if(typeof render==='function') render();
+}
+function gwcRecordUI(empId){
+  const ratings={};
+  for(const [k] of GWC_DIMS){
+    const el=document.getElementById('gw_'+k); if(!el) return;
+    ratings[k]=el.value;
+  }
+  const g=gwcRecord(empId, ratings, {});
+  if(!g) return;
+  const bar=gwcBar(g);
+  toast('Rating saved — '+(bar.ok?'meets the bar':'below the bar'));
+  renderEmp();
+}
 function perfVoidUI(eventId){
   const e=PERFEVENTS.find(x=>x&&x.id===eventId); if(!e) return;
   const why=prompt('Void this event ('+e.label+', '+(e.points>0?'+':'')+e.points+')?\n\nThe row stays in the history with your name on the correction. Why is it being voided?');
@@ -4654,6 +4681,117 @@ function perfCanSee(empId){
 function perfCanLog(){ return businessUsesPerf()&&can('log_score_event'); }
 
 
+/* ============================================================
+   PEOPLE ANALYZER (GWC + CORE VALUES) — the second evaluation
+   dimension, deliberately SEPARATE from the Performance Score. A
+   rating is a leadership judgment (Get it / Want it / Capacity, plus
+   the three core values); the score is an arithmetic ledger. Nothing
+   here ever feeds the score, and nothing in the score ever colours a
+   rating — the workbook keeps them side by side and so do we.
+
+   Ratings are an append-only HISTORY keyed to the permanent employee
+   id: the newest snapshot is the current rating, and every older one
+   stays, so "how did this person trend across quarterlies" is a real
+   question the data can answer. Nobody's rating is ever invented —
+   an employee with no snapshot renders "Not rated", not a row of
+   optimistic pluses.
+
+   THE BAR, from the workbook: any ➖ is a deal breaker; one (+/-) is
+   allowed. That verdict is DERIVED from the six cells on every read,
+   never stored.
+   ============================================================ */
+const GWC_DIMS=[['getIt','Get It'],['wantIt','Want It'],['capacity','Capacity'],
+                ['diligent','Diligent'],['adaptable','Adaptable'],['disciplined','Disciplined']];
+const GWC_VALS={P:'➕', PM:'(+/-)', M:'➖'};   // stored value -> display glyph
+function gwcHistory(empId){
+  // Newest first: by as-of date, then recorded time, and finally by position in
+  // the ledger — two snapshots written in the same millisecond (an import, a
+  // test) must still resolve to the one recorded LAST, never the older one.
+  return GWC.map((g,i)=>({g:g,i:i})).filter(x=>x.g&&x.g.emp===empId)
+    .sort((a,b)=>(a.g.on<b.g.on?1:a.g.on>b.g.on?-1:0)||
+                 String(b.g.t||'').localeCompare(String(a.g.t||''))||
+                 (b.i-a.i))
+    .map(x=>x.g);
+}
+function gwcOf(empId){ return gwcHistory(empId)[0]||null; }
+// THE BAR, derived: any minus fails; more than one plus/minus fails.
+function gwcBar(g){
+  if(!g) return null;
+  const vals=GWC_DIMS.map(d=>g[d[0]]);
+  if(vals.some(v=>v==='M')) return {ok:false, why:'a ➖ is a deal breaker'};
+  const pm=vals.filter(v=>v==='PM').length;
+  if(pm>1) return {ok:false, why:pm+' (+/-) — only one is allowed'};
+  return {ok:true, why:pm?'1 (+/-) — within the bar':'all ➕'};
+}
+function gwcRecord(empId,ratings,opts){
+  // An evaluation of a person is a leadership record — the same capability
+  // that manages the roster, not the day-to-day event logging one.
+  if(!can('manage_employees')&&!can('admin_security')){ toast('People Analyzer ratings are a leadership record'); return null; }
+  const p=person(empId);
+  if(!p){ toast('No team member with that id'); return null; }
+  const o=opts||{}, r={};
+  for(const [k] of GWC_DIMS){
+    const v=ratings&&ratings[k];
+    if(v!=='P'&&v!=='PM'&&v!=='M'){ toast('Every cell needs a rating — ➕, (+/-) or ➖'); return null; }
+    r[k]=v;
+  }
+  const on=String(o.on||todayISO()).slice(0,10);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(on)||on>todayISO()){ toast('That is not a date the business has reached'); return null; }
+  const g=Object.assign({id:uid('ga'), biz:bizId(), emp:empId}, r,
+    {on:on, note:String(o.note||'').trim(), src:o.src||'manual',
+     t:new Date().toISOString(), by:empWho()||''});
+  GWC.push(g); save(K_GWC,GWC);
+  empLog(p,'gwc-rating',{on:on, src:g.src});
+  auditRecord('gwc-record',{emp:empId, name:empName(p), on:on, src:g.src,
+    cells:GWC_DIMS.map(d=>g[d[0]]).join(',')});
+  return g;
+}
+
+/* ---- MIGRATION SNAPSHOT — the workbook's People Analyzer tab ----
+   Transcribed from the live ALP Scorecard workbook (People Analyzer
+   section) on 2026-08-30. Names are matched through resolveEmployee
+   (permanent id, aliases) — the import NEVER creates a person, and a
+   name nobody on the roster owns is reported back, not guessed at.
+   Skipped on purpose: the leadership duplicate rows (JEFF; the stale
+   "ASHTIN — O.M." row for Ashtin Hollon), the two open-position
+   placeholder rows, and Scott Rankin, whose row is blank in the
+   source — an absent rating stays absent.
+   Dustin Harris's ➕➕ cells are recorded as P with the raw
+   glyph kept in the note — stronger-than-plus is the sheet's flourish,
+   not a rating level THE BAR defines. */
+const GWC_SEED_ALP=[
+ {name:'Andrew Rodrigez',    r:['P','P','P','P','P','P']},
+ {name:'Ashtin Hollon',      r:['P','P','P','PM','P','PM']},
+ {name:'Darren Bard',        r:['P','P','P','P','P','P']},
+ {name:'Don Skjold',         r:['P','P','P','P','P','P']},
+ {name:'Donise Woodrich',    r:['P','P','P','P','P','P']},
+ {name:'Dustin Harris',      r:['P','P','P','P','P','P'], note:'sheet shows ➕➕ for Get It, Diligent and Disciplined'},
+ {name:'Dylan Bebee',        r:['P','P','P','P','P','P']},
+ {name:'Georgia Schibel',    r:['P','P','P','PM','P','P']},
+ {name:'Josh Everard',       r:['PM','P','P','PM','P','PM']},
+ {name:'Russell Taylor',     r:['P','P','P','P','P','PM']},
+ {name:'Tausha Robinett',    r:['P','P','P','PM','P','P']},
+ {name:'Zachariah Sullivan', r:['P','P','P','PM','P','P']},
+ {name:'Taylor Ader',        r:['P','P','P','P','P','P']}
+];
+function gwcSeedFromWorkbook(){
+  if(!can('manage_employees')&&!can('admin_security')){ toast('People Analyzer ratings are a leadership record'); return null; }
+  const out={applied:0, already:0, unmatched:[]};
+  GWC_SEED_ALP.forEach(row=>{
+    const hit=resolveEmployee(row.name,'*');
+    if(!hit){ out.unmatched.push(row.name); return; }
+    // one workbook import per person — re-running must not stack duplicates
+    if(GWC.some(g=>g.emp===hit.id&&g.src==='alp-workbook')){ out.already++; return; }
+    const ratings={}; GWC_DIMS.forEach((d,i)=>{ ratings[d[0]]=row.r[i]; });
+    if(gwcRecord(hit.id, ratings, {src:'alp-workbook', note:row.note||''})) out.applied++;
+  });
+  auditRecord('gwc-seed',{applied:out.applied, already:out.already, unmatched:out.unmatched.join(', ').slice(0,300)});
+  toast(out.applied+' rating'+(out.applied===1?'':'s')+' imported'+
+    (out.already?' · '+out.already+' already imported':'')+
+    (out.unmatched.length?' · '+out.unmatched.length+' name'+(out.unmatched.length===1?'':'s')+' not on the roster (see the report)':''));
+  return out;
+}
+
 /* ---- ALP'S CATALOG AS CONFIGURATION -----------------------------
    These are Automated Lawn & Pest's rules, transcribed from their
    Scorecard workbook. They live here as SEED DATA for a one-time
@@ -4887,7 +5025,7 @@ function checkpointCounts(){
   return {clients:CLIENTS.length, leads:CLIENTS.filter(isLead).length, people:PEOPLE.length,
     rows:ROWS.length, invoices:INVOICES.length, payments:PAYMENTS.length, payouts:PAYOUTS.length,
     tsheet:TSHEET.length, eosroles:EOSROLES.length, overrides:OVERRIDES.length,
-    perfrules:PERFRULES.length, perfevents:PERFEVENTS.length};
+    perfrules:PERFRULES.length, perfevents:PERFEVENTS.length, gwc:GWC.length};
 }
 function checkpointCreate(label,kind){
   const id=uid('ck'), snap=stateSnapshot();
@@ -4981,6 +5119,12 @@ const DATA_OWNERSHIP=[
   outbound:[{dst:'future Google Doc publish', cls:'planned output only'}],
   srcIds:'permanent role id (er…) + assignment ids (ea…); names are display',
   conflict:'the APP role wins unless an authorized user explicitly approves an inbound change; renames keep the id; occupancy history is append-and-close, never rewritten', auto:false},
+ {domain:'People Analyzer (GWC)', store:'GWC (alp_gwc_v1)', owner:'app',
+  inbound:[{src:'ALP Scorecard workbook — People Analyzer tab', cls:'migration',
+    why:'one explicit admin import (gwcSeedFromWorkbook); names resolve through the permanent employee id, blanks stay blank, unmatched names are reported and never created'}],
+  outbound:[], srcIds:'rating ids (ga…) pointing at the permanent employee id',
+  conflict:'append-only history — the newest snapshot is current, older ones stay; THE BAR verdict is derived on read, never stored',
+  auto:false},
  {domain:'Performance Score', store:'PERFRULES + PERFEVENTS (alp_perfrules_v1 / alp_perfevents_v1)', owner:'app',
   inbound:[{src:'ALP Scorecard workbook', cls:'migration', why:'the rule catalog is seeded once by an admin action; no score history existed anywhere before this, so nothing is backfilled or invented'}],
   outbound:[], srcIds:'rule ids (sr…) + event ids (se…); events point at the permanent employee id',
@@ -6443,6 +6587,19 @@ function renderBiz(){
   const est=document.getElementById('bizEosStatus');
   if(est) est.innerHTML=eosState()==='ok'?'<span class="pill ok">CONFIGURED</span> <button class="sm" onclick="eosJump()">Manage EOS</button>'
     :eosState()==='setup'?'<span class="pill mid">SETUP NEEDS REVIEW</span> <button class="sm" onclick="eosWizOpen()">Review setup</button>':'';
+  const po=document.getElementById('bizPerf');
+  if(po) po.checked=businessUsesPerf();
+  const pst=document.getElementById('bizPerfStatus');
+  if(pst){
+    const nRules=perfRules().length, nGwc=GWC.length;
+    pst.innerHTML=(businessUsesPerf()
+      ? (nRules? '<span class="pill ok">'+nRules+' RULES</span>'
+               : '<span class="pill mid">NO RULES YET</span> <button class="sm" onclick="perfSeedCatalog();renderBiz()">Load the ALP catalog (27 rules)</button>')+
+        ' <button class="sm" onclick="setTab(\'stand\')">Standings</button>'+
+        (nGwc? ' <span class="pill ok">'+nGwc+' GWC</span>'
+             : ' <button class="sm" onclick="gwcSeedUI()">Import People Analyzer ratings</button>')
+      : '');
+  }
   const dt=document.getElementById('bizDivs');
   if(dt&&document.activeElement!==dt) dt.value=bizDivisions().map(d=>d.name).join('\n');
   const dl=document.getElementById('bizDivList');
@@ -6484,6 +6641,10 @@ function bizSave(){
     patch.ops=Object.assign({},bizGet().ops,{eos:Object.assign({},eosOps(),{enabled:eo.checked})});
     if(eo.checked!==was) auditRecord(eo.checked?'eos-enabled':'eos-disabled',{});
     eosTurnedOn=eo.checked&&!was; }
+  const po=document.getElementById('bizPerf');
+  if(po){ const wasP=businessUsesPerf();
+    patch.ops=Object.assign({},patch.ops||bizGet().ops,{perf:Object.assign({},perfOps(),{enabled:po.checked})});
+    if(po.checked!==wasP) auditRecord(po.checked?'perf-enabled':'perf-disabled',{}); }
   // divisions: one per line; names that match existing divisions keep their ids
   const dt=document.getElementById('bizDivs');
   if(dt){
@@ -16309,7 +16470,7 @@ function stateSnapshot(){   // v6: employee identity fields (first/last/photo/al
     invlinks:INVLINKS,invclimap:INVCLIMAP,invassign:INVASSIGN,
     tombstones:TOMBSTONES,oscs:OSCS,global:GLOBAL,biz:BIZ,
     tsheet:TSHEET,payper:PAYPER,tsimp:TSIMP,eosroles:EOSROLES,eosassign:EOSASSIGN,overrides:OVERRIDES,
-    perfrules:PERFRULES,perfevents:PERFEVENTS};
+    perfrules:PERFRULES,perfevents:PERFEVENTS,gwc:GWC};
 }
 function backup(){
   // Gated in the header too, but the guard belongs in the function: a whole-state
@@ -16376,6 +16537,20 @@ function restore(e){
         have.add(e.id); PERFEVENTS.push(e); addedS++;
       });
       if(addedS){ save(K_PERFEVENTS,PERFEVENTS); restoreNotes.push(addedS+' score event'+(addedS===1?'':'s')+' restored'); }
+    }
+    // People Analyzer ratings: same rules as the score ledger — merge by id,
+    // follow the employee through idMap, drop ratings about nobody we know.
+    if(Array.isArray(d.gwc)){
+      const haveG=new Set(GWC.map(g=>g&&g.id));
+      let addedG=0;
+      d.gwc.forEach(bg=>{
+        if(!bg||haveG.has(bg.id)) return;
+        const g=Object.assign({},bg);
+        g.emp=idMap[bg.emp]||bg.emp;
+        if(!person(g.emp)) return;
+        haveG.add(g.id); GWC.push(g); addedG++;
+      });
+      if(addedG){ save(K_GWC,GWC); restoreNotes.push(addedG+' People Analyzer rating'+(addedG===1?'':'s')+' restored'); }
     }
     const key=r=>r.rep+'|'+r.date+'|'+String(r.client).toLowerCase()+'|'+bookedValue(r).toFixed(2);
     // Restored sales are given fresh ids, so the payout ledger has to be told where each
@@ -18062,6 +18237,41 @@ function renderEmp(){
       '</div>';
       h+=perfSparkHTML(perfSeries(p.id,P), bd);
     }
+    // People Analyzer — the second dimension, shown side by side with the score
+    // but never blended into it. Renders for unscored people too: leadership can
+    // be rated without being on the point system.
+    (function(){
+      const g=gwcOf(p.id), hist=gwcHistory(p.id), bar=gwcBar(g);
+      h+='<h3 style="margin:16px 0 6px">People Analyzer (GWC + core values)</h3>';
+      if(!g){
+        h+='<div class="note">Not rated — no People Analyzer snapshot exists for '+esc(empShort(p))+
+          '. Nothing is assumed'+(can('manage_employees')||can('admin_security')?'; record one below or import the workbook ratings from Admin.':'.')+'</div>';
+      } else {
+        h+='<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px">'+
+          GWC_DIMS.map(d=>'<div style="flex:1;min-width:96px;text-align:center;padding:8px 6px;border:1px solid var(--line);border-radius:8px;background:var(--paper)">'+
+            '<div style="font-size:20px;line-height:1">'+esc(GWC_VALS[g[d[0]]]||'?')+'</div>'+
+            '<div class="note" style="margin-top:3px">'+esc(d[1])+'</div></div>').join('')+
+          '</div>'+
+          '<div class="note">As of '+esc(g.on)+(g.by?' · recorded by '+esc(g.by):'')+
+            (g.src==='alp-workbook'?' · imported from the Scorecard workbook':'')+
+            (g.note?' · '+esc(g.note):'')+
+            ' · <span class="pill '+(bar.ok?'ok':'bad')+'">'+(bar.ok?'MEETS THE BAR':'BELOW THE BAR')+'</span> '+esc(bar.why)+
+            (hist.length>1?' · '+hist.length+' snapshots on record':'')+'</div>';
+      }
+      if(can('manage_employees')||can('admin_security')){
+        h+='<details style="margin:8px 0 4px"><summary class="note">Record a new rating</summary><div class="dbody">'+
+          '<div style="display:flex;flex-wrap:wrap;gap:8px;margin:8px 0">'+
+          GWC_DIMS.map(d=>'<label style="flex:1;min-width:110px">'+esc(d[1])+
+            '<select id="gw_'+d[0]+'">'+
+              ['P','PM','M'].map(v=>'<option value="'+v+'"'+((g&&g[d[0]]===v)?' selected':'')+'>'+GWC_VALS[v]+'</option>').join('')+
+            '</select></label>').join('')+
+          '</div>'+
+          '<div class="note" style="margin-bottom:6px">A new snapshot is appended — the old one stays in the history. THE BAR: any ➖ is a deal breaker; one (+/-) is allowed.</div>'+
+          '<button class="p sm" onclick="gwcRecordUI(\''+esc(p.id)+'\')">Save rating</button>'+
+          '</div></details>';
+      }
+    })();
+
     if(perfCanLog()&&sc!==null){
       const rules=perfRules();
       if(!rules.length){

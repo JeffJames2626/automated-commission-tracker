@@ -78,6 +78,7 @@
                EOSASSIGN:(typeof EOSASSIGN!=='undefined'?EOSASSIGN:undefined),
                PERFRULES:(typeof PERFRULES!=='undefined'?PERFRULES:undefined),
                PERFEVENTS:(typeof PERFEVENTS!=='undefined'?PERFEVENTS:undefined),
+               GWC:(typeof GWC!=='undefined'?GWC:undefined),
                ADMIN:(typeof ADMIN!=='undefined'?ADMIN:undefined) };
     // Nothing a test run may COST localStorage. Stubbing save() is not enough:
     // cloudApply() writes through its own internal put() (raw localStorage.setItem),
@@ -3332,6 +3333,51 @@
           checkTrue('PERF.28c the backup ledger keeps voided rows too',
             snapshot.perfevents.some(function(e){return e.void===true;}), 'voids preserved');
 
+
+          /* ---- People Analyzer (GWC) — separate dimension, id-keyed ---- */
+          GWC=[];
+          ADMIN=true; if(typeof capsInvalidate==='function') capsInvalidate();
+          var allP={getIt:'P',wantIt:'P',capacity:'P',diligent:'P',adaptable:'P',disciplined:'P'};
+          checkTrue('GWC.1 an unrated employee is null, not a row of pluses',
+            gwcOf('PS_A')===null, 'null');
+          var g1=gwcRecord('PS_A', allP, {});
+          checkTrue('GWC.2 an authorized admin can record a rating', !!g1, 'recorded');
+          check('GWC.3 all-plus meets THE BAR', true, gwcBar(gwcOf('PS_A')).ok);
+          var onePM=Object.assign({},allP,{diligent:'PM'});
+          gwcRecord('PS_A', onePM, {});
+          check('GWC.4 one (+/-) still meets THE BAR', true, gwcBar(gwcOf('PS_A')).ok);
+          check('GWC.5 the newest snapshot is current', 'PM', gwcOf('PS_A').diligent);
+          check('GWC.6 the old snapshot stays in the history', 2, gwcHistory('PS_A').length);
+          gwcRecord('PS_A', Object.assign({},allP,{diligent:'PM',disciplined:'PM'}), {});
+          check('GWC.7 two (+/-) is below THE BAR', false, gwcBar(gwcOf('PS_A')).ok);
+          gwcRecord('PS_A', Object.assign({},allP,{capacity:'M'}), {});
+          check('GWC.8 any minus is a deal breaker', false, gwcBar(gwcOf('PS_A')).ok);
+          A.name='Renamed Again'; 
+          check('GWC.9 ratings follow the permanent id through a rename', 4, gwcHistory('PS_A').length);
+          A.name='Alexandra Renamed-Smith';
+          checkTrue('GWC.10 a rating never touches the score',
+            perfScoreOf('PS_A')===perfEventsOf('PS_A').reduce(function(a,e){return a+e.points;},perfOps().baseline), 'independent');
+          checkTrue('GWC.11 an incomplete rating is refused',
+            gwcRecord('PS_A',{getIt:'P'},{})===null, 'refused');
+          checkTrue('GWC.12 a future-dated rating is refused',
+            gwcRecord('PS_A', allP, {on:(parseInt(YR,10)+1)+'-01-01'})===null, 'refused');
+          ADMIN=false; if(typeof capsInvalidate==='function') capsInvalidate();
+          checkTrue('GWC.13 without leadership capability, recording is refused',
+            gwcRecord('PS_A', allP, {})===null, 'refused');
+          ADMIN=true; if(typeof capsInvalidate==='function') capsInvalidate();
+          /* workbook import: matches by name, never creates, idempotent */
+          GWC=[];
+          var beforeN=PEOPLE.length;
+          var imp=gwcSeedFromWorkbook();
+          check('GWC.14 the workbook import creates NO people', beforeN, PEOPLE.length);
+          checkTrue('GWC.15 unmatched workbook names are reported, not guessed',
+            imp.unmatched.length===GWC_SEED_ALP.length-imp.applied, imp.unmatched.length+' reported');
+          var imp2=gwcSeedFromWorkbook();
+          check('GWC.16 re-running the import adds nothing twice', 0, imp2.applied);
+          var snap2=stateSnapshot();
+          checkTrue('GWC.17 a backup carries the rating history',
+            Array.isArray(snap2.gwc) && snap2.gwc.length===GWC.length, 'included');
+
           /* Configuration, not hard-coded ALP policy. */
           // B's ledger was cleared at PERF.16 and nothing has been logged against
           // them since, so their score IS the baseline — which makes them the
@@ -3403,6 +3449,7 @@
       if(typeof EOSASSIGN!=='undefined' && snap.EOSASSIGN!==undefined) EOSASSIGN=snap.EOSASSIGN;
       if(typeof PERFRULES!=='undefined' && snap.PERFRULES!==undefined) PERFRULES=snap.PERFRULES;
       if(typeof PERFEVENTS!=='undefined' && snap.PERFEVENTS!==undefined) PERFEVENTS=snap.PERFEVENTS;
+      if(typeof GWC!=='undefined' && snap.GWC!==undefined) GWC=snap.GWC;
       if(typeof ADMIN!=='undefined' && snap.ADMIN!==undefined) ADMIN=snap.ADMIN;
       if(typeof bizDirty==='function') bizDirty();
       if(typeof CAP_CACHE!=='undefined') CAP_CACHE=null;

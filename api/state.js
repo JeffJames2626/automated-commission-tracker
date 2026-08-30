@@ -187,6 +187,11 @@ function projectState(raw, email) {
   if (!ctx.caps.view_scorecard && Array.isArray(doc.perfevents)) {
     doc.perfevents = ctx.me ? doc.perfevents.filter(e => e && e.emp === ctx.me) : [];
   }
+  // People Analyzer ratings are leadership judgments about a person — the same
+  // read boundary as the score ledger: your own, or the team's with the capability.
+  if (!ctx.caps.view_scorecard && Array.isArray(doc.gwc)) {
+    doc.gwc = ctx.me ? doc.gwc.filter(g => g && g.emp === ctx.me) : [];
+  }
   // Client billing: invoices, payments and open balances are money owed to the
   // company, not to a rep. Only billing, managers and the owner get them.
   if (!ctx.financial) {
@@ -308,7 +313,7 @@ function mergeProtected(incomingRaw, storedRaw, email) {
   // strike, re-price a rule, or un-void a correction by editing the document
   // their browser holds. Hiding the button is not the control — this is.
   ['tsheet', 'payper', 'tsimp', 'eosroles', 'eosassign', 'overrides',
-   'perfrules', 'perfevents'].forEach(k => {
+   'perfrules', 'perfevents', 'gwc'].forEach(k => {
     inc[k] = Array.isArray(stored[k]) ? stored[k] : [];
   });
   // Business Details are the ORG's record — everyone reads them, only an admin

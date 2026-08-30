@@ -56,6 +56,8 @@
       perfevents:[{id:'se1',biz:'b1',emp:'REP', rule:'sr1',cat:'STRIKE',label:'Tardy',points:-5,on:'2026-06-01',by:'jeff',void:false},
                   {id:'se2',biz:'b1',emp:'REP2',rule:'sr1',cat:'STRIKE',label:'Tardy',points:-5,on:'2026-06-02',by:'jeff',void:false},
                   {id:'se3',biz:'b1',emp:'MGR', rule:'sr2',cat:'WIN',   label:'Compliment',points:5,on:'2026-06-03',by:'jeff',void:false}],
+      gwc:[{id:'ga1',biz:'b1',emp:'REP', getIt:'P',wantIt:'P',capacity:'P',diligent:'PM',adaptable:'P',disciplined:'P',on:'2026-06-01',by:'jeff'},
+           {id:'ga2',biz:'b1',emp:'REP2',getIt:'P',wantIt:'P',capacity:'P',diligent:'P', adaptable:'P',disciplined:'P',on:'2026-06-01',by:'jeff'}],
       hours:[{id:'h1',rep:'REP',date:'2026-06-01',hours:40},{id:'h2',rep:'REP2',date:'2026-06-01',hours:50}],
       clients:[{id:'c1',name:'Acme'}],
       invoices:[{id:'i1',client:'Acme',total:900}],
@@ -314,6 +316,18 @@
     check('WRITE a rep cannot re-price the rule catalog', -5,
       back(function(d){ d.perfrules.forEach(function(r){ r.points=100; }); }, EM.rep)
         .perfrules.find(function(r){return r.id==='sr1';}).points);
+    check('GWC a rep is sent only their own People Analyzer rating', 1,
+      see(EM.rep).gwc.length);
+    check('GWC the one rating a rep IS sent is their own', 'REP',
+      see(EM.rep).gwc[0].emp);
+    ok('GWC a manager (view_scorecard) is sent every rating',
+      see(EM.mgr).gwc.length===2, see(EM.mgr).gwc.length);
+    check('GWC WRITE a rep cannot upgrade their own rating', 'PM',
+      back(function(d){ d.gwc.forEach(function(g){ if(g.emp==='REP') g.diligent='P'; }); }, EM.rep)
+        .gwc.find(function(g){return g.id==='ga1';}).diligent);
+    check('GWC WRITE a rep cannot inject a rating', 2,
+      back(function(d){ d.gwc.push({id:'ga9',emp:'REP',getIt:'P',wantIt:'P',capacity:'P',diligent:'P',adaptable:'P',disciplined:'P',on:'2026-06-09'}); }, EM.rep)
+        .gwc.length);
     check('WRITE a manager cannot write the ledger either \u2014 logging happens admin-side', 3,
       back(function(d){ d.perfevents.push({id:'se8',emp:'REP',cat:'MAJOR',label:'x',points:-30,on:'2026-06-08'}); }, EM.mgr)
         .perfevents.length);
