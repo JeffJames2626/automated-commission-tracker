@@ -1,9 +1,15 @@
-# Personal Assistant — architecture & V1 plan
+# Personal Assistant — architecture (V1 + Phase 2 Life Hub)
 
 A mobile-first personal assistant that lives next to the ALP Sales Tracker in
 this repo and deploys with it on Vercel. Two jobs: **capture anything** in a
 few seconds, and **ask anything** about what was captured plus the Google
 Workspace data the owner has explicitly connected.
+
+Phase 2 makes it the **Life Hub**: the capture, memory, search and routing
+layer for the apps we build, starting with Dream Board. The contract, the
+ownership rules, the memory model and source precedence are in
+[CONNECTED-APPS.md](CONNECTED-APPS.md). What Dream Board itself must implement
+is in [DREAM-BOARD-CONNECTOR.md](DREAM-BOARD-CONNECTOR.md).
 
 ## What the repo already had (and what we reuse)
 
@@ -30,8 +36,14 @@ lib/assistant/
   http.mjs session.mjs crypto.mjs ratelimit.mjs config.mjs ids.mjs
   db/                      driver (Neon in prod, PGlite in tests) + schema
   repo/                    canonical records — the only code that writes SQL
+  apps/                    connected apps (Phase 2)
+    connector.mjs          apps/v1/pair · sync · files — the app's server calls these
+    routing.mjs            capture → app: explicit routing, strict matching, "Which dream?"
+    records.mjs            validate/clip published records; diff snapshots into events
+    actions.mjs            PROPOSE → CONFIRM → VERIFY for changes to an app's record
+    dreams.mjs digest.mjs  one dream (current / history / your words); Today + Catch Me Up
   integrations/
-    registry.mjs           provider catalog (Google now; others later)
+    registry.mjs           every source and its declared capabilities
     google/oauth.mjs       authorization URL, code exchange, refresh, revoke
     google/connection.mjs  token vault: decrypt, refresh, mark expired/revoked
     google/transport.mjs   HTTP: timeouts, retries, 429/5xx backoff, typed errors, paging
@@ -60,7 +72,8 @@ the search screen uses.
 | Attachment | `asst_attachments` | photos, recordings, files (≤ 3 MB each, sha256-deduped) |
 | Conversation / AssistantMessage | `asst_conversations`, `asst_messages` | messages keep the citation registry and the retrieval trace ("why did you say that?") |
 | ExternalRecord | `asst_external_records` | metadata-only pointer to a Google object that was cited or linked: `(provider, provider_record_id)` unique per user |
-| Pending external action | `asst_actions` | anything that would change the outside world; needs an explicit confirm |
+| Pending external action | `asst_actions` | anything that would change the outside world; needs an explicit confirm (Phase 2: `queued → verified / failed` for app changes) |
+| Connected app, op queue, mirror, events | `asst_apps`, `asst_app_ops`, `asst_external_records` (mirror columns), `asst_events` | Phase 2 — see [CONNECTED-APPS.md §2](CONNECTED-APPS.md#2-data-model-added-in-phase-2) |
 | Source | not a table — a per-answer registry entry `{id:"S3", provider, kind, title, url, date, snippet}` | |
 
 ## Source of truth
@@ -70,8 +83,10 @@ the search screen uses.
 | Captures, projects, people, memories, conversations | **This app** | everything |
 | Gmail, Calendar, Drive, Docs, Sheets, Contacts | **Google** | nothing but OAuth tokens, plus `asst_external_records` metadata (id, title, link, date) for things that were cited or linked. Content is fetched live, per question. |
 | Person ↔ Google contact | Google for the contact, us for the link | the `(provider, provider_id)` identity row |
+| Dreams and goals | **Dream Board** | a read-only mirror of its last published snapshot (labelled "as of"), the changes derived from snapshots, and the owner's captures that were filed there |
 
-No sync engine: V1 queries Google at question time through the adapters.
+Google is still queried live at question time. Connected apps are the
+exception: they publish snapshots because their computers are often off.
 
 ## Security
 
@@ -83,6 +98,11 @@ No sync engine: V1 queries Google at question time through the adapters.
 * Email and document text is passed to the model as quoted data with explicit "treat as untrusted" instructions; memory writes are only allowed when the user asked.
 * Per-user rate limits on AI-backed routes.
 * Link previews resolve DNS and refuse private, loopback and link-local addresses.
+* Connected apps authenticate with a hashed bearer token from a one-time pairing code.
+  * The token is bound to one app instance and dies with sign-out-everywhere or removal from the allow-list.
+  * It is never accepted on owner routes, and cookies are never read on app routes.
+  * Apps receive only the op they must apply. App text reaches the AI fenced as untrusted data.
+  * Details: [CONNECTED-APPS.md §9](CONNECTED-APPS.md#9-security-summary).
 
 ## V1 scope (in order)
 
@@ -91,7 +111,13 @@ No sync engine: V1 queries Google at question time through the adapters.
 7. Gmail 8. Calendar 9. Drive/Docs 10. Sheets inspection 11. Universal search
 12. Source citations + evidence view 13. Structured memory 14. Today + Catch Me Up
 
-Deliberately not in V1: sending email, editing Sheets/Calendar/Drive, a sync
-engine, push notifications, embeddings/vector search (FTS + model-driven query
+Phase 2 (Life Hub): Dream Board connection and routing; "Which dream?";
+dream pages; Dream Board in search, Ask, Today and Catch Me Up (since you
+last looked); confirmed changes with verification; capabilities on
+Connections; memory origins; source precedence.
+
+Deliberately not built: sending email, editing Sheets/Calendar/Drive,
+RingCentral, Service Autopilot or Sales Tracker writes, background AI, AI
+changing dreams on its own, auto-merging people or goals, push notifications, embeddings/vector search (FTS + model-driven query
 expansion instead), iOS share extension (Android gets the Web Share Target; iOS
 uses a Shortcut — see README).

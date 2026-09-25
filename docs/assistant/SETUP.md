@@ -67,9 +67,25 @@ never values).
 ```
 npm install
 npm run dev:assistant          # http://localhost:8787/__dev/login — demo data, no credentials
-npm run test:assistant         # 52 API/integration tests on real Postgres (PGlite)
+npm run test:assistant         # API/integration tests on real Postgres (PGlite), incl. Dream Board
 npm run test:assistant:browser # Chromium end-to-end (iPhone + desktop)
 ```
 
 `ANTHROPIC_API_KEY=… npm run dev:assistant` runs the real AI against demo
-Google data.
+Google data. The dev server also pairs an in-memory Dream Board that syncs
+every 2 seconds. `/__dev/dreamboard?offline=1` takes it offline,
+`?milestone=Fitness` completes a milestone on the board, and
+`DEV_DREAMBOARD=0` turns it off.
+
+## Connecting Dream Board
+
+1. Deploy, then open **Connections → Dream Board → Connect**. You get a
+   one-time code (10 minutes).
+2. Enter the code in Dream Board → Settings → Personal Assistant. Dream
+   Board's server needs the assistant's address (your Vercel URL) and
+   outbound HTTPS. The assistant never connects to the PC.
+3. Optional: under *Address you open it at*, enter the address you use for
+   Dream Board (for example your Tailscale `https://…ts.net` name).
+   "Open in Dream Board" links use it.
+
+What Dream Board must implement: [DREAM-BOARD-CONNECTOR.md](DREAM-BOARD-CONNECTOR.md).
