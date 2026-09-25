@@ -83,7 +83,7 @@ export function chooseDream(captureId, routing, { onDone, photo = false } = {}) 
 }
 
 export function dreamRow(g, extra = '') {
-  return `<a class="row-item" href="#/dream/${encodeURIComponent(g.id)}">${icon('sparkle')}<div class="grow"><div class="ri-title">${esc(g.title)}</div>
+  return `<a class="row-item" href="#/dream/${encodeURIComponent(g.id)}">${icon('star')}<div class="grow"><div class="ri-title">${esc(g.title)}</div>
     <div class="ri-sub">${esc([g.status, extra || (g.lastProgressAt ? 'progress ' + ago(g.lastProgressAt) : g.lastUpdateAt ? 'updated ' + ago(g.lastUpdateAt) : '')].filter(Boolean).join(' · '))}</div></div>${icon('chevron')}</a>`;
 }
 
@@ -121,4 +121,28 @@ export async function render(main, params, id) {
     </article>`;
   main.querySelector('[data-back]').onclick = () => history.length > 1 ? history.back() : go('#/today');
   main.querySelector('[data-ask]').onclick = () => go('#/assistant', { ask: 'Tell me about my “' + d.title + '” dream — what I said, and what has changed.' });
+}
+
+// The Dream Board tab: every dream the assistant knows, grouped by status,
+// each opening its dream page. Dream Board itself stays the place to edit.
+const GROUPS = [['Working on', /^(in_progress|active|doing)$/], ['Planned', /^(planned|planning)$/], ['Dreaming', /^(dreaming|someday|idea|dream)$/], ['Achieved', /^(achieved|done|completed)$/]];
+
+export async function renderList(main) {
+  main.innerHTML = `<header class="page-h"><h1>Dream Board</h1></header><div data-l>${skeleton(3)}</div>`;
+  let r;
+  try { r = await api('dreams'); }
+  catch (e) { main.querySelector('[data-l]').innerHTML = `<div class="card quiet">${esc(e.offline ? 'You’re offline — dreams need a connection.' : e.message)}</div>`; return; }
+  const f = r.app && r.app.freshness;
+  if (!r.app || !r.goals.length) {
+    main.querySelector('[data-l]').innerHTML = `<div class="card quiet">${icon('star')} ${r.app ? esc(freshLine(f)) + '. Your dreams appear here once Dream Board syncs.' : 'Dream Board isn’t connected yet.'} <a href="#/connections">Connections</a></div>`;
+    return;
+  }
+  const money = g => { const v = g.fields && g.fields.target_amount; return typeof v === 'number' ? '$' + v.toLocaleString('en-US') : ''; };
+  const rest = r.goals.filter(g => !GROUPS.some(([, re]) => re.test(g.status || '')));
+  const groups = GROUPS.map(([label, re]) => [label, r.goals.filter(g => re.test(g.status || ''))]).concat([['Other', rest]]).filter(([, gs]) => gs.length);
+  main.querySelector('[data-l]').innerHTML = `
+    <p class="muted small">${esc(freshLine(f))} · ${r.goals.length} dream${r.goals.length === 1 ? '' : 's'}</p>
+    ${r.app.baseUrl ? `<a class="btn wide ghost" href="${esc(r.app.baseUrl)}" target="_blank" rel="noopener noreferrer">${icon('external')} Open Dream Board</a>` : ''}
+    ${groups.map(([label, gs]) => `<section class="card sec">${sectionHead(label, 'star', `<span class="count">${gs.length}</span>`)}${gs.map(g => dreamRow(Object.assign({}, g, { status: null }), [g.category, money(g)].filter(Boolean).join(' · ') || undefined)).join('')}</section>`).join('')}
+    <p class="muted small center">Capture “Dream board: …” anywhere to add a dream.</p>`;
 }

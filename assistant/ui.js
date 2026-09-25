@@ -39,6 +39,7 @@ const P = {
   refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/>',
   history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/>',
   folderOpen: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v1H7l-4 9z"/><path d="M7 10h14l-3 9H3"/>',
+  star: '<path d="m12 3 2.6 5.6 6.1.7-4.5 4.1 1.2 6L12 16.9 6.6 19.4l1.2-6-4.5-4.1 6.1-.7z"/>',
   shield: '<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/>',
   play: '<path d="M7 4v16l13-8z"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
@@ -59,7 +60,7 @@ export const PROVIDER = {
   google_drive: { icon: 'folder', label: 'Drive' },
   google_sheets: { icon: 'table', label: 'Sheets' },
   google_contacts: { icon: 'person', label: 'Contacts' },
-  dreamboard: { icon: 'sparkle', label: 'Dream Board' },
+  dreamboard: { icon: 'star', label: 'Dream Board' },
   project: { icon: 'folderOpen', label: 'Project' },
   person: { icon: 'person', label: 'Person' },
 };

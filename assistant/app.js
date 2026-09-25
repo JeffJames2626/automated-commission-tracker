@@ -11,16 +11,18 @@ const TABS = [
   { key: 'today', label: 'Today', icon: 'today', href: '#/today' },
   { key: 'inbox', label: 'Inbox', icon: 'inbox', href: '#/inbox' },
   { key: 'assistant', label: 'Assistant', icon: 'sparkle', href: '#/assistant' },
+  { key: 'dreams', label: 'Dreams', icon: 'star', href: '#/dreams' },
   { key: 'search', label: 'Search', icon: 'search', href: '#/search' },
   { key: 'more', label: 'More', icon: 'more', href: '#/more' },
 ];
-const TAB_OF = { item: 'inbox', dream: 'today', project: 'more', projects: 'more', people: 'more', person: 'more', memory: 'more', connections: 'more' };
+const TAB_OF = { item: 'inbox', dream: 'dreams', project: 'more', projects: 'more', people: 'more', person: 'more', memory: 'more', connections: 'more' };
 
 const ROUTES = {
   today: () => import('./views/today.js').then(m => m.render),
   inbox: () => import('./views/inbox.js').then(m => m.render),
   item: () => import('./views/item.js').then(m => m.render),
   dream: () => import('./views/dreams.js').then(m => m.render),
+  dreams: () => import('./views/dreams.js').then(m => m.renderList),
   assistant: () => import('./views/chat.js').then(m => m.render),
   search: () => import('./views/search.js').then(m => m.render),
   more: () => import('./views/more.js').then(m => m.renderMore),

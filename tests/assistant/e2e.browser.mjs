@@ -56,8 +56,8 @@ try {
     await shot(page, '01-today');
   });
 
-  await step('bottom tabs navigate between the five screens', async () => {
-    for (const [tab, marker] of [['Inbox', 'h1:has-text("Inbox")'], ['Assistant', 'h1:has-text("Assistant")'], ['Search', 'h1:has-text("Search")'], ['More', 'h1:has-text("More")'], ['Today', 'text=Catch me up']]) {
+  await step('bottom tabs navigate between the six screens', async () => {
+    for (const [tab, marker] of [['Inbox', 'h1:has-text("Inbox")'], ['Assistant', 'h1:has-text("Assistant")'], ['Dreams', 'h1:has-text("Dream Board")'], ['Search', 'h1:has-text("Search")'], ['More', 'h1:has-text("More")'], ['Today', 'text=Catch me up']]) {
       await page.locator('#tabbar a', { hasText: tab }).click();
       await page.locator(marker).first().waitFor();
       assert.equal(await page.locator('#tabbar a.on').innerText(), tab);
