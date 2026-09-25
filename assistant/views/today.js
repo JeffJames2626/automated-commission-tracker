@@ -3,6 +3,7 @@ import { esc, icon, md, timeOnly, when, sameDay, skeleton, cacheGet, cacheSet, s
 import { state, go } from '../state.js';
 import { captureCard, sectionHead, statusNote, citeChip, sourcesBlock, evidenceSheet } from './common.js';
 import { composer } from '../capture.js';
+import { dreamRow, freshLine } from './dreams.js';
 
 // Today — a chief of staff, not a task dashboard.
 
@@ -41,7 +42,7 @@ export async function catchMeUp() {
   try {
     const r = await api('catchup', { method: 'POST' });
     const byId = Object.fromEntries(r.sources.map(x => [x.id, x]));
-    s.el.querySelector('[data-b]').innerHTML = `<div class="answer">${md(r.text, { cite: id => citeChip(byId[id]) })}</div>${sourcesBlock(r.sources)}
+    s.el.querySelector('[data-b]').innerHTML = `${r.since ? `<p class="eyebrow">Since ${esc(when(r.since))}</p>` : ''}<div class="answer">${md(r.text, { cite: id => citeChip(byId[id]) })}</div>${sourcesBlock(r.sources)}
       <div class="row gap mt"><button class="btn ghost" data-why>${icon('shield')} Why?</button><button class="btn ghost" data-ask>${icon('sparkle')} Ask a follow-up</button></div>`;
     s.el.querySelectorAll('[data-src]').forEach(b => b.onclick = () => { const x = byId[b.dataset.src]; if (x && x.url) window.open(x.url, x.url.startsWith('#') ? '_self' : '_blank', 'noopener'); });
     s.el.querySelector('[data-why]').onclick = () => evidenceSheet({ sources: r.sources, trace: [], model: r.ai ? 'Claude' : null });
@@ -56,7 +57,7 @@ export async function render(main) {
   main.innerHTML = `
     <header class="page-h"><div><div class="eyebrow">${esc(new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }))}</div>
       <h1>${esc(greeting())}${name ? ', ' + esc(name) : ''}</h1></div></header>
-    <button class="hero-btn" data-catchup>${icon('bolt')}<span><b>Catch me up</b><small>A calm briefing from your calendar, email, and notes</small></span>${icon('chevron')}</button>
+    <button class="hero-btn" data-catchup>${icon('bolt')}<span><b>Catch me up</b><small>What changed since you last looked, and what’s next</small></span>${icon('chevron')}</button>
     <div data-body>${skeleton(3)}</div>
     <div class="dock-spacer"></div>`;
   main.querySelector('[data-catchup]').onclick = catchMeUp;
@@ -71,10 +72,20 @@ export async function render(main) {
     const due = t.overdue.concat(t.dueToday);
     const cal = d.calendar;
     const parts = [];
-    parts.push(`<section class="card sec">${sectionHead('Calendar', 'calendar')}${cal.items && cal.items.length ? cal.items.slice(0, 6).map(eventRow).join('') : (cal.status === 'ok' ? '<div class="quiet">Nothing else on the calendar today.</div>' : statusNote(cal))}</section>`);
-    if (due.length || t.open.length) parts.push(`<section class="sec">${sectionHead('Things you said you’d do', 'check')}${due.concat(t.open).slice(0, 6).map(c => captureCard(c, { compact: true })).join('')}</section>`);
+    // NOW — what is time-sensitive today.
+    parts.push(`<section class="card sec">${sectionHead('Now', 'calendar')}${cal.items && cal.items.length ? cal.items.slice(0, 6).map(eventRow).join('') : (cal.status === 'ok' ? '<div class="quiet">Nothing else on the calendar today.</div>' : statusNote(cal))}
+      ${due.length ? due.slice(0, 4).map(c => captureCard(c, { compact: true })).join('') : ''}</section>`);
+    // FOLLOW UP — what you said you'd do, and who is waiting on you.
+    if (t.open.length) parts.push(`<section class="sec">${sectionHead('Follow up', 'check')}${t.open.slice(0, 5).map(c => captureCard(c, { compact: true })).join('')}</section>`);
     if (d.email.status !== 'ok' || d.email.items.length) parts.push(`<section class="card sec">${sectionHead('Waiting on you', 'mail', d.email.unread ? `<span class="count">${d.email.unread} unread</span>` : '')}${d.email.items && d.email.items.length ? d.email.items.slice(0, 5).map(mailRow).join('') : statusNote(d.email)}</section>`);
-    if (d.goals.length) parts.push(`<section class="sec">${sectionHead('Active goals', 'sparkle')}${d.goals.map(c => captureCard(c, { compact: true })).join('')}</section>`);
+    // DREAMS & GOALS — only when something is worth a glance.
+    const dr = d.dreams;
+    const dreamRows = (dr ? dr.items.map(x => dreamRow(x, x.line)) : []).concat(d.goals.map(c => captureCard(c, { compact: true })));
+    if (dr && dr.needsChoice) dreamRows.unshift(`<a class="row-item" href="#/inbox">${icon('bolt')}<div class="grow"><div class="ri-title">${dr.needsChoice} capture${dr.needsChoice > 1 ? 's' : ''} waiting for you to pick a dream</div></div>${icon('chevron')}</a>`);
+    if (dr && ['stale', 'disconnected'].includes(dr.freshness.state)) dreamRows.push(`<div class="status-note">Dream Board: ${esc(freshLine(dr.freshness))}</div>`);
+    if (dreamRows.length) parts.push(`<section class="card sec">${sectionHead('Dreams & goals', 'sparkle')}${dreamRows.join('')}</section>`);
+    // RECENTLY CAPTURED — what still needs a decision or a home.
+    if ((d.recentInbox || []).length) parts.push(`<section class="sec">${sectionHead('Recently captured', 'inbox')}${d.recentInbox.map(c => captureCard(c, { compact: true })).join('')}</section>`);
     if (d.revisit.length) parts.push(`<section class="sec">${sectionHead('Worth revisiting', 'history')}${d.revisit.map(c => captureCard(c)).join('')}</section>`);
     else if (d.recentIdeas.length) parts.push(`<section class="sec">${sectionHead('Recent ideas', 'sparkle')}${d.recentIdeas.map(c => captureCard(c, { compact: true })).join('')}</section>`);
     if (d.files.items && d.files.items.length) parts.push(`<section class="card sec">${sectionHead('Recently changed files', 'folder')}${d.files.items.slice(0, 4).map(fileRow).join('')}</section>`);

@@ -7,6 +7,10 @@ import { state, go } from './state.js';
 
 const MAX_BYTES = 3 * 1024 * 1024;
 
+// The server's explicit routing rule (lib/assistant/apps/routing.mjs), so an
+// offline capture can already say where it is going.
+const TO_BOARD = /\b(dream\s?board|vision\s?board)\b|\b(add|put|attach|save|stick|file|pin)\b[^.?!\n]{0,40}?\b(to|on|in|under|with|for)\s+(my|the|our)\s+[a-z0-9'&][a-z0-9' &\-]{0,58}?\s+(dream|goal)s?\b/i;
+
 function b64(buf) {
   let s = '';
   const bytes = new Uint8Array(buf);
@@ -49,7 +53,8 @@ export async function submitCapture({ text = '', sourceType = 'text', attachment
   };
   const r = await outbox.capture(body);
   if (r.queued) {
-    toast(navigator.onLine ? 'Saved on this phone — syncing when the server answers.' : 'Saved on this phone. It will sync when you’re back online.', { tone: 'ok' });
+    const board = TO_BOARD.test(body.text) ? ' — waiting to add to Dream Board' : '';
+    toast(navigator.onLine ? 'Saved on this phone' + board + '. Syncing when the server answers.' : 'Saved on this phone' + board + '. It will sync when you’re back online.', { tone: 'ok' });
     document.dispatchEvent(new CustomEvent('asst:captured', { detail: null }));
     return r;
   }
@@ -60,6 +65,13 @@ export async function submitCapture({ text = '', sourceType = 'text', attachment
     return r;
   }
   const c = r.capture || {};
+  if (r.routing && r.routing.current) {
+    const d = await import('./views/dreams.js');
+    document.dispatchEvent(new CustomEvent('asst:captured', { detail: c }));
+    if (r.routing.current.status === 'needs_choice') d.chooseDream(c.id, r.routing, { photo: attachments.some(a => /^image\//.test(a.mime)) });
+    else toast(d.routeText(r.routing) || 'Saved', { tone: 'ok', action: 'View', onAction: () => go('#/item/' + c.id) });
+    return r;
+  }
   const kinds = state.boot ? state.boot.kinds : {};
   const label = (kinds[c.kind] ? kinds[c.kind].label : 'Note') + (c.project_name ? ' · ' + c.project_name : '');
   toast('Saved · ' + label, { tone: 'ok', action: 'Edit', onAction: () => go('#/item/' + c.id) });

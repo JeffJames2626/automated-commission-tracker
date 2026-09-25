@@ -25,16 +25,19 @@ const server = spawn(process.execPath, ['scripts/assistant-dev.mjs'], { env: Obj
 await new Promise((res, rej) => { server.stdout.on('data', d => { if (String(d).includes('dev server')) res(); }); server.on('exit', c => rej(new Error('server exited ' + c))); });
 
 const browser = await pw.chromium.launch();
-let failures = 0;
+let failures = 0, current = null;
 const step = async (name, fn) => {
   try { await fn(); console.log('ok   ' + name); }
-  catch (e) { failures++; console.log('FAIL ' + name + '\n     ' + String(e.message).split('\n')[0]); }
+  catch (e) {
+    failures++; console.log('FAIL ' + name + '\n     ' + String(e.message).split('\n')[0]);
+    if (shots && current) await current.screenshot({ path: `${shots}/FAIL-${failures}.png` }).catch(() => {});
+  }
 };
 const shot = async (page, name) => { if (shots) await page.screenshot({ path: `${shots}/${name}.png`, fullPage: false }); };
 
 try {
   const ctx = await browser.newContext({ ...pw.devices['iPhone 14'], colorScheme: 'dark', timezoneId: 'America/Chicago' });
-  const page = await ctx.newPage();
+  const page = current = await ctx.newPage();
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
   page.on('console', m => { if (/Content Security Policy|Refused to/i.test(m.text())) errors.push(m.text()); });
@@ -130,6 +133,67 @@ try {
     await page.locator('.svc-perm summary').first().click();
     await page.getByText('Send, delete, archive or label email').waitFor();
     await shot(page, '08-connections');
+  });
+
+  await step('Dream Board: a capture that names it is saved, sent and shows where it went', async () => {
+    await page.goto(BASE + '/assistant/#/today');
+    await page.locator('.dock textarea').fill('Save this for my Dream Board — someday I want a lake house with a dock');
+    await page.locator('.dock .send').click();
+    await page.locator('.toast', { hasText: 'Dream Board' }).waitFor();
+    await shot(page, '09-dream-toast');
+    await page.goto(BASE + '/assistant/#/inbox?f=all');
+    await page.locator('.cap-title', { hasText: 'lake house' }).first().click();
+    await page.locator('.route-block', { hasText: 'Saved to Dream Board · “Lake House”' }).waitFor({ timeout: 15000 });
+    await shot(page, '10-dream-item');
+    await page.locator('.route-block a', { hasText: 'Open' }).click();
+    await page.locator('.idea-title', { hasText: 'Lake House' }).waitFor();
+    await page.getByText('someday I want a lake house with a dock').first().waitFor();
+    await page.getByText('added to Dream Board').waitFor();
+    await shot(page, '11-dream-page');
+  });
+
+  await step('Dream Board: "my house dream" asks which one instead of guessing', async () => {
+    await page.goto(BASE + '/assistant/#/today');
+    await page.locator('.dock textarea').fill('Add this to my house dream: a porch swing');
+    await page.locator('.dock .send').click();
+    await page.getByText('Which dream?').first().waitFor();
+    await shot(page, '12-which-dream');
+    await page.locator('.sheet [data-c]', { hasText: 'Beach House' }).click();
+    await page.locator('.toast', { hasText: 'Beach House' }).waitFor();
+  });
+
+  await step('Dream Board: offline board queues honestly, then catches up', async () => {
+    await page.request.get(BASE + '/__dev/dreamboard?offline=1');
+    await page.goto(BASE + '/assistant/#/today');
+    await page.locator('.dock textarea').fill('Add to my fitness dream: sign up for a 10k');
+    await page.locator('.dock .send').click();
+    await page.locator('.toast', { hasText: 'Adding to “Fitness”' }).waitFor();
+    await page.request.get(BASE + '/__dev/dreamboard?offline=0&milestone=Fitness');
+    await page.waitForTimeout(4500);
+    await page.reload();
+    await page.locator('.sec-h', { hasText: 'Dreams & goals' }).waitFor();
+    await page.getByText('1 milestone completed this month').waitFor();
+    await shot(page, '13-today-dreams');
+  });
+
+  await step('Catch Me Up tells what changed since, including Dream Board', async () => {
+    await page.locator('[data-catchup]').click();
+    await page.locator('.sheet .eyebrow', { hasText: 'Since' }).waitFor();
+    await page.locator('.sheet .answer', { hasText: 'You added “Lake House” to Dream Board' }).waitFor();
+    await page.locator('.sheet .answer', { hasText: 'Fitness' }).waitFor();
+    await shot(page, '14-catchup');
+    await page.keyboard.press('Escape');
+  });
+
+  await step('search finds the dream as its own source; Connections shows what Dream Board can do', async () => {
+    await page.goto(BASE + '/assistant/#/search?q=lake%20house');
+    await page.locator('.result-group .sec-h', { hasText: 'Dream Board' }).waitFor();
+    await page.goto(BASE + '/assistant/#/connections');
+    const card = page.locator('[data-app="dreamboard"]');
+    await card.getByText('Add dreams').waitFor();
+    await card.getByText('Delete or merge — off').waitFor();
+    await page.locator('.ability', { hasText: 'Send — off' }).waitFor();
+    await shot(page, '15-connections-apps');
   });
 
   await step('no uncaught page errors on mobile', async () => { assert.deepEqual(errors, []); });

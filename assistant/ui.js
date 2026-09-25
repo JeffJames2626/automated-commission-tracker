@@ -59,6 +59,7 @@ export const PROVIDER = {
   google_drive: { icon: 'folder', label: 'Drive' },
   google_sheets: { icon: 'table', label: 'Sheets' },
   google_contacts: { icon: 'person', label: 'Contacts' },
+  dreamboard: { icon: 'sparkle', label: 'Dream Board' },
   project: { icon: 'folderOpen', label: 'Project' },
   person: { icon: 'person', label: 'Person' },
 };

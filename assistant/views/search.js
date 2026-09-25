@@ -2,10 +2,11 @@ import { api } from '../api.js';
 import { esc, icon, when, skeleton, emptyState } from '../ui.js';
 import { go } from '../state.js';
 import { providerOf, statusNote } from './common.js';
+import { freshLine } from './dreams.js';
 
 // One search box, every source at once, grouped by where results came from.
 
-const GROUP_ICON = { ideas: 'sparkle', tasks: 'check', notes: 'note', memory: 'brain', projects: 'folderOpen', people: 'person', email: 'mail', sheets: 'table', drive: 'folder', calendar: 'calendar', contacts: 'person' };
+const GROUP_ICON = { dreams: 'sparkle', ideas: 'sparkle', tasks: 'check', notes: 'note', memory: 'brain', projects: 'folderOpen', people: 'person', email: 'mail', sheets: 'table', drive: 'folder', calendar: 'calendar', contacts: 'person' };
 
 function resultRow(it) {
   const internal = it.url && it.url.startsWith('#');
@@ -43,7 +44,7 @@ export async function render(main, params) {
       const hits = r.groups.reduce((n, g) => n + g.items.length, 0);
       out.innerHTML = (hits ? '' : `<div class="card quiet">Nothing matched “${esc(q)}”.</div>`) +
         groups.map(g => `<section class="result-group"><div class="sec-h">${icon(GROUP_ICON[g.key] || 'note')}<span>${esc(g.label)}</span>${g.items.length ? `<span class="count">${g.items.length}</span>` : ''}</div>
-          ${g.items.map(resultRow).join('')}${statusNote(g)}</section>`).join('') +
+          ${g.freshness && g.freshness.state !== 'live' && g.items.length ? `<div class="status-note">${esc(freshLine(g.freshness))}</div>` : ''}${g.items.map(resultRow).join('')}${statusNote(g)}</section>`).join('') +
         `<button class="btn wide ghost mt" data-ask>${icon('sparkle')} Ask the assistant about “${esc(q)}”</button>`;
       out.querySelector('[data-ask]').onclick = () => go('#/assistant', { ask: q });
     } catch (e) {

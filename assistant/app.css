@@ -392,6 +392,21 @@ mark { background: color-mix(in srgb, var(--accent) 30%, transparent); color: in
 .switch input:checked + span { background: var(--ok); }
 .switch input:checked + span::after { transform: translateX(20px); }
 
+/* connected apps: capabilities, pairing, dream timeline */
+.abilities { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 6px 0 2px 32px; font-size: 13px; }
+.ability { display: inline-flex; align-items: center; gap: 4px; color: var(--text-2); }
+.ability .ic { width: 15px; height: 15px; }
+.ability.ok .ic { color: var(--ok); } .ability.no { color: var(--text-3); } .ability.no .ic { color: var(--bad); } .ability.dim { color: var(--text-3); }
+.pair-code { margin-top: 12px; padding: 14px; border-radius: 14px; background: var(--surface-2); text-align: center; }
+.pair-code b { display: block; font: 700 30px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; margin: 6px 0; }
+.row-item.wide { width: 100%; text-align: left; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; }
+.timeline { list-style: none; margin: 6px 0; padding: 0 0 0 14px; border-left: 2px solid var(--line-2); }
+.timeline li { position: relative; padding: 6px 0 8px 10px; }
+.timeline li::before { content: ""; position: absolute; left: -20px; top: 12px; width: 10px; height: 10px; border-radius: 50%; background: var(--line-2); }
+.timeline li.progress::before { background: var(--ok); }
+.timeline small { display: block; color: var(--text-3); font-size: 12px; }
+.route-block details { margin-top: 6px; }
+
 /* empty, skeleton, signin */
 .empty { text-align: center; padding: 48px 16px; color: var(--text-2); }
 .empty h3 { color: var(--text); margin: 14px 0 6px; }

@@ -19,6 +19,7 @@ export function captureCard(c, { compact = false } = {}) {
         ${due}
         ${c.attachment_count ? `<span>${icon('clip')}${c.attachment_count}</span>` : ''}
         ${pending ? '<span class="sorting">sorting…</span>' : ''}
+        ${c.route_status === 'needs_choice' ? `<span class="pill warn">${icon('sparkle')} Which dream?</span>` : c.route_status ? `<span class="pill">${icon('clock')} Going to Dream Board</span>` : c.status === 'filed' ? `<span class="pill ok">${icon('sparkle')} Dream Board</span>` : ''}
         <span class="grow"></span><span>${esc(ago(c.captured_at))}</span>
       </div>
     </div>

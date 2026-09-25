@@ -8,7 +8,12 @@
 // login and the fake Google live only here, not in the API code.
 //
 // Env: PORT, ANTHROPIC_API_KEY (optional — without it the assistant runs in
-// search-only mode and capture uses the rule-based classifier).
+// search-only mode and capture uses the rule-based classifier),
+// DEV_DREAMBOARD=0 to run without the in-memory Dream Board.
+//
+// A fake Dream Board (tests/assistant/fake-dreamboard.mjs) is paired and polls
+// every 2 seconds, so routing, dream pages and Catch Me Up work end to end.
+// /__dev/dreamboard?offline=1|0 and ?milestone=<goal title> drive it.
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -24,6 +29,8 @@ import { seedDefaultProjects } from '../lib/assistant/repo/projects.mjs';
 import { issueSession, SESSION_COOKIE } from '../lib/assistant/session.mjs';
 import { createClaude } from '../lib/assistant/ai/claude.mjs';
 import { demoGoogleFetch, ALL_SCOPES } from './assistant-demo-google.mjs';
+import { startPairing, setBaseUrl } from '../lib/assistant/repo/apps.mjs';
+import { fakeDreamBoard } from '../tests/assistant/fake-dreamboard.mjs';
 
 const PORT = +process.env.PORT || 8787;
 const ROOT = path.resolve('.');
@@ -43,6 +50,18 @@ await saveGoogleGrant(db, { userId: user.id, accountId: 'dev-1', accountEmail: '
 const claude = process.env.ANTHROPIC_API_KEY ? createClaude({ apiKey: process.env.ANTHROPIC_API_KEY, model: process.env.ASSISTANT_MODEL || 'claude-opus-5' }) : null;
 const handle = createRouter({ db, config, fetchImpl: demoGoogleFetch, claude, lookup: async () => [{ address: '93.184.216.34' }] });
 
+let board = null;
+if (process.env.DEV_DREAMBOARD !== '0') {
+  const call = (method, route, { body = null, query = {}, headers = {} } = {}) => handle({ method, route, query, body, headers, cookies: {}, origin: 'http://localhost:' + PORT });
+  board = fakeDreamBoard({ call }, { label: 'Dev board' });
+  board.board.addGoal('Beach House', { status: 'dreaming', fields: { target_amount: 650000 } });
+  board.board.addGoal('Fitness', { status: 'in_progress', category: { id: 'cat-health', name: 'Health' } });
+  await board.pair((await startPairing(db, user.id, 'dreamboard')).code);
+  await setBaseUrl(db, user.id, 'dreamboard', 'http://localhost:' + PORT);
+  await board.syncUntilIdle();
+  setInterval(() => board.sync().catch(e => console.error('fake board sync', e.message)), 2000);
+}
+
 // Serve the same security headers production uses (vercel.json), so a CSP
 // mistake shows up locally.
 const VERCEL = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
@@ -55,6 +74,13 @@ http.createServer(async (req, res) => {
   if (url.pathname === '/__dev/login') {
     res.writeHead(302, { location: '/assistant/#/today', 'set-cookie': cookie(SESSION_COOKIE, issueSession(user, config.sessionSecret), { maxAge: 86400, secure: false }) });
     return res.end();
+  }
+  if (url.pathname === '/__dev/dreamboard' && board) {
+    if (url.searchParams.has('offline')) board.s.offline = url.searchParams.get('offline') === '1';
+    const m = url.searchParams.get('milestone');
+    if (m) board.board.completeMilestone(board.board.live().find(g => g.title === m).id, 'First step');
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ offline: board.s.offline, goals: board.board.live().map(g => ({ id: g.id, title: g.title })) }));
   }
   if (url.pathname === '/api/assistant' || url.pathname.startsWith('/api/assistant/')) {
     const r = await toRequest(req);

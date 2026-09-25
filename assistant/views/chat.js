@@ -16,13 +16,15 @@ const SUGGESTIONS = [
   'What appointments do I have Thursday?',
 ];
 
+const ACTION_STATE = { confirmed: 'Confirmed', cancelled: 'Cancelled', queued: 'Confirmed — waiting for Dream Board to apply it', verified: 'Done — Dream Board shows the change', failed: 'Not changed' };
+
 function actionCard(a) {
   const done = a.status !== 'proposed';
   return `<div class="action-card ${esc(a.status)}" data-action="${esc(a.id)}">
     <div class="ac-h">${icon('shield')} <b>Needs your OK</b><span class="grow"></span><span class="pill">${esc(a.kind.replace(/_/g, ' '))}</span></div>
     <p>${esc(a.summary)}</p>
     ${a.payload && (a.payload.to || a.payload.subject) ? `<div class="ac-detail">${a.payload.to ? '<div><span class="muted">To</span> ' + esc(a.payload.to) + '</div>' : ''}${a.payload.subject ? '<div><span class="muted">Subject</span> ' + esc(a.payload.subject) + '</div>' : ''}${a.payload.body ? '<pre>' + esc(a.payload.body) + '</pre>' : ''}</div>` : ''}
-    ${done ? `<div class="muted small">${a.status === 'confirmed' ? 'Confirmed' : 'Cancelled'}</div>` : `<div class="row gap"><button class="btn ghost" data-no>Cancel</button><button class="btn primary" data-yes>Review &amp; confirm</button></div>`}
+    ${done ? `<div class="muted small">${esc(ACTION_STATE[a.status] || a.status)}${a.result && a.result.message && a.status === 'failed' ? ' — ' + esc(a.result.message) : ''}</div>` : `<div class="row gap"><button class="btn ghost" data-no>Cancel</button><button class="btn primary" data-yes>Review &amp; confirm</button></div>`}
   </div>`;
 }
 
@@ -73,7 +75,8 @@ export async function render(main, params, convId) {
         if (yes) yes.onclick = async () => {
           try {
             const r = await api('action', { method: 'POST', body: { id: a.id, decision: 'confirm' } });
-            a.status = 'confirmed';
+            a.status = (r.action && r.action.status) || 'confirmed';
+            a.result = r.action && r.action.result;
             card.outerHTML = actionCard(a);
             if (r.result && r.result.open_url) window.open(r.result.open_url, '_blank', 'noopener');
             toast(r.result && r.result.note ? r.result.note : 'Confirmed.', { ms: 6000 });

@@ -2,6 +2,7 @@ import { api, attachmentUrl } from '../api.js';
 import { esc, icon, when, ago, skeleton, toast, confirmSheet } from '../ui.js';
 import { state, go, kindLabel } from '../state.js';
 import { captureCard, sourceRow } from './common.js';
+import { routingBlock, chooseDream } from './dreams.js';
 
 // The idea card: original thought, AI summary, classification the owner can
 // change with a tap, and quietly, related things ("connect the dots").
@@ -17,7 +18,7 @@ export async function render(main, params, id) {
   paint(main, data);
 }
 
-function paint(main, { item: c, related }) {
+function paint(main, { item: c, related, routing }) {
   const boot = state.boot;
   const statuses = boot.statuses;
   const isTask = c.kind === 'task' || c.kind === 'reminder';
@@ -57,6 +58,8 @@ function paint(main, { item: c, related }) {
       ${images.length ? `<section class="gallery">${images.map(a => `<a href="${attachmentUrl(a.id)}" target="_blank" rel="noopener"><img loading="lazy" src="${attachmentUrl(a.id)}" alt="${esc(a.name || 'photo')}"></a>`).join('')}</section>` : ''}
       ${files.length ? `<section class="block">${files.map(a => `<a class="src" href="${attachmentUrl(a.id)}" target="_blank" rel="noopener">${icon('note', 'src-ic')}<div class="src-main"><div class="src-title">${esc(a.name || 'file')}</div><div class="src-meta">${esc(a.mime)}</div></div>${icon('external', 'src-go')}</a>`).join('')}</section>` : ''}
 
+      ${routingBlock(routing, c.id)}
+      ${!routing && ['dream', 'goal'].includes(c.kind) ? `<button class="btn wide ghost" data-send-board>${icon('sparkle')} Send to Dream Board</button>` : ''}
       ${(c.people || []).length ? `<section class="block"><div class="block-h">${icon('person')} People</div><div class="chips wrap">${c.people.map(p => `<a class="chip" href="#/person/${esc(p.id)}">${esc(p.display_name)}</a>`).join('')}</div></section>` : ''}
       ${(c.sources || []).length ? `<section class="block"><div class="block-h">${icon('link')} Linked sources</div>${c.sources.map(s => sourceRow({ provider: s.provider, title: s.title, url: s.url, date: s.occurred_at }, { showId: false })).join('')}</section>` : ''}
 
@@ -73,6 +76,19 @@ function paint(main, { item: c, related }) {
     } catch (e) { toast(e.offline ? 'Offline — change not saved.' : e.message); return null; }
   };
   main.querySelector('[data-back]').onclick = () => window.history.length > 1 ? window.history.back() : go('#/inbox');
+  const reload = async () => paint(main, await api('item', { query: { id: c.id } }));
+  // While Dream Board hasn't confirmed it yet, look again now and then.
+  if (routing && routing.current && ['routing', 'queued', 'waiting'].includes(routing.current.status)) {
+    setTimeout(() => { if (location.hash === '#/item/' + c.id) reload().catch(() => {}); }, 4000);
+  }
+  const choose = main.querySelector('[data-choose]');
+  if (choose) choose.onclick = () => chooseDream(c.id, routing, { onDone: reload, photo: images.length > 0 });
+  const sendBoard = main.querySelector('[data-send-board]');
+  if (sendBoard) sendBoard.onclick = async () => {
+    // The owner asked: show every dream to pick from, or a new one.
+    const r = await api('dreams').catch(() => ({ goals: [] }));
+    chooseDream(c.id, { current: { candidates: r.goals.filter(g => !g.placeholder).slice(0, 8).map(g => ({ kind: 'goal', id: g.id, title: g.title, status: g.status })), suggestedTitle: c.title } }, { onDone: reload, photo: images.length > 0 });
+  };
   main.querySelector('[data-ask]').onclick = () => go('#/assistant', { ask: 'Tell me what else I have that relates to my ' + kindLabel(c.kind).toLowerCase() + ': “' + c.title + '”' });
   main.querySelector('[data-del]').onclick = async () => {
     if (!(await confirmSheet('Delete this capture?', 'The original words, summary and attachments are removed for good.', { ok: 'Delete', danger: true }))) return;
@@ -96,7 +112,7 @@ function paint(main, { item: c, related }) {
     const p = main.querySelector('[data-raw]');
     p.contentEditable = "true"; p.focus();
     fix.textContent = 'Save transcript';
-    fix.onclick = async () => { const r = await save({ raw_text: p.textContent }); if (r) paint(main, { item: r, related }); };
+    fix.onclick = async () => { const r = await save({ raw_text: p.textContent }); if (r) paint(main, { item: r, related, routing }); };
   };
 }
 

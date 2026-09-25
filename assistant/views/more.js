@@ -2,6 +2,7 @@ import { api, authUrl } from '../api.js';
 import { esc, icon, when, ago, skeleton, emptyState, toast, sheet, confirmSheet } from '../ui.js';
 import { state, go } from '../state.js';
 import { captureCard, sourceRow, sectionHead, statusNote } from './common.js';
+import { dreamRow, freshLine } from './dreams.js';
 
 // More: projects, people, memory, connections and account. Deliberately
 // small — this is not a settings maze.
@@ -107,6 +108,8 @@ export async function renderProject(main, params, id) {
     <div class="proj-head"><div class="proj-emoji big">${esc(p.emoji || '📁')}</div><div><div class="eyebrow">${esc(p.kind)}</div><h1>${esc(p.name)}</h1>${p.description ? `<p class="muted">${esc(p.description)}</p>` : ''}</div></div>
     <button class="hero-btn" data-ask>${icon('sparkle')}<span><b>Ask about ${esc(p.name)}</b><small>Everything related — notes, email, files</small></span>${icon('chevron')}</button>
     ${r.memories.length ? `<section class="card sec">${sectionHead('What you’ve decided', 'brain')}${r.memories.map(m => `<div class="row-item"><div class="grow"><div class="ri-title">${esc(m.statement)}</div><div class="ri-sub">${esc(m.kind)} · ${esc(ago(m.created_at))}</div></div></div>`).join('')}</section>` : ''}
+    ${(r.dreams || []).length ? `<section class="card sec">${sectionHead('In Dream Board', 'sparkle')}${r.dreams.map(g => dreamRow(g)).join('')}</section>` : ''}
+    ${(r.people || []).length ? `<section class="sec">${sectionHead('People', 'person')}<div class="chips wrap">${r.people.map(x => `<a class="chip" href="#/person/${esc(x.id)}">${esc(x.display_name)}</a>`).join('')}</div></section>` : ''}
     ${byKind.ideas.length ? `<section class="sec">${sectionHead('Ideas', 'sparkle')}${byKind.ideas.map(c => captureCard(c)).join('')}</section>` : ''}
     ${byKind.tasks.length ? `<section class="sec">${sectionHead('Tasks', 'check')}${byKind.tasks.map(c => captureCard(c, { compact: true })).join('')}</section>` : ''}
     ${byKind.other.length ? `<section class="sec">${sectionHead('Notes & more', 'note')}${byKind.other.map(c => captureCard(c)).join('')}</section>` : ''}
@@ -176,7 +179,7 @@ export async function renderMemory(main) {
     const kinds = state.boot.memoryKinds;
     main.querySelector('[data-l]').innerHTML = r.memories.length ? kinds.map(k => {
       const ms = r.memories.filter(m => m.kind === k);
-      return ms.length ? `<section class="card sec">${sectionHead(k[0].toUpperCase() + k.slice(1) + 's', 'brain')}${ms.map(m => `<div class="row-item mem" data-id="${esc(m.id)}"><div class="grow"><div class="ri-title">${esc(m.statement)}</div><div class="ri-sub">${esc([m.project_name, ago(m.created_at), m.source_type === 'capture' ? 'from a capture' : m.source_type === 'conversation' ? 'from a conversation' : 'added by you'].filter(Boolean).join(' · '))}</div></div>
+      return ms.length ? `<section class="card sec">${sectionHead(k[0].toUpperCase() + k.slice(1) + 's', 'brain')}${ms.map(m => `<div class="row-item mem" data-id="${esc(m.id)}"><div class="grow"><div class="ri-title">${esc(m.statement)}</div><div class="ri-sub">${esc([m.project_name, ago(m.created_at), m.origin === 'extracted' ? 'taken from a capture' : m.origin === 'conversation' ? 'you asked me to remember' : m.origin === 'inferred' ? 'my inference' : 'you told me'].filter(Boolean).join(' · '))}</div></div>
         ${m.source_type === 'capture' && m.source_id ? `<a class="icon-btn" href="#/item/${esc(m.source_id)}" aria-label="Source">${icon('link')}</a>` : ''}<button class="icon-btn" data-edit aria-label="Edit">${icon('note')}</button><button class="icon-btn" data-arch aria-label="Forget">${icon('x')}</button></div>`).join('')}</section>` : '';
     }).join('') : emptyState('Nothing remembered yet', 'Say “remember that…” when you capture or chat, and it will be kept here.', 'brain');
     main.querySelectorAll('.mem').forEach(row => {
@@ -197,6 +200,55 @@ export async function renderMemory(main) {
 }
 
 // ---------------- connections ----------------
+const CAP_MARK = { yes: ['check', 'ok', ''], confirm: ['shield', 'ok', ' (you confirm)'], future: ['clock', 'dim', ' — later'], no: ['x', 'no', ' — off'] };
+function capList(caps) {
+  return `<div class="abilities">${(caps || []).map(c => { const [ic, cls, note] = CAP_MARK[c.value] || CAP_MARK.no; return `<span class="ability ${cls}">${icon(ic)}${esc(c.label + note)}</span>`; }).join('')}</div>`;
+}
+
+function appCard(a) {
+  const f = a.freshness || {};
+  const q = a.queue || {};
+  const waiting = (q.queued || 0) + (q.waiting || 0) + (q.routing || 0);
+  const paired = a.status === 'connected' || f.state === 'disconnected' || a.records;
+  return `<section class="card sec" data-app="${esc(a.key)}">
+    <div class="conn-h"><div class="g-logo" aria-hidden="true">${icon('sparkle')}</div><div class="grow"><div class="ri-title">${esc(a.label)}</div>
+      <div class="ri-sub">${esc(freshLine(f))}${a.instanceLabel ? ' · ' + esc(a.instanceLabel) : ''}${a.records ? ' · ' + a.records + ' dreams known' : ''}</div></div>
+      ${f.state === 'stale' || f.state === 'disconnected' ? '<span class="pill warn">Check</span>' : ''}</div>
+    ${capList(a.capabilities)}
+    ${waiting || q.needs_choice ? `<div class="status-note">${waiting ? waiting + ' waiting to reach ' + esc(a.label) : ''}${waiting && q.needs_choice ? ' · ' : ''}${q.needs_choice ? q.needs_choice + ' need you to pick a dream' : ''}</div>` : ''}
+    ${a.lastError ? `<div class="status-note">Last problem: ${esc(a.lastError)}</div>` : ''}
+    <div data-code></div>
+    <label class="field mt"><span>Address you open it at</span><input data-base placeholder="https://your-pc.tailnet.ts.net" value="${esc(a.baseUrl || '')}"></label>
+    <div class="row gap wrap mt">
+      <button class="btn small primary" data-pair>${a.status === 'connected' ? 'Pair again' : 'Connect'}</button>
+      ${a.status === 'connected' ? '<button class="btn small ghost" data-disc>Disconnect</button>' : ''}
+      ${paired ? '<button class="btn small ghost danger-text" data-forget>Forget its data</button>' : ''}
+    </div>
+    <p class="muted small">${esc(a.label)} keeps its own data. The assistant keeps a searchable copy of titles, status, amounts and milestones, and your captures that went there.</p>
+  </section>`;
+}
+
+function bindApp(el, a, reload) {
+  el.querySelector('[data-pair]').onclick = async () => {
+    if (a.status === 'connected' && !(await confirmSheet('Pair again?', 'The current connection stops working until you enter the new code in ' + a.label + '.', { ok: 'Make a new code' }))) return;
+    const r = await api('apps/pair', { method: 'POST', body: { app: a.key } });
+    el.querySelector('[data-code]').innerHTML = `<div class="pair-code"><div class="muted small">Enter this code in ${esc(a.label)} → Settings → Personal Assistant</div><b>${esc(r.code)}</b><div class="muted small">Works once, for ${r.expiresInMinutes} minutes.</div></div>`;
+  };
+  const disc = el.querySelector('[data-disc]');
+  if (disc) disc.onclick = async () => {
+    if (!(await confirmSheet('Disconnect ' + a.label + '?', 'It stops syncing. What’s waiting stays queued, and what the assistant knows is kept (marked as out of date).', { ok: 'Disconnect', danger: true }))) return;
+    await api('apps/disconnect', { method: 'POST', body: { app: a.key } }); reload();
+  };
+  const forget = el.querySelector('[data-forget]');
+  if (forget) forget.onclick = async () => {
+    if (!(await confirmSheet('Forget ' + a.label + ' data?', 'The assistant drops its copy of your dreams and their history, and cancels anything not yet sent. Your captures stay. Nothing in ' + a.label + ' is touched.', { ok: 'Forget', danger: true }))) return;
+    await api('apps/forget', { method: 'POST', body: { app: a.key, confirm: 'forget' } }); reload();
+  };
+  el.querySelector('[data-base]').onchange = async e => {
+    try { await api('apps/base-url', { method: 'POST', body: { app: a.key, url: e.target.value } }); toast('Saved.', { tone: 'ok' }); } catch (err) { toast(err.message); }
+  };
+}
+
 const STATE_LABEL = { connected: 'Connected', not_connected: 'Not connected', not_granted: 'Not connected', disabled: 'Switched off', reconnect: 'Reconnect needed' };
 
 export async function renderConnections(main, params) {
@@ -217,6 +269,7 @@ export async function renderConnections(main, params) {
           <div class="svc-h">${icon(s.icon)}<div class="grow"><div class="ri-title">${esc(s.label)}</div><div class="ri-sub state-${esc(s.state)}">${esc(STATE_LABEL[s.state] || s.state)}${s.state === 'connected' ? ' · read-only' : ''}</div></div>
             ${s.state === 'connected' || s.state === 'disabled' ? `<label class="switch" aria-label="${esc(s.label)} on/off"><input type="checkbox" data-toggle ${s.state === 'connected' ? 'checked' : ''}><span></span></label>`
               : `<a class="btn small primary" href="${authUrl('connect', [s.key])}">${s.state === 'reconnect' ? 'Reconnect' : 'Connect'}</a>`}</div>
+          ${capList(s.capabilities)}
           <details class="svc-perm"><summary>What it can access</summary>
             <div class="perm-cols"><div><div class="perm-h ok">Can</div><ul>${s.can.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div><div><div class="perm-h no">Cannot</div><ul>${s.cannot.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div></div>
             ${s.note ? `<p class="muted small">${esc(s.note)}</p>` : ''}<p class="muted small mono">${s.scopes.map(esc).join('<br>')}</p></details>
@@ -224,7 +277,9 @@ export async function renderConnections(main, params) {
         ${missing.length > 1 ? `<a class="btn wide primary mt" href="${authUrl('connect', missing)}">Connect all (${missing.length})</a>` : ''}
         ${g ? '<button class="btn wide ghost danger-text mt" data-disconnect>Disconnect Google</button>' : ''}
       </section>
-      <section class="sec">${sectionHead('Coming later', 'bolt')}<div class="card">${r.providers.filter(p => p.status !== 'available').map(p => `<div class="row-item dim"><div class="grow"><div class="ri-title">${esc(p.label)}</div></div><span class="pill">Planned</span></div>`).join('')}</div></section>`;
+      ${r.apps.map(appCard).join('')}
+      <section class="sec">${sectionHead('Coming later', 'bolt')}<div class="card">${r.planned.map(p => `<div class="row-item dim"><div class="grow"><div class="ri-title">${esc(p.label)}</div></div><span class="pill">Planned</span></div>`).join('')}</div></section>`;
+    main.querySelectorAll('[data-app]').forEach(el => bindApp(el, r.apps.find(a => a.key === el.dataset.app), load));
     main.querySelectorAll('[data-toggle]').forEach(t => t.onchange = async () => {
       const key = t.closest('[data-svc]').dataset.svc;
       try { await api('connections/service', { method: 'POST', body: { service: key, enabled: t.checked } }); load(); } catch (e) { toast(e.message); t.checked = !t.checked; }
