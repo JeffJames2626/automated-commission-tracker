@@ -1,0 +1,27 @@
+{
+  "name": "Personal Assistant",
+  "short_name": "Assistant",
+  "description": "Capture anything. Ask about everything.",
+  "id": "/assistant/",
+  "start_url": "/assistant/#/today",
+  "scope": "/assistant/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0b10",
+  "theme_color": "#0b0b10",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ],
+  "shortcuts": [
+    { "name": "Capture", "short_name": "Capture", "url": "/assistant/?capture=1#/today", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Ask", "short_name": "Ask", "url": "/assistant/#/assistant", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+  ],
+  "share_target": {
+    "action": "/assistant/",
+    "method": "GET",
+    "params": { "title": "title", "text": "text", "url": "url" }
+  }
+}
