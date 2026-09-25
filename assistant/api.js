@@ -71,5 +71,6 @@ export async function stream(route, body, onEvent, { signal } = {}) {
   if (tail) onEvent(tail);
 }
 
-export const attachmentUrl = id => BASE + '?r=attachment&id=' + encodeURIComponent(id);
+// The standalone demo (scripts/assistant-demo) serves attachments from memory.
+export const attachmentUrl = id => (window.__asstAttachmentUrl && window.__asstAttachmentUrl(id)) || BASE + '?r=attachment&id=' + encodeURIComponent(id);
 export const authUrl = (intent, services = []) => BASE + '/auth/start?intent=' + intent + (services.length ? '&services=' + services.join(',') : '');
