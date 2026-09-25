@@ -86,7 +86,7 @@ test('#1 create online: saved, sent, acknowledged, linked — words kept verbati
   assert.ok(!inbox.json.items.some(i => i.id === r.json.capture.id));
   const dream = await app.call('GET', 'dream', { query: { id: lakeId } });
   assert.equal(dream.json.dream.words[0].text, words);
-  assert.equal(dream.json.dream.changes[0].by, 'assistant', 'our own create is recognised as ours');
+  assert.equal(dream.json.dream.changes[0].by, 'capture', 'our own create is recognised as ours');
 });
 
 test('#2 create while Dream Board is offline: waits, then goes through', async () => {
@@ -356,8 +356,10 @@ test('propose → confirm → execute → verify a target change; retries never 
   assert.equal(row.status, 'verified');
   // The change coming back from Dream Board is recognised as the owner's own.
   const op = (await db.query('SELECT id FROM asst_app_ops WHERE action_id = $1', [a.id]))[0];
-  const ev = await db.query(`SELECT op_ids FROM asst_events WHERE record_id = $1 ORDER BY received_at DESC LIMIT 1`, [lakeId]);
-  assert.deepEqual(ev[0].op_ids, [op.id]);
+  const ev = await db.query(`SELECT changes FROM asst_events WHERE record_id = $1 ORDER BY received_at DESC LIMIT 1`, [lakeId]);
+  assert.deepEqual(ev[0].changes.map(c => c.op_id), [op.id]);
+  const d = (await app.call('GET', 'dream', { query: { id: lakeId } })).json.dream;
+  assert.equal(d.changes[d.changes.length - 1].by, 'confirmed');
 });
 
 test('a stale card is refused; a change Dream Board overtook is reported, not forced', async () => {

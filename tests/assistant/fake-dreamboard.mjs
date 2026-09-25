@@ -117,15 +117,20 @@ export function fakeDreamBoard(app, { instanceId = 'board-real', label = 'Jeffâ€
     const results = s.unreported.splice(0);
     let body;
     if (s.resync) {
-      const start = s.seq;
-      const all = [...s.goals.values()].filter(g => !g.deleted);
-      body = { records: all.map(wire), backfill: { start_seq: start, done: true, ids: all.map(g => g.id) } };
+      // A resend in pages of 100; the last page lists every live goal.
+      if (!s.bf) s.bf = { start: s.seq, ids: [...s.goals.values()].filter(g => !g.deleted).map(g => g.id), at: 0 };
+      const page = s.bf.ids.slice(s.bf.at, s.bf.at + 100);
+      const last = s.bf.at + 100 >= s.bf.ids.length;
+      body = { records: page.map(id => wire(s.goals.get(id))), backfill: { start_seq: s.bf.start, done: last, ...(last ? { ids: s.bf.ids } : {}) } };
+      s.bf.at += 100;
     } else {
       body = { records: [...s.goals.values()].filter(g => g.seq > s.since).sort((a, b) => a.seq - b.seq).slice(0, 100).map(wire) };
     }
     const r = await app.call('POST', 'apps/v1/sync', { body: Object.assign({ instance_id: instanceId, epoch: s.epoch, seq: s.seq, results }, body, extra), headers: auth(), cookies: {} });
     s.lastResponse = r;
     if (r.status !== 200) { s.unreported.unshift(...results); return r; }
+    if (!r.json.resync || !s.resync) s.bf = null;
+    else if (s.bf && s.bf.at >= s.bf.ids.length) s.bf = null;      // resend again from the top
     s.resync = r.json.resync;
     s.since = r.json.since;
     for (const op of r.json.ops) {

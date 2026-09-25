@@ -23,18 +23,20 @@ and GemMasters plug in the same way (see the last section).
 A capture filed to Dream Board gets status **`filed`**. It leaves the inbox,
 open lists and the classifier's reach, but stays searchable with a "Dream
 Board" badge. The dream itself lives in Dream Board. The assistant has no
-second, competing "dream" object.
+second, competing "dream" object. Only routing sets `filed`, never a
+hand edit. Captures that need the owner again (Which dream?, rejected, data
+forgotten) return to the inbox. A filed task or reminder with a due time
+stays on the assistant's lists, because Dream Board won't remind anyone.
 
 ## 2. Data model added in Phase 2
 
 | Table | Purpose |
 |---|---|
-| `asst_apps` | One row per (user, app). Holds the pairing-code hash (10 min, single use) and the bearer-token hash, plus `session_epoch` so the token dies with "sign out everywhere". Also the bound `instance_id`, the app's `epoch` and `max_seq`, the `resync` flag, `history_since` (when changes started being known), `base_url` (confirmed by the owner) and `link_template` (declared by the app), and `last_seen_at`, `caught_up_at` and `last_error`. |
+| `asst_apps` | One row per (user, app). Holds the pairing-code hash (10 min, single use) and the bearer-token hash. `session_epoch` is stamped when the code is made, so the token dies with "sign out everywhere", even for a code made before it. Also the bound `instance_id`, the app's `epoch` and `max_seq`, the `resync` flag, `history_since` (when changes started being known), `base_url` (confirmed by the owner) and `link_template` (declared by the app), `last_seen_at`, `sync_until` (a 30-second lease: one sync at a time) and `last_error`. |
 | `asst_app_ops` | Work queued for an app. **The row id is the op id** the app deduplicates on. The partial unique index `asst_app_ops_live` allows at most one live op per capture. Other columns: `status`, `target_id`, `depends_on` (a pending create), `payload`, `result`, `attempts`, `delivered_at` / `done_at` / `linked_at`, and `trace` (the Captured → Routed → Queued → Sent → Acknowledged → Linked timeline). |
 | `asst_external_records` (+ columns) | The mirror: `app_epoch`, `app_seq` (version gate), `status`, `data` (normalised snapshot), `aliases` (former titles), `search_text` + generated `search` tsvector, `deleted_at`, `missing_at` (gone after a restore; hidden, never hard-deleted), `synced_at`. |
-| `asst_events` | Derived changes, unique on `(user, app, record, epoch, seq)` so a duplicate snapshot can't double count. `progress` marks forward movement. `op_ids` marks changes that were the assistant's own ops coming back, so they're told once and as "you did this". |
+| `asst_events` | Derived changes, unique on `(user, app, record, epoch, seq)` so a duplicate snapshot can't double count. `progress` marks forward movement. A change that was one of the assistant's own ops coming back carries that `op_id`, so it's told once and as "you did this". A late result claims such changes after the fact. |
 | `asst_memories.origin` | `stated` (typed on the Memory screen), `conversation` (the owner said "remember…"), `extracted` (the classifier took it from a capture), `inferred` (reserved; nothing writes it). |
-| `asst_actions.op_id` | Links a confirmed change card to the op that carries it. |
 | `asst_identities.project_id` | Maps an app's own category id (`dreamboard:category`) to an assistant project, so renaming the category in the app keeps the link. |
 | `asst_projects.source_app` | The project that is an app's hub ("Dream Board" → `dreamboard`). |
 | `asst_users.last_catchup_at` | "Since you last looked." |
@@ -136,7 +138,9 @@ POST apps/v1/pair
 
 The row is now bound to `instance_id`. Any other database (a `zz-*` test
 workspace, a restored copy) gets `409 {"error":"wrong_board"}` and can never
-drain the real queue. Switching boards takes a deliberate re-pair.
+drain the real queue. Switching boards takes a deliberate re-pair, and
+everything is resent. Re-pairing the *same* board just resumes, so changes
+made while it was unpaired still arrive as changes.
 
 **Sync.** This is one round trip: results in, records in, ops out.
 
@@ -168,13 +172,21 @@ POST apps/v1/sync
   (its `seq` when it began), and on the last page `done: true` plus the ids of
   every live record. Records not listed get `missing_at`: hidden, but kept so
   links and history still explain themselves. Anything changed during the
-  resend has `seq > start_seq` and is sent again as a normal update.
+  resend has `seq > start_seq` and is sent again as a normal update. Pages
+  hold at most 100 records. A page with more is never taken as the end of a
+  resend.
+* **One sync at a time.** A request that overlaps a running one (a retry
+  after a timeout) gets `ops: []` and `next_poll_seconds: 2`, and nothing is
+  processed twice.
+* **Nothing blocks the queue.** A record or result that can't be stored is
+  skipped and named in the app's `last_error` on Connections. Everything else
+  in the request still goes through.
 * **Record** (the universal source record, as an app publishes it):
 
 ```json
 { "type": "goal", "id": "g-123", "seq": 1233,
   "title": "Lake House", "description": "…", "status": "in_progress",
-  "category": { "id": "cat-home", "name": "Home" }, "board": { "id": "b1", "name": "Main" },
+  "category": { "id": "cat-home", "name": "Home" },
   "fields": { "target_amount": 1800000, "saved_amount": 200000, "target_date": "2029-06" },
   "field_times": { "target_amount": "2026-09-20T15:02:11Z" },
   "milestones": [ { "id": "m1", "title": "Pick the lake", "done": true, "done_at": "…", "created_at": "…" } ],
@@ -286,18 +298,26 @@ Capture contents are never logged. The server logs only error messages.
 ## 9. Security summary
 
 * **Pairing and tokens.** The pairing code and the token are stored as
-  SHA-256 hashes only. The code is single use and expires. Re-pairing revokes
-  the old token. Disconnect kills the token. `session_epoch` and the allow-list
-  are re-checked on every call.
+  SHA-256 hashes only. The code is single use, expires, and carries the
+  session epoch from when it was made. Re-pairing revokes the old token, and
+  disconnect kills it. `session_epoch` and the allow-list are re-checked on
+  every call. If either fails, the app is marked disconnected and every
+  screen says so.
 * **Separate auth paths.** Bearer routes are carved out before the
   cookie/CSRF gate and read no cookies. Cookie routes ignore `Authorization`.
 * **Isolation and limits.** All keys start with `user_id`, and results for
-  another user's op are ignored. There are per-owner rate limits (sync, files,
-  global pairing) and hard caps per request.
+  another user's op are ignored. Sync and files are rate-limited per owner,
+  pairing per caller (checked after the request is well-formed, so strangers
+  can't use up the owner's attempts), with hard caps per request. Record text
+  is cleaned (no NUL, no broken surrogates, dates limited to years 1–9999).
 * **What the app receives.** Only the op: the owner's words, time, image
   references and a title. No other captures, memories or Google data.
-* **What the AI receives.** Only what a tool asks for. Dream Board text is
-  wrapped in `<untrusted_app_data>` and treated as data, never instructions.
+* **What the AI receives.** Only what a tool asks for. Every piece of Dream
+  Board text (lists, dream pages, catch-up lines, candidate names, change
+  cards) is wrapped in `<untrusted_app_data>`. The text can't close the
+  wrapper itself, and it is treated as data, never instructions. Text the
+  assistant saved for the owner is labelled as the assistant's wording, never
+  as the owner's quote.
 * **Links.** A canonical link's origin comes only from the owner-confirmed
   address: https, or http on localhost. The app supplies only a path template
   that starts with `/`.

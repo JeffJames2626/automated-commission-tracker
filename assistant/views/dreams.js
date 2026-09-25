@@ -94,7 +94,7 @@ export async function render(main, params, id) {
   main.querySelector('[data-back]').onclick = () => history.length > 1 ? history.back() : go('#/today');
   let d;
   try { d = (await api('dream', { query: { id } })).dream; }
-  catch (e) { main.innerHTML += `<div class="card quiet">${esc(e.status === 404 ? 'The assistant doesn’t know this dream.' : e.message)}</div>`; return; }
+  catch (e) { main.insertAdjacentHTML('beforeend', `<div class="card quiet">${esc(e.status === 404 ? 'The assistant doesn’t know this dream.' : e.message)}</div>`); return; }
   const fields = Object.entries(d.current.fields).filter(([, v]) => v != null && v !== '');
   main.innerHTML = `
     <header class="page-h"><button class="icon-btn" data-back aria-label="Back">${icon('back')}</button><div class="grow"></div>
@@ -113,10 +113,10 @@ export async function render(main, params, id) {
       ${d.current.description ? `<section class="block"><div class="block-h">${icon('note')} In Dream Board</div><p>${esc(d.current.description)}</p></section>` : ''}
       ${d.current.milestones.length ? `<section class="block"><div class="block-h">${icon('check')} Milestones</div>${d.current.milestones.map(m => `<div class="row-item">${icon(m.done ? 'check' : 'clock')}<div class="grow"><div class="ri-title">${esc(m.title)}</div>${m.done_at ? `<div class="ri-sub">${esc(when(m.done_at))}</div>` : ''}</div></div>`).join('')}</section>` : ''}
       <section class="block"><div class="block-h">${icon('note')} Your words</div>
-        ${d.words.length ? d.words.map(w => `<a class="row-item" href="#/item/${esc(w.id)}"><div class="grow"><div class="ri-title">“${esc(w.text)}”</div><div class="ri-sub">${esc(when(w.capturedAt))}${w.attachments ? ' · ' + w.attachments + ' attachment' + (w.attachments > 1 ? 's' : '') : ''}</div></div>${icon('chevron')}</a>`).join('') : '<p class="muted small">Nothing captured about this dream yet.</p>'}</section>
+        ${d.words.length ? d.words.map(w => `<a class="row-item" href="#/item/${esc(w.id)}"><div class="grow"><div class="ri-title">“${esc(w.text)}”</div><div class="ri-sub">${esc(when(w.capturedAt))}${w.by === 'assistant' ? ' · saved by the assistant for you' : ''}${w.attachments ? ' · ' + w.attachments + ' attachment' + (w.attachments > 1 ? 's' : '') : ''}</div></div>${icon('chevron')}</a>`).join('') : '<p class="muted small">Nothing captured about this dream yet.</p>'}</section>
       ${d.pending.length ? `<section class="block"><div class="block-h">${icon('clock')} Waiting to reach Dream Board</div><p class="muted small">${d.pending.length} item${d.pending.length > 1 ? 's' : ''}.</p></section>` : ''}
       <section class="block">${sectionHead('What changed', 'history')}
-        ${d.changes.length ? `<ol class="timeline">${d.changes.slice().reverse().map(c => `<li class="${c.progress ? 'progress' : ''}"><span>${esc(c.text)}</span><small>${esc(when(c.at))}${c.by === 'assistant' ? ' · from your capture' : ''}</small></li>`).join('')}</ol>` : '<p class="muted small">No changes seen yet.</p>'}
+        ${d.changes.length ? `<ol class="timeline">${d.changes.slice().reverse().map(c => `<li class="${c.progress ? 'progress' : ''}"><span>${esc(c.text)}</span><small>${esc(when(c.at))}${c.by === 'capture' ? ' · from your capture' : c.by === 'confirmed' ? ' · a change you confirmed' : ''}</small></li>`).join('')}</ol>` : '<p class="muted small">No changes seen yet.</p>'}
         ${d.historySince ? `<p class="muted small">The assistant has known this board since ${esc(when(d.historySince))}.</p>` : ''}</section>
     </article>`;
   main.querySelector('[data-back]').onclick = () => history.length > 1 ? history.back() : go('#/today');

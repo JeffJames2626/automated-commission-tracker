@@ -52,8 +52,8 @@ tests (use `?workspace=zz-<name>`). Every content change is a pure op in
    * `409 wrong_board` → stop and show the message.
    * Network errors → back off (15 s, 30 s, … up to 5 min) and keep results
      for the next try.
-5. **Publishing a goal.** Map Goal + its Milestones, Notes, Images, Category
-   and Board to the record in CONNECTED-APPS.md §5.1.
+5. **Publishing a goal.** Map Goal + its Milestones, Notes, Images and Category
+   to the record in CONNECTED-APPS.md §5.1.
    * Put money and dates in `fields` (`target_amount`, `saved_amount`,
      `target_date`) and any other scalar the board has (e.g. `focus: true`).
    * `field_times[k]` comes from the HLC stamp of that field's last merge.

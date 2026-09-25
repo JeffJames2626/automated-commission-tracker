@@ -82,7 +82,15 @@ export async function render(main, params, convId) {
             toast(r.result && r.result.note ? r.result.note : 'Confirmed.', { ms: 6000 });
           } catch (e) { toast(e.message); }
         };
-        if (no) no.onclick = async () => { try { await api('action', { method: 'POST', body: { id: a.id, decision: 'cancel' } }); a.status = 'cancelled'; card.outerHTML = actionCard(a); } catch (e) { toast(e.message); } };
+        if (no) no.onclick = async () => {
+          try {
+            const r = await api('action', { method: 'POST', body: { id: a.id, decision: 'cancel' } });
+            a.status = (r.action && r.action.status) || 'cancelled';
+            a.result = r.action && r.action.result;
+            card.outerHTML = actionCard(a);
+            if (a.status !== 'cancelled') toast('Already confirmed — it can’t be cancelled now.');
+          } catch (e) { toast(e.message); }
+        };
       });
     });
     renderContext();
