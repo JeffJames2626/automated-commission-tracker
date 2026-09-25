@@ -106,8 +106,8 @@ export function fakeClaude(script) {
 export const text = t => ({ content: [{ type: 'text', text: t }], stop_reason: 'end_turn' });
 export const toolUse = (calls) => ({ stop_reason: 'tool_use', content: calls.map((c, i) => ({ type: 'tool_use', id: 'tu_' + i + '_' + c.name, name: c.name, input: c.input })) });
 
-export function makeApp({ db, google, claude = null, config = {}, now, linkFetch, lookup }) {
-  const router = createRouter({ db, fetchImpl: google ? google.fetchImpl : undefined, claude, config: Object.assign({}, CONFIG, config), now, sleep: async () => {}, linkFetch, lookup });
+export function makeApp({ db, google, claude = null, config = {}, now, linkFetch, lookup, limits }) {
+  const router = createRouter({ db, fetchImpl: google ? google.fetchImpl : undefined, claude, config: Object.assign({}, CONFIG, config), now, sleep: async () => {}, linkFetch, lookup, limits });
   const jar = {};
   async function call(method, route, { body, query = {}, headers = {}, cookies } = {}) {
     const out = await router({
