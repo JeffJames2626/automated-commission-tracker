@@ -6,7 +6,7 @@
 // search for anything else.
 (function () {
   'use strict';
-  const KEY = 'asst-demo-v1';
+  const KEY = 'asst-demo-v2';
   const H = 3600e3, D = 24 * H;
   const now = () => Date.now();
   const iso = t => new Date(t).toISOString();
@@ -22,7 +22,7 @@
     property: { label: 'Property', emoji: '🏡' }, travel: { label: 'Travel idea', emoji: '✈️' }, website: { label: 'Website', emoji: '🔗' }, photo: { label: 'Photo', emoji: '📷' },
     document: { label: 'Document', emoji: '📄' }, voice_note: { label: 'Voice note', emoji: '🎙️' }, thought: { label: 'Random thought', emoji: '💭' }, question: { label: 'Question asked', emoji: '❓' },
   };
-  const STATUSES = { inbox: 'Inbox', thinking: 'Thinking', maybe: 'Maybe', active: 'Active', built: 'Built', archived: 'Archived' };
+  const STATUSES = { inbox: 'Inbox', thinking: 'Thinking', maybe: 'Maybe', active: 'Active', built: 'Built', archived: 'Archived', filed: 'Filed' };
   const PROJECTS = [
     ['ALP', 'business', '🌱', ['Automated Lawn & Pest', 'Automated Lawn and Pest']], ['GemMasters', 'business', '💎', ['Gem Masters']],
     ['Personal', 'area', '🙂', []], ['Dream Board', 'topic', '✨', ['dreamboard']], ['Pricing App', 'project', '🧮', ['pricing tool']],
@@ -77,7 +77,7 @@
 
   // ---------------- persisted sample notes ----------------
   function seed() {
-    const s = { v: 1, seededAt: now(), projects: [], captures: [], memories: [], people: [], conversations: [], messages: [], actions: [], attachments: {}, disabled: [], disconnected: false };
+    const s = { v: 2, seededAt: now(), projects: [], captures: [], memories: [], people: [], conversations: [], messages: [], actions: [], attachments: {}, disabled: [], disconnected: false, dreams: [], ops: [], boardOffline: false };
     PROJECTS.forEach(([name, kind, emoji, aliases]) => s.projects.push({ id: id('prj'), name, kind, emoji, aliases, description: null, status: 'active', created_at: iso(now() - 60 * D) }));
     const P = n => s.projects.find(p => p.name === n).id;
     const people = [['Josh Carter', 'Irrigation lead', 'josh@example.com'], ['Zach Miller', 'Sales', 'zach@example.com'], ['Ashtin Lee', 'Office manager', 'ashtin@example.com'], ['Jon Pratt', 'New tech', 'jon@example.com']];
@@ -95,7 +95,7 @@
       raw_text: 'I had an idea. On the sales app, I think when you open an employee we should show their truck, picture, KPIs, and maybe make it kind of like a video game player card. Save that under the sales tracker.',
       summary: 'When opening an employee in the Sales Tracker, show a game-style player card: photo, assigned truck and headline KPIs.', next_action: 'List the 4–5 KPIs worth showing on the card.', tags: ['sales', 'ui'] });
     cap({ kind: 'business_idea', project_id: P('Future Businesses'), ago: 9, title: 'Gutter cleaning as a fall add-on', raw_text: 'New business idea: offer gutter cleaning as an add-on for fall leaf clean-up customers.', summary: 'Sell gutter cleaning to existing fall clean-up customers as a bundled add-on.' });
-    cap({ kind: 'dream', status: 'maybe', project_id: P('Dream Board'), ago: 30, title: 'Lake house in north Georgia', raw_text: 'Save this for the dream board: lake house on Lake Burton, dock, room for the whole family at Thanksgiving.' });
+    const lakeCap = cap({ kind: 'dream', status: 'filed', project_id: P('Dream Board'), ago: 30, title: 'Lake house in north Georgia', raw_text: 'Save this for the dream board: lake house on Lake Burton, dock, room for the whole family at Thanksgiving.' });
     cap({ kind: 'property', project_id: P('Investments'), ago: 4, title: 'Look into 12 acres off Hwy 9', raw_text: 'Look into buying this property — 12 acres off Hwy 9, listed at $410k, creek on the back side.', next_action: 'Ask the listing agent about road frontage and perc test.' });
     cap({ kind: 'task', project_id: P('ALP'), ago: 1, title: 'Send the Henderson irrigation estimate', raw_text: 'Need to send the Henderson irrigation estimate today by 5', due_at: iso(at(0, 17)), people: [who('Josh')] });
     cap({ kind: 'reminder', project_id: P('ALP'), ago: 1, title: 'Call Josh about the controller', raw_text: 'Remind me tomorrow to call Josh about the controller swap', due_at: iso(at(1, 9)), people: [who('Josh')] });
@@ -113,11 +113,29 @@
     mem('preference', 'Prefers a text over a call for crew updates', null, 25);
     mem('goal', 'Reach $1.2M recurring revenue by end of 2027', 'ALP', 45);
     s.memories[0].source_id = s.captures.find(c => c.kind === 'decision').id;
+    mem('fact', 'Lake house budget is $2M', 'Dream Board', 60);
+    s.memories[s.memories.length - 1].source_type = 'user';
+    // Dream Board's goals, as its last sync published them.
+    const goal = (id_, title, status, category, fields, extra = {}) => s.dreams.push(Object.assign({ id: id_, title, status, category, fields, aliases: [], milestones: [], notes: [], changes: [],
+      words: [], created_at: iso(now() - 90 * D), updated_at: iso(now() - 2 * D) }, extra));
+    goal('g-lake', 'Lake House', 'in_progress', 'Home', { target_amount: 1800000, saved_amount: 240000, target_date: '2029-06' }, {
+      milestones: [{ id: 'm1', title: 'Pick the lake', done: true, done_at: iso(now() - 5 * D) }, { id: 'm2', title: 'Save the down payment', done: false }],
+      words: [lakeCap.id],
+      changes: [
+        { kind: 'created', text: 'added to Dream Board', at: iso(now() - 30 * D), by: 'capture' },
+        { kind: 'updated', text: 'target amount $1.2M → $1.8M', at: iso(now() - 21 * D), by: 'dream_board' },
+        { kind: 'milestone_completed', text: 'milestone completed: Pick the lake', at: iso(now() - 5 * D), by: 'dream_board', progress: true },
+      ] });
+    goal('g-fit', 'Fitness', 'in_progress', 'Health', { target_date: '2026-12' }, { updated_at: iso(now() - 52 * D), changes: [{ kind: 'created', text: 'added to Dream Board', at: iso(now() - 120 * D), by: 'dream_board' }] });
+    goal('g-beach', 'Beach House', 'dreaming', 'Home', { target_amount: 650000 });
+    goal('g-bronco', 'Vintage Bronco', 'planned', 'Fun', { target_amount: 85000, saved_amount: 30000 });
+    s.ops.push({ id: 'op_seed', kind: 'create_goal', capture_id: lakeCap.id, status: 'applied', target: 'g-lake', title: 'Lake House', created_at: lakeCap.captured_at, done_at: lakeCap.captured_at,
+      trace: ['captured', 'routed', 'queued', 'sent', 'acknowledged'].map(st => ({ stage: st, at: lakeCap.captured_at })) });
     return s;
   }
 
   let S;
-  function load() { try { S = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { S = null; } if (!S || S.v !== 1) { S = seed(); save(); } }
+  function load() { try { S = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { S = null; } if (!S || S.v !== 2) { S = seed(); save(); } }
   function save() {
     try { localStorage.setItem(KEY, JSON.stringify(S)); }
     catch { try { const lite = Object.assign({}, S, { attachments: {} }); localStorage.setItem(KEY, JSON.stringify(lite)); } catch { /* storage unavailable: demo still runs in memory */ } }
@@ -131,7 +149,8 @@
     const p = proj(c.project_id);
     return { id: c.id, kind: c.kind, status: c.status, title: c.title, summary: c.summary, next_action: c.next_action, source_type: c.source_type, url: c.url, project_id: c.project_id,
       classification_state: c.classification_state, due_at: c.due_at, completed_at: c.completed_at, captured_at: c.captured_at, updated_at: c.updated_at,
-      raw_preview: (c.raw_text || '').slice(0, 280), details: c.details, project_name: p ? p.name : null, project_emoji: p ? p.emoji : null, attachment_count: (c.attachments || []).length };
+      raw_preview: (c.raw_text || '').slice(0, 280), details: c.details, project_name: p ? p.name : null, project_emoji: p ? p.emoji : null, attachment_count: (c.attachments || []).length,
+      route_status: (liveOp(c.id) || {}).status || null };
   }
   function fullItem(c) {
     return Object.assign(listItem(c), { raw_text: c.raw_text, ai: c.ai,
@@ -196,7 +215,7 @@
   }
 
   // ---------------- sources (the citation registry) ----------------
-  const LABEL = { notes: 'My notes', memory: 'Memory', google_gmail: 'Email', google_calendar: 'Calendar', google_drive: 'Drive', google_sheets: 'Sheets', google_contacts: 'Contacts' };
+  const LABEL = { dreamboard: 'Dream Board', notes: 'My notes', memory: 'Memory', google_gmail: 'Email', google_calendar: 'Calendar', google_drive: 'Drive', google_sheets: 'Sheets', google_contacts: 'Contacts' };
   function Registry() { this.list = []; }
   Registry.prototype.add = function (it, evidence) {
     let s = this.list.find(x => x.provider === it.provider && x.recordId === it.recordId);
@@ -289,10 +308,15 @@
       const d = reg.add(F('demo-doc-onboarding'), 'Day 1: truck walkaround, safety, uniforms. Day 2: ride along on the Tuesday mowing route. Day 3: first solo stops with Josh checking in.');
       const e = reg.add(E('primary/e4'));
       text = 'That’s **“Jon — onboarding plan”** in Drive [' + d + ']:\n1. Day 1: truck walkaround, safety, uniforms\n2. Day 2: ride-along on the Tuesday mowing route\n3. Day 3: first solo stops with Josh checking in\n\nHis first ride-along is on your calendar tomorrow [' + e + '].';
+    } else if (/lake house|lake/.test(low)) {
+      await step('get_dream', { dream: 'lake house' }, 3, 'Opening lake house');
+      const g = S.dreams.find(x => x.id === 'g-lake'), w = S.captures.find(c => c.id === g.words[0]);
+      const sg = reg.add(dreamSrc(g), 'target amount $1.8M · saved $240,000 · milestones 1/2'), sw = reg.add(noteSrc(w), w.raw_text);
+      const sm = reg.add({ provider: 'memory', kind: 'fact', recordId: S.memories.find(m => /lake house budget/i.test(m.statement)).id, title: 'Lake house budget is $2M', url: '#/memory' });
+      text = '**Lake House** is in progress in Dream Board [' + sg + ']:\n- Target: originally **$1.2M**, raised to **$1.8M** three weeks ago [' + sg + ']\n- Saved so far: $240,000; “Pick the lake” was completed this week [' + sg + ']\n\nWhen you first saved it you said: “lake house on Lake Burton, dock, room for the whole family at Thanksgiving” [' + sw + '].\n\nOne thing doesn’t line up: you once told me the budget was **$2M** [' + sm + ']. Dream Board is the record, so the current target is $1.8M.';
     } else if (/dream/.test(low)) {
-      await step('list_my_items', { kinds: ['dream'] }, 1, 'Checking your list');
-      const ds = S.captures.filter(c => c.kind === 'dream');
-      text = ds.length ? 'On your dream board:\n' + ds.map(c => '- ' + c.title + ' [' + reg.add(noteSrc(c), c.raw_text) + ']').join('\n') : 'Nothing on the dream board yet.';
+      await step('list_dreams', { sort: 'amount' }, S.dreams.length, 'Checking Dream Board');
+      text = 'Your dreams in Dream Board, biggest first:\n' + S.dreams.slice().sort((a, b) => (b.fields.target_amount || 0) - (a.fields.target_amount || 0)).map(g => '- **' + g.title + '** — ' + g.status.replace('_', ' ') + (g.fields.target_amount ? ', target ' + money(g.fields.target_amount, 'target_amount') : '') + (lastProgress(g) ? ', progress this week' : now() - Date.parse(lastChange(g)) > 45 * D ? ', no update in ' + Math.floor((now() - Date.parse(lastChange(g))) / D) + ' days' : '') + ' [' + reg.add(dreamSrc(g)) + ']').join('\n');
     } else if (/unfinished|never acted|biggest|goals?|revisit/.test(low)) {
       await step('list_my_items', { kinds: ['idea', 'business_idea', 'product_idea', 'goal'], statuses: ['thinking', 'active', 'maybe'], order: 'oldest' }, 4, 'Checking your list');
       const cs = S.captures.filter(c => ['idea', 'business_idea', 'product_idea', 'goal'].includes(c.kind) && ['thinking', 'active', 'maybe'].includes(c.status)).sort((a, b) => a.updated_at.localeCompare(b.updated_at));
@@ -328,6 +352,7 @@
     const files = byScore(G.files, f => f.title + ' ' + f.snippet);
     return { query: q, groups: [
       grp('ideas', 'Ideas', caps.filter(c => IDEA.includes(c.kind)).map(ci)),
+      Object.assign(grp('dreams', 'Dream Board', byScore(S.dreams, g => [g.title, g.category, g.aliases.join(' ')].join(' ')).map(g => Object.assign(dreamSrc(g), { snippet: [g.status, g.category].filter(Boolean).join(' · ') }))), { freshness: boardFresh() }),
       grp('tasks', 'Tasks & reminders', caps.filter(c => TASK.includes(c.kind)).map(ci)),
       grp('notes', 'Notes', caps.filter(c => !IDEA.includes(c.kind) && !TASK.includes(c.kind)).map(ci)),
       grp('memory', 'Memory', byScore(S.memories.filter(m => m.status === 'active'), m => m.statement).map(m => ({ provider: 'memory', kind: m.kind, recordId: m.id, title: m.statement, url: '#/memory', date: m.created_at, snippet: m.kind }))),
@@ -360,24 +385,134 @@
       revisit: ideas.filter(c => ['thinking', 'active', 'maybe'].includes(c.status) && Date.parse(c.updated_at) < now() - 21 * D).slice(0, 3).map(listItem),
       goals: S.captures.filter(c => c.kind === 'goal' && !['archived', 'built'].includes(c.status)).map(listItem),
       recentIdeas: ideas.slice().sort((a, b) => b.captured_at.localeCompare(a.captured_at)).slice(0, 3).map(listItem),
+      recentInbox: S.captures.filter(c => c.status === 'inbox' && c.kind !== 'question').sort((a, b) => b.captured_at.localeCompare(a.captured_at)).slice(0, 4).map(listItem),
+      dreams: { freshness: boardFresh(), needsChoice: S.ops.filter(o => o.status === 'needs_choice').length, items: [
+        ...S.dreams.filter(g => g.changes.some(c => c.progress && Date.parse(c.at) > now() - 30 * D)).map(g => ({ id: g.id, title: g.title, line: g.changes.filter(c => c.progress).length + ' milestone completed this month' })),
+        ...S.dreams.filter(g => g.status === 'in_progress' && now() - Date.parse(lastChange(g)) > 45 * D).slice(0, 1).map(g => ({ id: g.id, title: g.title, line: 'no update in ' + Math.floor((now() - Date.parse(lastChange(g))) / D) + ' days' })),
+      ] },
       counts: counts(),
     };
   }
   function catchUp() {
     const d = todayData(), reg = new Registry();
     const lines = [];
+    const since = now() - 3 * D;
+    const caps = S.captures.filter(c => c.kind !== 'question' && Date.parse(c.captured_at) > since);
+    const sent = S.ops.filter(o => o.status === 'applied' && Date.parse(o.done_at) > since);
+    const prog = S.dreams.filter(g => g.changes.some(c => c.progress && Date.parse(c.at) > now() - 7 * D));
+    const bits = ['- ' + caps.length + ' captured' + (caps.length ? ': ' + Object.entries(caps.reduce((m, c) => { m[KINDS[c.kind].label.toLowerCase()] = (m[KINDS[c.kind].label.toLowerCase()] || 0) + 1; return m; }, {})).map(([k, n]) => n + ' ' + k + (n > 1 ? 's' : '')).join(', ') : '')];
+    sent.forEach(o => { const g = S.dreams.find(x => x.id === o.target); if (g) bits.push('- You added ' + (o.kind === 'create_goal' ? '“' + g.title + '” to Dream Board' : 'a capture to “' + g.title + '”') + ' [' + reg.add(dreamSrc(g)) + ']'); });
+    prog.forEach(g => bits.push('- ' + g.title + ': ' + g.changes.filter(c => c.progress).map(c => c.text).join('; ') + ' [' + reg.add(dreamSrc(g)) + ']'));
+    lines.push('**What happened**\n' + bits.join('\n'));
     if (d.calendar.items.length) lines.push('**Next up**\n' + d.calendar.items.slice(0, 3).map(e => '- ' + fmtT(e.meta.start) + ' — ' + e.title + ' [' + reg.add(e) + ']').join('\n'));
     const due = d.tasks.overdue.concat(d.tasks.dueToday);
     if (due.length) lines.push('**Due today**\n' + due.map(c => '- ' + c.title + ' [' + reg.add(noteSrc(c)) + ']').join('\n'));
     if (d.email.items.length) lines.push('**Waiting on you**\n' + d.email.items.slice(0, 2).map(t => '- ' + t.meta.from + ': ' + t.title + ' [' + reg.add(t, t.body) + ']').join('\n') + '\n- Nothing else pressing in email.');
     if (d.revisit.length) lines.push('**Worth a look when you have a minute**\n' + d.revisit.map(c => '- ' + c.title + ' [' + reg.add(noteSrc(c)) + ']').join('\n'));
     const text = lines.join('\n\n') || 'Nothing pressing today.';
-    return { text, sources: reg.cite(text), ai: true };
+    return { text, since: iso(since), sources: reg.cite(text), ai: true };
   }
+
+  // ---------------- Dream Board (mirrors lib/assistant/apps/*) ----------------
+  // The demo "board" is a PC that is on: it applies queued work ~2s later.
+  const BOARD_RE = /\b(dream\s?board|vision\s?board)\b/i;
+  const ATTACH_RE = /\b(?:add|put|attach|save|stick|file|pin)\b[^.?!\n]{0,40}?\b(?:to|on|in|under|with|for)\s+(?:my|the|our)\s+([a-z0-9'&][a-z0-9' &\-]{0,58}?)\s+(?:dream|goal)s?\b/i;
+  const STOPW = new Set(['my', 'the', 'a', 'an', 'our', 'dream', 'dreams', 'board', 'goal', 'goals', 'this', 'that', 'to', 'of', 'for', 'in', 'on', 'and']);
+  const toks = t => String(t || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w && !STOPW.has(w));
+  const titleCase = t => String(t).split(/\s+/).map(w => w ? w[0].toUpperCase() + w.slice(1) : w).join(' ');
+  const LIVE = ['routing', 'needs_choice', 'waiting', 'queued'];
+  const liveOp = cid => (S.ops || []).filter(o => o.capture_id === cid && LIVE.includes(o.status)).pop() || null;
+  const dreamSrc = g => ({ provider: 'dreamboard', kind: 'goal', recordId: g.id, title: g.title, url: '#/dream/' + g.id, date: iso(now()) });
+  const money = (v, k) => (typeof v === 'number' && /amount/.test(k) ? '$' + (v >= 1e6 ? +(v / 1e6).toFixed(2) + 'M' : v.toLocaleString('en-US')) : v);
+  const boardFresh = () => (S.boardOffline ? { state: 'stale', lastSeenAt: S.boardSeen || iso(now() - 3 * H), historySince: iso(now() - 120 * D) } : { state: 'live', lastSeenAt: iso(now()), historySince: iso(now() - 120 * D) });
+  function wordsTitle(t) {
+    let x = t.replace(/^\s*(please\s+)?((save|add|put|pin)\s+)?((this|that|it)\s+)?((for|to|on|in)\s+)?((my|the)\s+)?(dream\s?board|vision\s?board)\s*[:,.;!—–-]*\s*/i, '').replace(/\b(dream\s?board|vision\s?board)\b[.:,;!—–-]*/ig, '').trim();
+    x = x.replace(/^(someday|one day|eventually)[,\s]*/i, '').replace(/^(i|we)\s+(really\s+)?(want|wanna|would like|'d like|hope|dream)\s+(to\s+(own|have|buy|get|build|see|visit|take)\s+|of\s+)?/i, '').replace(/^(a|an|the|my|our)\s+/i, '');
+    x = x.split(/\s+(?:with|that|where|so|which|and|because|like)\s+|[,.;!?—–(]|\s-\s/)[0].trim();
+    const w = x.split(/\s+/).filter(Boolean).slice(0, 6);
+    return w.length ? w.map((v, i) => (v.length > 2 || i === 0 ? v[0].toUpperCase() + v.slice(1) : v)).join(' ') : 'New Dream';
+  }
+  function match(phrase) {
+    const p = toks(phrase);
+    const scored = S.dreams.map(g => {
+      let best = 0;
+      [g.title].concat(g.aliases).forEach(n => { const t = toks(n); const exact = t.length === p.length && t.every(w => p.includes(w)); best = Math.max(best, exact ? 3 : t.every(w => p.includes(w)) ? 2 : p.every(w => t.includes(w)) ? 1.5 : p.filter(w => t.includes(w)).length / Math.max(p.length, t.length)); });
+      return { g, s: best };
+    }).filter(x => x.s > 0).sort((a, b) => b.s - a.s);
+    const exact = scored.filter(x => x.s === 3), strong = scored.filter(x => x.s >= 2), sup = scored.filter(x => x.s >= 1.5);
+    const hit = exact.length === 1 ? exact[0] : !exact.length && strong.length === 1 && sup.length === 1 ? strong[0] : null;
+    return { hit: hit && hit.g, candidates: scored.slice(0, 4).map(x => x.g) };
+  }
+  const trace = (o, st) => o.trace.push({ stage: st, at: iso(now()) });
+  function route(c, hasPhoto) {
+    const t = c.raw_text || '';
+    const m = t.match(ATTACH_RE);
+    if (!m && !BOARD_RE.test(t)) return null;
+    const o = { id: id('op'), capture_id: c.id, status: 'routing', created_at: iso(now()), trace: [] };
+    trace(o, 'captured'); trace(o, 'routed');
+    if (m) {
+      const r = match(m[1]);
+      o.kind = 'attach';
+      if (r.hit) Object.assign(o, { status: 'queued', target: r.hit.id, goal_title: r.hit.title });
+      else Object.assign(o, { status: 'needs_choice', suggested: titleCase(m[1]), candidates: r.candidates });
+    } else if (hasPhoto && !/\b(someday|one day|i want|i'd love|dream of|bucket list)\b/i.test(t)) Object.assign(o, { kind: 'add_item', status: 'queued', title: 'Unsorted item' });
+    else {
+      const title = wordsTitle(t), r = match(title);
+      o.kind = 'create_goal'; o.title = title;
+      if (r.hit || r.candidates.some(g => toks(g.title).join(' ') === toks(title).join(' '))) Object.assign(o, { status: 'needs_choice', suggested: title, candidates: r.candidates });
+      else o.status = 'queued';
+    }
+    trace(o, o.status);
+    if (o.status === 'queued') c.status = 'filed';
+    S.ops.push(o);
+    return o;
+  }
+  function tick() {
+    if (S.boardOffline) return;
+    S.boardSeen = iso(now());
+    for (const o of S.ops.filter(x => x.status === 'queued' && now() - Date.parse(x.queued_at || x.created_at) > 2000)) {
+      const c = S.captures.find(x => x.id === o.capture_id);
+      trace(o, 'sent');
+      let g = S.dreams.find(x => x.id === o.target);
+      if (o.kind === 'create_goal') {
+        g = { id: 'g-' + o.id.slice(-8), title: o.title, status: 'dreaming', category: null, fields: {}, aliases: [], milestones: [], notes: [], words: [], changes: [{ kind: 'created', text: 'added to Dream Board', at: iso(now()), by: 'capture' }], created_at: iso(now()), updated_at: iso(now()) };
+        S.dreams.push(g); o.target = g.id;
+      }
+      if (g && c) { g.words.push(c.id); if (o.kind !== 'create_goal') g.changes.push({ kind: 'note_added', text: (c.attachments || []).length ? 'photo added' : 'note added', at: iso(now()), by: 'capture' }); g.updated_at = iso(now()); }
+      o.status = 'applied'; o.done_at = iso(now()); trace(o, 'acknowledged');
+    }
+    save();
+  }
+  function opOut(o) {
+    return { id: o.id, kind: o.kind, status: o.status, reason: o.reason || null, target: o.target ? { id: o.target, title: (S.dreams.find(g => g.id === o.target) || {}).title || o.goal_title } : null,
+      title: o.title || null, suggestedTitle: o.suggested || null, candidates: (o.candidates || []).map(g => ({ kind: 'goal', id: g.id, title: g.title, status: g.status })),
+      attempts: o.status === 'applied' ? 1 : 0, result: o.status === 'applied' && o.target ? { type: 'goal', id: o.target } : null, trace: o.trace };
+  }
+  function routingFor(cid) {
+    const os = S.ops.filter(o => o.capture_id === cid);
+    return os.length ? { app: 'dreamboard', freshness: boardFresh(), current: opOut(os[os.length - 1]) } : null;
+  }
+  function dreamOut(g) {
+    return { id: g.id, title: g.title, status: g.status, aliases: g.aliases, gone: null,
+      current: { description: '', category: g.category, fields: g.fields, milestones: g.milestones, notes: [] },
+      asOf: boardFresh().lastSeenAt, freshness: boardFresh(), historySince: boardFresh().historySince, link: null, changes: g.changes,
+      words: g.words.map(cid => S.captures.find(c => c.id === cid)).filter(Boolean).map(c => ({ id: c.id, title: c.title, text: c.raw_text, capturedAt: c.captured_at, attachments: (c.attachments || []).length, by: 'owner' })),
+      pending: S.ops.filter(o => o.target === g.id && LIVE.includes(o.status)).map(opOut) };
+  }
+  const lastChange = g => g.changes.map(c => c.at).sort().pop() || g.updated_at;
+  const lastProgress = g => g.changes.filter(c => c.progress).map(c => c.at).sort().pop() || null;
 
   // ---------------- routing ----------------
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
   const notFound = () => json({ error: 'Not found' }, 404);
+  const cap = list => list.map(([key, label, value]) => ({ key, label, value }));
+  const GCAPS = {
+    gmail: cap([['search', 'Search', 'yes'], ['read', 'Read', 'yes'], ['draft', 'Draft', 'future'], ['send', 'Send', 'no']]),
+    calendar: cap([['search', 'Search', 'yes'], ['read', 'Read', 'yes'], ['create_event', 'Create events', 'future']]),
+    drive: cap([['search', 'Search', 'yes'], ['read', 'Read', 'yes']]),
+    sheets: cap([['search', 'Search', 'yes'], ['read', 'Read', 'yes'], ['edit', 'Edit', 'no']]),
+    contacts: cap([['search', 'Search', 'yes'], ['read', 'Read', 'yes']]),
+  };
   const SERVICES = {
     gmail: ['Gmail', 'mail', ['Search your email', 'Read threads and list attachments', 'Summarize conversations and find what is waiting on you'], ['Send, delete, archive or label email', 'Change settings'], ['https://www.googleapis.com/auth/gmail.readonly']],
     calendar: ['Calendar', 'calendar', ['See your calendars and events', 'Understand today, tomorrow and this week'], ['Create, change or delete events', 'Respond to invitations'], ['https://www.googleapis.com/auth/calendar.events.readonly', 'https://www.googleapis.com/auth/calendar.calendarlist.readonly']],
@@ -386,7 +521,8 @@
     contacts: ['Contacts', 'person', ['Look up names, emails, companies and phone numbers'], ['Add, edit or delete contacts'], ['https://www.googleapis.com/auth/contacts.readonly']],
   };
 
-  async function route(method, r, q, body) {
+  async function handle(method, r, q, body) {
+    tick();
     const find = cid => S.captures.find(c => c.id === cid);
     switch (method + ' ' + r) {
       case 'GET bootstrap': case 'GET me':
@@ -402,11 +538,13 @@
           details: {}, ai: {}, classification_state: 'pending', due_at: null, completed_at: null, captured_at: body.captured_at || iso(now()), updated_at: iso(now()), tags: [], people: [], attachments: [] };
         (body.attachments || []).forEach(a => { const aid = id('att'); S.attachments[aid] = { kind: /^image/.test(a.mime) ? 'image' : /^audio/.test(a.mime) ? 'audio' : 'file', mime: a.mime, name: a.name, data: a.data, transcript: a.transcript || null }; c.attachments.push(aid); });
         await sleep(350);
-        const intent = body.force_capture ? 'capture' : detectIntent(text);
+        const routed = BOARD_RE.test(text) || ATTACH_RE.test(text);
+        const intent = body.force_capture || routed ? 'capture' : detectIntent(text);
         if (intent === 'question') Object.assign(c, { kind: 'question', status: 'archived', title: text.slice(0, 80), classification_state: 'done' });
         else classify(c);
+        const op = routed ? route(c, (body.attachments || []).some(a => /^image/.test(a.mime))) : null;
         S.captures.unshift(c); save();
-        return json({ capture: fullItem(c), duplicate: false, intent }, 201);
+        return json({ capture: fullItem(c), duplicate: false, intent, routing: op ? routingFor(c.id) : null }, 201);
       }
       case 'POST reprocess': return json({ processed: 0 });
       case 'GET inbox': {
@@ -422,7 +560,7 @@
         const c = find(q.id); if (!c) return notFound();
         const kw = words([c.title, c.raw_text].join(' ')).filter(w => w.length > 4);
         const related = S.captures.filter(x => x.id !== c.id && x.kind !== 'question' && kw.filter(w => (x.title + ' ' + x.raw_text + ' ' + (x.tags || []).join(' ')).toLowerCase().includes(w)).length >= 2).slice(0, 5).map(listItem);
-        return json({ item: fullItem(c), related });
+        return json({ item: fullItem(c), related, routing: routingFor(c.id) });
       }
       case 'PATCH item': {
         const c = find(body.id); if (!c) return notFound();
@@ -433,6 +571,22 @@
         c.updated_at = iso(now()); save();
         return json({ item: fullItem(c) });
       }
+      case 'GET dreams': return json({ app: { app: 'dreamboard', status: 'connected', freshness: boardFresh() }, goals: S.dreams.map(g => ({ id: g.id, title: g.title, status: g.status, category: g.category, fields: g.fields, lastUpdateAt: lastChange(g), lastProgressAt: lastProgress(g) })) });
+      case 'GET dream': { const g = S.dreams.find(x => x.id === q.id); return g ? json({ dream: dreamOut(g) }) : notFound(); }
+      case 'POST route': {
+        const c = find(body.capture_id); if (!c) return notFound();
+        let o = liveOp(c.id);
+        if (o && o.status === 'queued') return json({ error: 'This was already sent to Dream Board.' }, 409);
+        if (!o) { o = { id: id('op'), capture_id: c.id, kind: 'create_goal', status: 'needs_choice', created_at: iso(now()), trace: [] }; trace(o, 'captured'); trace(o, 'routed'); S.ops.push(o); }
+        const ch = body.choice;
+        if (ch === 'keep') { o.status = 'cancelled'; o.reason = 'kept_here'; c.status = 'inbox'; }
+        else if (ch && ch.goal) { const g = S.dreams.find(x => x.id === ch.goal); if (!g) return json({ error: 'That dream is no longer available — pick another.' }, 400); Object.assign(o, { kind: 'attach', target: g.id, goal_title: g.title, status: 'queued', queued_at: iso(now()) }); c.status = 'filed'; }
+        else if (ch === 'new' || ch === 'item') { Object.assign(o, { kind: ch === 'new' ? 'create_goal' : 'add_item', title: ch === 'new' ? (body.title || o.suggested || wordsTitle(c.raw_text)) : 'Unsorted item', status: 'queued', queued_at: iso(now()) }); c.status = 'filed'; }
+        trace(o, o.status); save();
+        return json({ routing: routingFor(c.id), item: fullItem(c) });
+      }
+      case 'POST apps/pair': return json({ code: 'DEMO-7K4Q', expiresInMinutes: 10 });
+      case 'POST apps/disconnect': case 'POST apps/forget': case 'POST apps/base-url': return json({ ok: true });
       case 'DELETE item': { const n = S.captures.length; S.captures = S.captures.filter(c => c.id !== q.id); save(); return json({ deleted: S.captures.length < n }); }
       case 'GET projects': return json({ projects: projectsOut() });
       case 'POST projects': { const p = { id: id('prj'), name: body.name, kind: body.kind || 'project', emoji: body.emoji || '📁', aliases: body.aliases || [], description: body.description || null, status: 'active' }; S.projects.push(p); save(); return json({ project: p }, 201); }
@@ -506,9 +660,12 @@
       case 'GET today': await sleep(250); return json(todayData());
       case 'POST catchup': await sleep(900); return json(catchUp());
       case 'GET connections': return json({
-        providers: [{ id: 'google', label: 'Google Workspace', status: 'available' }, { id: 'alp_sales_tracker', label: 'ALP Sales Tracker', status: 'planned' }, { id: 'service_autopilot', label: 'Service Autopilot', status: 'planned' }, { id: 'ringcentral', label: 'RingCentral', status: 'planned' }, { id: 'github', label: 'GitHub', status: 'planned' }],
+        apps: [{ key: 'dreamboard', label: 'Dream Board', status: 'connected', instanceLabel: 'Jeff’s PC', baseUrl: '', lastError: null, freshness: boardFresh(), records: S.dreams.length,
+          queue: S.ops.filter(o => LIVE.includes(o.status)).reduce((m, o) => { m[o.status] = (m[o.status] || 0) + 1; return m; }, {}),
+          capabilities: cap([['search', 'Search', 'yes'], ['read', 'Read', 'yes'], ['create', 'Add dreams', 'yes'], ['attach', 'Attach captures', 'yes'], ['events', 'Receive progress', 'yes'], ['milestone', 'Add milestones', 'confirm'], ['update', 'Change goals', 'confirm'], ['delete', 'Delete or merge', 'no']]) }],
+        planned: ['ALP Sales Tracker', 'Pricing App', 'EOS / Traction', 'GemMasters', 'Service Autopilot', 'RingCentral'].map(l => ({ id: l, label: l })),
         google: S.disconnected ? null : { email: 'jeff@example.com', status: 'connected', lastUsedAt: iso(now() - 60e3) },
-        services: Object.entries(SERVICES).map(([k, v]) => ({ key: k, label: v[0], icon: v[1], state: S.disconnected ? 'not_connected' : S.disabled.includes(k) ? 'disabled' : 'connected', can: v[2], cannot: v[3], scopes: v[4], note: k === 'sheets' ? 'Finding a spreadsheet by meaning uses Drive search; with Drive off, paste a Sheet link.' : null })),
+        services: Object.entries(SERVICES).map(([k, v]) => ({ key: k, label: v[0], icon: v[1], state: S.disconnected ? 'not_connected' : S.disabled.includes(k) ? 'disabled' : 'connected', capabilities: GCAPS[k], can: v[2], cannot: v[3], scopes: v[4], note: k === 'sheets' ? 'Finding a spreadsheet by meaning uses Drive search; with Drive off, paste a Sheet link.' : null })),
       });
       case 'POST connections/service': S.disabled = body.enabled ? S.disabled.filter(x => x !== body.service) : S.disabled.concat([body.service]); save(); return json({ ok: true });
       case 'POST connections/disconnect': S.disconnected = true; save(); return json({ ok: true, revokedAtGoogle: true });
@@ -525,7 +682,7 @@
     let body = {};
     try { body = init.body ? JSON.parse(init.body) : {}; } catch { body = {}; }
     await sleep(120);
-    return route((init.method || 'GET').toUpperCase(), r, q, body);
+    return handle((init.method || 'GET').toUpperCase(), r, q, body);
   };
 
   // The real app's "Connect" buttons go to Google; in the demo they reconnect the sample account.
