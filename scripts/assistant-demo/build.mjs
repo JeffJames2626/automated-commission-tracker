@@ -15,7 +15,7 @@ fs.rmSync(out, { recursive: true, force: true });
 fs.mkdirSync(path.join(out, 'views'), { recursive: true });
 fs.mkdirSync(path.join(out, 'icons'), { recursive: true });
 
-const js = ['theme.js', 'app.js', 'api.js', 'ui.js', 'state.js', 'outbox.js', 'capture.js', 'views/common.js', 'views/today.js', 'views/inbox.js', 'views/item.js', 'views/chat.js', 'views/search.js', 'views/more.js', 'views/dreams.js'];
+const js = ['theme.js', 'app.js', 'api.js', 'ui.js', 'state.js', 'outbox.js', 'capture.js', 'views/common.js', 'views/today.js', 'views/inbox.js', 'views/item.js', 'views/chat.js', 'views/search.js', 'views/more.js', 'views/dreams.js', 'views/journal.js'];
 js.forEach(f => fs.copyFileSync(path.join(src, f), path.join(out, f)));
 // Demo only: suggest the Dream Board questions the sample data can answer.
 const chat = path.join(out, 'views/chat.js');

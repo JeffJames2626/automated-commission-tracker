@@ -20,7 +20,7 @@
     task: { label: 'Task', emoji: '✅' }, reminder: { label: 'Reminder', emoji: '⏰' }, goal: { label: 'Goal', emoji: '🎯' }, dream: { label: 'Dream', emoji: '✨' },
     note: { label: 'Note', emoji: '📝' }, person: { label: 'Person', emoji: '👤' }, decision: { label: 'Decision', emoji: '⚖️' }, purchase: { label: 'Purchase', emoji: '🛒' },
     property: { label: 'Property', emoji: '🏡' }, travel: { label: 'Travel idea', emoji: '✈️' }, website: { label: 'Website', emoji: '🔗' }, photo: { label: 'Photo', emoji: '📷' },
-    document: { label: 'Document', emoji: '📄' }, voice_note: { label: 'Voice note', emoji: '🎙️' }, thought: { label: 'Random thought', emoji: '💭' }, question: { label: 'Question asked', emoji: '❓' },
+    document: { label: 'Document', emoji: '📄' }, voice_note: { label: 'Voice note', emoji: '🎙️' }, thought: { label: 'Random thought', emoji: '💭' }, question: { label: 'Question asked', emoji: '❓' }, journal: { label: 'Journal entry', emoji: '📓' },
   };
   const STATUSES = { inbox: 'Inbox', thinking: 'Thinking', maybe: 'Maybe', active: 'Active', built: 'Built', archived: 'Archived', filed: 'Filed' };
   const PROJECTS = [
@@ -426,11 +426,12 @@
   const money = (v, k) => (typeof v === 'number' && /amount/.test(k) ? '$' + (v >= 1e6 ? +(v / 1e6).toFixed(2) + 'M' : v.toLocaleString('en-US')) : v);
   const boardFresh = () => (S.boardOffline ? { state: 'stale', lastSeenAt: S.boardSeen || iso(now() - 3 * H), historySince: iso(now() - 120 * D) } : { state: 'live', lastSeenAt: iso(now()), historySince: iso(now() - 120 * D) });
   function wordsTitle(t) {
-    let x = t.replace(/^\s*(please\s+)?((save|add|put|pin)\s+)?((this|that|it)\s+)?((for|to|on|in)\s+)?((my|the)\s+)?(dream\s?board|vision\s?board)\s*[:,.;!—–-]*\s*/i, '').replace(/\b(dream\s?board|vision\s?board)\b[.:,;!—–-]*/ig, '').trim();
+    const filler = /^(also|and|oh|plus|so|ok|okay)[,\s]+/i;
+    let x = t.replace(filler, '').replace(/^\s*(please\s+)?((save|add|put|pin)\s+)?((this|that|it)\s+)?((for|to|on|in)\s+)?((my|the)\s+)?(dream\s?board|vision\s?board)\s*[:,.;!—–-]*\s*/i, '').replace(/\b(dream\s?board|vision\s?board)\b[.:,;!—–-]*/ig, '').trim().replace(filler, '');
     x = x.replace(/^(someday|one day|eventually)[,\s]*/i, '').replace(/^(i|we)\s+(really\s+)?(want|wanna|would like|'d like|hope|dream)\s+(to\s+(own|have|buy|get|build|see|visit|take)\s+|of\s+)?/i, '').replace(/^(a|an|the|my|our)\s+/i, '');
     x = x.split(/\s+(?:with|that|where|so|which|and|because|like)\s+|[,.;!?—–(]|\s-\s/)[0].trim();
     const w = x.split(/\s+/).filter(Boolean).slice(0, 6);
-    return w.length ? w.map((v, i) => (v.length > 2 || i === 0 ? v[0].toUpperCase() + v.slice(1) : v)).join(' ') : 'New Dream';
+    return w.length ? w.map((v, i) => (i === 0 || !/^(a|an|the|of|for|and|or|to|in|on|at|with|by)$/i.test(v) ? v[0].toUpperCase() + v.slice(1) : v.toLowerCase())).join(' ') : 'New Dream';
   }
   function match(phrase) {
     const p = toks(phrase);
@@ -538,6 +539,11 @@
           details: {}, ai: {}, classification_state: 'pending', due_at: null, completed_at: null, captured_at: body.captured_at || iso(now()), updated_at: iso(now()), tags: [], people: [], attachments: [] };
         (body.attachments || []).forEach(a => { const aid = id('att'); S.attachments[aid] = { kind: /^image/.test(a.mime) ? 'image' : /^audio/.test(a.mime) ? 'audio' : 'file', mime: a.mime, name: a.name, data: a.data, transcript: a.transcript || null }; c.attachments.push(aid); });
         await sleep(350);
+        if (body.journal) {
+          Object.assign(c, { kind: 'journal', classification_state: 'done', title: text.slice(0, 80) || 'Journal entry', status: 'inbox' });
+          S.captures.unshift(c); save();
+          return json({ capture: fullItem(c), duplicate: false, intent: 'journal' }, 201);
+        }
         const routed = BOARD_RE.test(text) || ATTACH_RE.test(text);
         const intent = body.force_capture || routed ? 'capture' : detectIntent(text);
         if (intent === 'question') Object.assign(c, { kind: 'question', status: 'archived', title: text.slice(0, 80), classification_state: 'done' });
@@ -548,7 +554,7 @@
       }
       case 'POST reprocess': return json({ processed: 0 });
       case 'GET inbox': {
-        let cs = S.captures.filter(c => c.kind !== 'question');
+        let cs = S.captures.filter(c => c.kind !== 'question' && (q.kind === 'journal' || c.kind !== 'journal'));
         if (q.status === 'open') cs = cs.filter(c => !['archived', 'built'].includes(c.status)); else if (q.status) cs = cs.filter(c => c.status === q.status);
         if (q.kind) cs = cs.filter(c => c.kind === q.kind);
         if (q.project) cs = cs.filter(c => c.project_id === q.project);
@@ -647,6 +653,42 @@
           },
         });
         return new Response(stream, { status: 200, headers: { 'content-type': 'application/x-ndjson' } });
+      }
+      case 'POST journal': {
+        const j = find(body.capture_id); if (!j) return notFound();
+        const title = 'Journal · ' + new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        let conv = S.conversations.find(x => x.title === title);
+        if (!conv) { conv = { id: id('cnv'), title, created_at: iso(now()), updated_at: iso(now()) }; S.conversations.push(conv); }
+        const enc = new TextEncoder();
+        return new Response(new ReadableStream({ async start(ctrl) {
+          const emit = e => ctrl.enqueue(enc.encode(JSON.stringify(e) + '\n'));
+          emit({ type: 'conversation', id: conv.id });
+          if (j.journal_msg) { emit({ type: 'message', message: S.messages.find(m => m.id === j.journal_msg) }); return ctrl.close(); }
+          S.messages.push({ id: id('msg'), conversation_id: conv.id, role: 'user', content: j.raw_text, sources: [], trace: [], actions: [], created_at: iso(now()) });
+          emit({ type: 'status', text: 'Going through what you said' }); await sleep(700);
+          // Demo stand-in for the AI: one item per actionable sentence, answers to questions.
+          const lines = [], created = [], answers = [];
+          let sources = [], trace = [];
+          for (const sent of String(j.raw_text || '').split(/(?<=[.!?])\s+|\n+/).map(x => x.trim()).filter(Boolean)) {
+            if (/\?$/.test(sent)) { const a = await answer(sent, emit); answers.push(a.content.replace(/\n\n\*This demo[\s\S]*$/, '')); sources = sources.concat(a.sources); trace = trace.concat(a.trace); continue; }
+            if (!/\b(remind|need to|have to|gotta|call|email|text|buy|pick up|schedule|idea|dream\s?board|add this to|remember)\b/i.test(sent)) continue;
+            const c = { id: id('cap'), kind: 'note', status: 'inbox', title: '', raw_text: sent, summary: null, next_action: null, source_type: 'journal', url: null, details: {}, ai: { how: 'ai' }, classification_state: 'pending',
+              due_at: null, completed_at: null, captured_at: iso(now()), updated_at: iso(now()), tags: [], people: [], attachments: [] };
+            classify(c);
+            const op = route(c, false);
+            const tidy = sent.replace(/^(also|and|oh|plus|so)[,\s]+/i, '').replace(/^remind me\s+(?:(?:today|tonight|tomorrow|on \w+)\s+)?(?:at [\d:]+\s*(?:am|pm)?\s+)?to\s+/i, '').replace(/^(i )?(need|have|got) to\s+/i, '').replace(/[.!]+$/, '');
+            c.title = op ? (op.title || op.goal_title || 'Dream Board item') : tidy.charAt(0).toUpperCase() + tidy.slice(1);
+            S.captures.unshift(c);
+            created.push({ type: 'capture', id: c.id, title: c.title, kind: c.kind });
+            lines.push('✓ ' + (op ? 'Dream Board: ' + (op.status === 'needs_choice' ? 'which dream? (open it to choose)' : op.kind === 'create_goal' ? 'new dream “' + c.title + '”' : 'added to “' + c.title + '”') : KINDS[c.kind].label + ': ' + c.title + (c.due_at ? ' — ' + fmtD(c.due_at) : '')));
+          }
+          emit({ type: 'status', text: 'Putting it together' }); await sleep(400);
+          const content = lines.length || answers.length ? lines.concat(answers).join('\n\n') : 'Noted.';
+          const m = { id: id('msg'), conversation_id: conv.id, role: 'assistant', content, sources, trace, actions: [], created, model: 'Claude (demo — rule-based stand-in)', created_at: iso(now()) };
+          S.messages.push(m); j.journal_msg = m.id; conv.updated_at = iso(now()); save();
+          emit({ type: 'message', message: m });
+          ctrl.close();
+        } }), { status: 200, headers: { 'content-type': 'application/x-ndjson' } });
       }
       case 'POST action': {
         const a = S.actions.find(x => x.id === body.id); if (!a) return notFound();

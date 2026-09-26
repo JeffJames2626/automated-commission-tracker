@@ -9,6 +9,7 @@ import * as outbox from '../outbox.js';
 const FILTERS = [
   { key: 'inbox', label: 'Inbox', q: { status: 'inbox' } },
   { key: 'all', label: 'Everything', q: {} },
+  { key: 'journal', label: 'Journal', q: { kind: 'journal' } },
   { key: 'idea', label: 'Ideas', q: { kind: 'idea' } },
   { key: 'business_idea', label: 'Business', q: { kind: 'business_idea' } },
   { key: 'tasks', label: 'Tasks', q: { open_tasks: '1' } },

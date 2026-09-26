@@ -50,11 +50,13 @@ export async function submitCapture({ text = '', sourceType = 'text', attachment
     source_type: sourceType,
     attachments: attachments.map(a => ({ mime: a.mime, name: a.name, data: a.data, transcript: a.transcript })),
     force_capture: forceCapture,
+    // The capture box is a journal: keep the words, then act on them.
+    journal: !forceCapture,
   };
   const r = await outbox.capture(body);
   if (r.queued) {
     const board = TO_BOARD.test(body.text) ? ' — waiting to add to Dream Board' : '';
-    toast(navigator.onLine ? 'Saved on this phone' + board + '. Syncing when the server answers.' : 'Saved on this phone' + board + '. It will sync when you’re back online.', { tone: 'ok' });
+    toast((state.boot && state.boot.ai ? 'Saved to your journal on this phone' : 'Saved on this phone') + board + (navigator.onLine ? '. Syncing when the server answers.' : '. I’ll go through it when you’re back online.'), { tone: 'ok' });
     document.dispatchEvent(new CustomEvent('asst:captured', { detail: null }));
     return r;
   }
@@ -65,6 +67,11 @@ export async function submitCapture({ text = '', sourceType = 'text', attachment
     return r;
   }
   const c = r.capture || {};
+  if (r.intent === 'journal') {
+    document.dispatchEvent(new CustomEvent('asst:captured', { detail: c }));
+    (await import('./views/journal.js')).journalSheet(c);
+    return r;
+  }
   if (r.routing && r.routing.current) {
     const d = await import('./views/dreams.js');
     document.dispatchEvent(new CustomEvent('asst:captured', { detail: c }));
@@ -251,7 +258,7 @@ export function composer({ placeholder = 'What’s on your mind?', mode = 'captu
 
 // The oversized + button opens this.
 export function openCaptureSheet({ text = '', sourceType } = {}) {
-  const s = sheet('<h3 class="sheet-title">Capture</h3><p class="muted small">Type it, say it, snap it. I’ll file it.</p><div data-c></div>', { label: 'Capture' });
+  const s = sheet('<h3 class="sheet-title">Capture</h3><p class="muted small">Just talk or type. I’ll keep your words, take notes and handle what I can.</p><div data-c></div>', { label: 'Capture' });
   const c = composer();
   s.el.querySelector('[data-c]').appendChild(c);
   if (text) c.setText(text, sourceType);

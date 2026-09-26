@@ -523,6 +523,7 @@ test('routing words: explicit only', () => {
   assert.deepEqual(routeIntent('add this to my lake house dream'), { app: 'dreamboard', mode: 'attach', target: 'lake house' });
   assert.equal(routeIntent('I want a lake house someday'), null, 'a dream the owner didn’t send stays here');
   assert.equal(dreamTitleFromWords('Save this for my Dream Board — someday I want a lake house with a dock'), 'Lake House');
+  assert.equal(dreamTitleFromWords('Also dream board: someday I want a boat for the lake house.'), 'Boat for the Lake House');
   const goals = [{ id: 1, title: 'Lake House' }, { id: 2, title: 'Lake House Dock' }, { id: 3, title: 'Beach House' }];
   assert.deepEqual(matchGoals('lake house', goals).strong.map(g => g.id), [1]);
   assert.deepEqual(matchGoals('lakehouse', goals).strong.map(g => g.id), [1]);
