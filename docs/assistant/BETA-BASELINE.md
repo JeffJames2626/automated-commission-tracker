@@ -8,7 +8,7 @@ building on speculation.
 |---|---|
 | Address | **https://assistant-dev.automatedpest.com/assistant/** |
 | Environment | DEVELOPMENT: real account, real data (see [DEV-ENVIRONMENT.md](DEV-ENVIRONMENT.md)) |
-| Git | branch `dev`, tag `pa-beta-baseline-2026-09-26`. The app code is as smoke-tested at `d458189`; this doc was added on top. |
+| Git | branch `dev` at commit `6e333a7` ("Beta baseline checkpoint…"). The app code is exactly as smoke-tested at `d458189`; the later commits change docs only. To mark it, run on your machine: `git tag -a pa-beta-baseline-2026-09-26 6e333a7 -m "beta baseline" && git push origin pa-beta-baseline-2026-09-26` (this session can push branches but not tags). |
 | Vercel | preview deployments of branch `dev` (project automated-commission-tracker). Tested: `dpl_3H4JuPuy8qKJp3WxTXvMG9W1TBjb`, built 2026-09-26 03:35 UTC. |
 | Production | not deployed; `main` untouched |
 
@@ -145,9 +145,8 @@ session's network cannot reach the domain directly):
 
 ## Rollback
 
-* The app: put branch `dev` back to the tag (`git push origin
-  pa-beta-baseline-2026-09-26:dev --force-with-lease`, or revert the bad
-  commit). The dev address follows the newest `dev` deployment. **Do not use
+* The app: put branch `dev` back to the baseline (`git push origin
+  6e333a7:dev --force-with-lease`, or revert the bad commit). The dev address follows the newest `dev` deployment. **Do not use
   Vercel's "Promote"** on a dev deployment: that would make it production.
 * Your data: [BACKUP-RECOVERY.md](BACKUP-RECOVERY.md). Never restore the
   shared database's main branch for an assistant problem.
