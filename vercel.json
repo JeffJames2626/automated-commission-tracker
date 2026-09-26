@@ -20,7 +20,7 @@
   "rewrites": [
     {
       "source": "/api/assistant/:path+",
-      "destination": "/api/assistant?r=:path+"
+      "destination": "/api/assistant?r=:path"
     }
   ],
   "headers": [

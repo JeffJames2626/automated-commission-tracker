@@ -25,6 +25,9 @@ export async function renderReview(main) {
     more.hidden = r.items.length < 40;
   };
   more.onclick = () => load().catch(e => toast(e.message));
+  // One handler for the whole list: the innermost target wins.
+  list.addEventListener('click', e => { const t = e.target.closest('[data-go]'); if (t) { e.stopPropagation(); go(t.dataset.go); } });
+  list.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('[data-go]')) go(e.target.dataset.go); });
   await load();
 }
 
@@ -40,15 +43,16 @@ function row(it) {
   if (it.reason) facts.push(['Why', esc(it.reason)]);
   if (it.guard && it.guard.length) facts.push(['Safety', esc(it.guard.join('; '))]);
   if (it.error) facts.push(['Note', esc(it.error)]);
-  if (it.journal) facts.push(['Journal', it.journal === 'done' ? 'Gone through' : 'Waiting — AI filing will retry']);
+  if (it.journal) facts.push(['Journal', it.journal === 'done' ? 'Gone through' : it.journal === 'processing' ? 'Being gone through now' : 'Waiting — AI filing will retry']);
   if (it.routing) facts.push(['Routing', esc('Dream Board · ' + it.routing.status + (it.routing.title ? ' · ' + it.routing.title : '') + (it.routing.reason ? ' (' + it.routing.reason + ')' : ''))]);
   const linked = (it.links || []).filter(l => l.type === 'capture');
-  if (linked.length) facts.push(['Linked', linked.map(l => `<a href="#/item/${esc(l.id)}">${esc(l.relation === 'from_journal' ? 'from journal' : l.relation)}</a>`).join(', ')]);
-  return `<a class="card review" href="#/item/${esc(it.id)}">
+  // Buttons, not links: the whole card is already a link target.
+  if (linked.length) facts.push(['Linked', linked.map(l => `<button class="link-btn" data-go="#/item/${esc(l.id)}">${esc(l.relation === 'from_journal' ? 'from journal' : l.relation)}</button>`).join(', ')]);
+  return `<div class="card review" role="link" tabindex="0" data-go="#/item/${esc(it.id)}">
     <div class="review-raw">${esc(it.raw || it.title || '(no text)')}</div>
     <dl class="review-facts">${facts.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
     <div class="muted small">${esc(it.source)}${it.attachments ? ' · ' + it.attachments + ' attachment' + (it.attachments > 1 ? 's' : '') : ''} · ${esc(ago(it.capturedAt))}</div>
-  </a>`;
+  </div>`;
 }
 
 export async function renderAbout(main) {

@@ -24,4 +24,4 @@ if (!process.argv.includes('--confirm')) {
 const db = neonDb(url);
 await migrate(db);
 const report = await restore(db, dump);
-for (const [t, r] of Object.entries(report)) console.log(`${t.padEnd(24)} inserted ${r.inserted}  skipped ${r.skipped}`);
+for (const [t, r] of Object.entries(report)) console.log(`${t.padEnd(24)} inserted ${r.inserted}  skipped ${r.skipped}${r.orphaned ? `  orphaned ${r.orphaned} (parent missing in the backup)` : ""}`);

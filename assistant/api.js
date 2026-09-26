@@ -80,4 +80,4 @@ export async function stream(route, body, onEvent, { signal } = {}) {
 
 // The standalone demo (scripts/assistant-demo) serves attachments from memory.
 export const attachmentUrl = id => (window.__asstAttachmentUrl && window.__asstAttachmentUrl(id)) || BASE + '?r=attachment&id=' + encodeURIComponent(id);
-export const authUrl = (intent, services = [], next = '') => BASE + '/auth/start?intent=' + intent + (services.length ? '&services=' + services.join(',') : '') + (next ? '&next=' + encodeURIComponent(next) : '');
+export const authUrl = (intent, services = [], next = '', { switchAccount = false } = {}) => BASE + '/auth/start?intent=' + intent + (services.length ? '&services=' + services.join(',') : '') + (next ? '&next=' + encodeURIComponent(next) : '') + (switchAccount ? '&switch=1' : '');

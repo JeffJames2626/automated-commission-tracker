@@ -354,3 +354,147 @@ test('the demo is fenced off from the real assistant', async () => {
   assert.match(demo, /if \(window\.__ASST_DEMO__ !== true \|\| \/\^\\\/\(assistant\|api\)\\\/\/\.test\(location\.pathname\)\) return;/);
   assert.doesNotMatch(demo, /removeItem\('asst:/);
 });
+
+// ---------------- regressions from the pre-push review ----------------
+
+test('path-form routes reach the router intact on Vercel (the rewrite adds no stray space)', async () => {
+  const { toRequest } = await import('../../lib/assistant/http.mjs');
+  const vj = JSON.parse(fs.readFileSync(new URL('../../vercel.json', import.meta.url), 'utf8'));
+  assert.equal(vj.rewrites.find(r => r.source === '/api/assistant/:path+').destination, '/api/assistant?r=:path');
+  // What the old rule produced: r=auth/start%20
+  const req = { method: 'GET', url: '/api/assistant?r=auth/start%20&path=auth/start', headers: { host: 'assistant-dev.example.com', 'x-forwarded-proto': 'https' }, body: null };
+  assert.equal((await toRequest(req)).route, 'auth/start');
+});
+
+test('the public address is compared as an origin (case, trailing slash, spaces)', async () => {
+  const { originOf } = await import('../../lib/assistant/config.mjs');
+  assert.equal(originOf(' https://Assistant-Dev.Example.com/ \n'), 'https://assistant-dev.example.com');
+  assert.equal(originOf('https://assistant-dev.example.com:443'), 'https://assistant-dev.example.com');
+  assert.equal(originOf('http://assistant-dev.example.com'), '');
+  const app = makeApp({ db: await makeDb(), google: fakeGoogle(), limits: LIMITS, config: { publicUrl: originOf('https://Assistant-Dev.Example.com/') }, origin: 'https://assistant-dev.example.com' });
+  const s = await app.call('GET', 'auth/start', { query: { intent: 'signin' } });
+  assert.match(s.redirect, /^https:\/\/accounts\.google\.com\//, 'no self-redirect loop');
+});
+
+test('a refused sign-in keeps where it was going, and "use a different account" shows the chooser', async () => {
+  const db = await makeDb();
+  const g = fakeGoogle();
+  const app = makeApp({ db, google: g, limits: LIMITS });
+  g.state.tokenResponse.id_token = (await import('./helpers.mjs')).idToken({ sub: '9', email: 'other@automatedlawnandpest.com' });
+  const start = await app.call('GET', 'auth/start', { query: { intent: 'signin', next: '#/link?code=ABCD-EFGH', switch: '1' } });
+  assert.equal(new URL(start.redirect).searchParams.get('prompt'), 'select_account');
+  const cb = await app.call('GET', 'auth/callback', { query: { code: 'c', state: new URL(start.redirect).searchParams.get('state') } });
+  assert.equal(decodeURIComponent(cb.redirect), '/assistant/#/signin?error=This Personal Assistant is private.&next=#/link?code=ABCD-EFGH');
+});
+
+test('a journal entry answered while the AI is down (search-only reply) stays pending and is retried', async () => {
+  const Anthropic = (await import('@anthropic-ai/sdk')).default;
+  let down = true;
+  const claude = fakeClaude(() => (down ? new Anthropic.InternalServerError(529, { error: { type: 'overloaded_error' } }, 'Overloaded', new Headers()) : text('✓ Noted.')));
+  const { app, db } = await signedIn({ claude });
+  const r = await app.call('POST', 'capture', { body: { client_ref: 'journal-down-01', text: 'Order more fertilizer.', journal: true } });
+  const first = await app.stream('journal', { capture_id: r.json.capture.id });
+  assert.ok(first.events.some(e => e.type === 'error' && /retry automatically/.test(e.error)));
+  let c = (await app.call('GET', 'item', { query: { id: r.json.capture.id } })).json.item;
+  assert.equal(c.details.journal_state, 'pending');
+  down = false;
+  await app.call('POST', 'reprocess');
+  c = (await app.call('GET', 'item', { query: { id: r.json.capture.id } })).json.item;
+  assert.equal(c.details.journal_state, 'done');
+  // The entry appears once in the day's journal conversation, however many tries it took.
+  const users = await db.query(`SELECT count(*)::int AS n FROM asst_messages WHERE conversation_id = $1 AND role = 'user'`, [c.details.journal_conversation_id]);
+  assert.equal(users[0].n, 1);
+});
+
+test('the capture sheet and a background retry never both work through one journal entry', async () => {
+  // Each run saves the task on its first turn (decided per run, not per call).
+  const claude = fakeClaude(async p => {
+    await new Promise(res => setTimeout(res, 150));
+    const last = p.messages[p.messages.length - 1];
+    return typeof last.content === 'string' ? toolUse([{ name: 'save_capture', input: { text: 'Call Josh', kind: 'task' } }]) : text('✓ Task: call Josh');
+  });
+  const { app, db } = await signedIn({ claude });
+  const r = await app.call('POST', 'capture', { body: { client_ref: 'journal-race-01', text: 'Call Josh.', journal: true } });
+  const [sheet] = await Promise.all([
+    app.stream('journal', { capture_id: r.json.capture.id }),
+    new Promise(res => setTimeout(res, 40)).then(() => app.call('POST', 'reprocess')),
+  ]);
+  assert.ok(sheet.events.some(e => e.type === 'message'));
+  const kids = await db.query(`SELECT count(*)::int AS n FROM asst_links WHERE relation = 'from_journal' AND to_id = $1`, [r.json.capture.id]);
+  assert.equal(kids[0].n, 1);
+});
+
+test('explicit "remember" is honoured sentence by sentence; a yes to the assistant\'s offer counts', async () => {
+  for (const [msg, kind, want] of [
+    ['Can you remember that the Miller gate code is 4412?', 'fact', 1],
+    ['Remember the Miller gate code is 4412. What’s on my calendar tomorrow?', 'fact', 1],
+    ['Remember Zach gets 8% on new mowing contracts', 'decision', 1],
+    ['Maybe we should remember to pay 5%?', 'decision', 0],
+  ]) {
+    const claude = fakeClaude((p, n) => (n === 0 ? toolUse([{ name: 'remember', input: { kind, statement: msg.replace(/\?$/, '') } }]) : text('Okay.')));
+    const { app, db } = await signedIn({ claude });
+    await app.stream('chat', { message: msg });
+    assert.equal((await db.query('SELECT count(*)::int AS n FROM asst_memories'))[0].n, want, msg);
+  }
+  // "yes" to the assistant's own offer.
+  const claude = fakeClaude((p, n) => (n === 0 ? text('Want me to remember that the gate code is 4412?') : n === 1 ? toolUse([{ name: 'remember', input: { kind: 'fact', statement: 'Miller gate code is 4412' } }]) : text('Done.')));
+  const { app, db } = await signedIn({ claude });
+  const first = await app.stream('chat', { message: 'the miller gate code is 4412' });
+  const conv = first.events.find(e => e.type === 'conversation').id;
+  await app.stream('chat', { message: 'yes please do', conversation_id: conv });
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM asst_memories'))[0].n, 1);
+});
+
+test('settled decisions stay decisions: "Decision: …", "We\'ll …"', () => {
+  for (const t of ['Decision: use Acme for fertilizer', 'We\'ll raise prices 5% in January', 'Decided: Zach gets 8%', 'We decided Zach gets 8%. Maybe also a bonus later?']) {
+    assert.equal(guardClassification({ kind: 'decision', memories: [] }, t).c.kind, 'decision', t);
+  }
+  assert.equal(guardClassification({ kind: 'decision', memories: [] }, 'Maybe we should pay 5% on renewals').c.kind, 'idea');
+});
+
+test('an approve that fails part-way leaves the request answerable, not stuck', async () => {
+  const { app, db } = await signedIn();
+  const board = fakeDreamBoard(app);
+  const s = await board.linkStart();
+  let broken = true;
+  const flaky = Object.assign({}, db, { query: (t, p) => (broken && /SET status = 'approved'/.test(t) ? Promise.reject(new Error('connection reset')) : db.query(t, p)) });
+  const app2 = makeApp({ db: flaky, google: fakeGoogle(), limits: LIMITS });
+  const out = await app2.call('POST', 'apps/link/approve', { body: { code: s.json.user_code }, cookies: Object.assign({}, app.jar) });
+  assert.equal(out.status, 500);
+  assert.equal((await db.query('SELECT status FROM asst_app_links'))[0].status, 'pending');
+  broken = false;
+  assert.equal((await app.call('POST', 'apps/link/approve', { body: { code: s.json.user_code } })).json.status, 'approved');
+  assert.equal((await board.linkPoll()).json.status, 'approved');
+});
+
+test('backups read in pages and a restore skips rows whose parent is missing', async () => {
+  const { app, db } = await signedIn();
+  for (let i = 0; i < 11; i++) {
+    await app.call('POST', 'capture', { body: { client_ref: 'page-att-' + String(i).padStart(4, '0'), text: 'p' + i, attachments: [{ kind: 'image', mime: 'image/png', name: 'p.png', data: Buffer.from('bytes-' + i).toString('base64') }] } });
+  }
+  const full = await dumpAll(db);
+  assert.equal(full.tables.asst_attachments.length, 11, 'more than one page of attachments');
+  // A capture written after its table was read, whose attachment was read later.
+  full.tables.asst_captures = full.tables.asst_captures.slice(1);
+  const db2 = pgliteDb(new PGlite());
+  await migrate(db2);
+  const rep = await restore(db2, JSON.parse(JSON.stringify(full)));
+  assert.equal(rep.asst_attachments.orphaned, 1);
+  assert.equal(rep.asst_attachments.inserted, 10);
+});
+
+test('the feedback project never captures other notes by name', async () => {
+  const { app } = await signedIn();
+  await app.call('POST', 'feedback', { body: { type: 'idea', text: 'Bigger buttons' } });
+  const r = await app.call('POST', 'capture', { body: { client_ref: 'pa-name-0001', text: 'Look into hiring a personal assistant for the office' } });
+  assert.notEqual(r.json.capture.project_name, 'Personal Assistant');
+});
+
+test('a retried capture gets back every attachment that did not make it', async () => {
+  const { app, db } = await signedIn();
+  const atts = ['a', 'b', 'c'].map(x => ({ kind: 'image', mime: 'image/png', name: x + '.png', data: Buffer.from('img-' + x).toString('base64') }));
+  const r = await app.call('POST', 'capture', { body: { client_ref: 'att-partial-01', text: 'three photos', attachments: atts } });
+  await db.query(`DELETE FROM asst_attachments WHERE capture_id = $1 AND name <> 'a.png'`, [r.json.capture.id]);
+  await app.call('POST', 'capture', { body: { client_ref: 'att-partial-01', text: 'three photos', attachments: atts } });
+  assert.equal((await db.query('SELECT count(*)::int AS n FROM asst_attachments WHERE capture_id = $1', [r.json.capture.id]))[0].n, 3);
+});

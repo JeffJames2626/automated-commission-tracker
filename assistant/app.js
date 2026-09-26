@@ -97,7 +97,7 @@ function renderSignin(params) {
   main.className = 'main view-signin';
   if (err === PRIVATE) {
     main.innerHTML = `<div class="signin"><img class="signin-logo" src="icons/icon.svg" alt="" width="72" height="72">
-      <h1>${esc(PRIVATE)}</h1><a class="muted small" href="${authUrl('signin', [], next)}">Use a different Google account</a></div>`;
+      <h1>${esc(PRIVATE)}</h1><a class="muted small" href="${authUrl('signin', [], next, { switchAccount: true })}">Use a different Google account</a></div>`;
     return;
   }
   main.innerHTML = `<div class="signin">
