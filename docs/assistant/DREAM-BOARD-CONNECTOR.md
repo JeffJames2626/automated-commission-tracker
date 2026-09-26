@@ -11,21 +11,89 @@ Dream Board's existing rules still apply. The real board is untouched by
 tests (use `?workspace=zz-<name>`). Every content change is a pure op in
 `lib/ops.ts` through `store.commit`. Entity ids are permanent. Git stays local.
 
-## What to build (server only, plus one settings panel)
+## Status (development launch, 2026-09-26)
 
-1. **Settings → Personal Assistant** (UI). A field for the pairing code, the
-   state (Connected · last sync 2 min ago · 1 waiting), and *Disconnect*. The
-   owner gets the code from the assistant's Connections screen.
-2. **Pairing** (server). POST the code with `instance_id` and
-   `link_template: "/?goal={id}"`, or whatever route opens a goal.
+**The assistant side is done and deployed to development:**
+
+* the link flow below (`apps/v1/link/start`, `apps/v1/link/poll`, and the
+  approve page at `/assistant/#/link?code=…`);
+* sync, files and pairing;
+* the Dreams tab, freshness and routing.
+
+It is tested against `tests/assistant/fake-dreamboard.mjs`.
+
+**The Dream Board side is not built yet.** Until it is, the Dreams tab
+honestly says *Not connected*. Nothing is faked with demo data. The exact
+missing piece is items 1–6 below, in the Dream Board repo:
+
+* **Smallest useful slice:** items 1, 2, 3, 4 and 5. Those make the board's
+  goals appear in the assistant.
+* **Captures filed to a dream reach the board** only once item 6 exists.
+
+Corrections from reading the real Dream Board export (it differs from this
+repo's fake board):
+
+* **Status.** Goal `status` is `dream | planned | in_progress | achieved`.
+  Send it as is; the assistant already understands `dream`.
+* **Money.** Money is one `{target, current}` object in **dollars**. Publish
+  it as `fields.target_amount` / `fields.saved_amount` (dollars). For
+  `update_goal`, write the whole money object in one merge.
+* **Dates.** `targetDate` (YYYY-MM-DD) or `targetYear` → `fields.target_date`
+  / `fields.target_year`.
+* **Archived.** A goal has no `archivedAt`. It is archived when all its cards
+  are archived: publish `status` unchanged, plus `fields.archived: true`.
+* **Ids.** Goal ids are `gol_…`. Ids you create for assistant ops must keep
+  the board's prefixes (`gol_`, `img_`…). Dream Board's image GC deletes
+  images whose ids don't start `img_`.
+* **Opening a goal.** There is no route that opens one goal (`?goal=`).
+  Until there is, send **no** `link_template`, and the assistant hides
+  "Open in Dream Board".
+* **Hooks.** Bump the assistant sequence inside the same `store.push` /
+  commit that merges the change. Start the poll loop from
+  `instrumentation.ts` (the server has no background jobs today).
+* **Storage.** Keep `instance_id` and the token in the data dir
+  (`~/.dream-board-server/assistant.json`), not in `board.db`. A restored
+  `board.db` then keeps the same instance but gets a new epoch, which
+  triggers a full resend.
+
+## What to build (server + one settings panel)
+
+1. **Settings → Personal Assistant** (UI): a **Connect Personal Assistant**
+   button. The panel shows the state, e.g. *Connected as
+   jeff@automatedlawnandpest.com · last sync 2 min ago · 1 waiting*, and has
+   *Disconnect*.
+2. **Connect** (preferred; server + browser). There's no code to type:
+   1. The server POSTs `apps/v1/link/start`:
+      `{app: "dreamboard", instance_id, instance_label}`, plus `link_template`
+      once a goal route exists. It gets back
+      `{device_code, user_code, approve_url, expires_in: 600, interval: 3}`.
+   2. The settings page opens `approve_url` in the browser
+      (`window.open`) and shows `user_code` ("Check the assistant shows
+      CTK6-BGES").
+   3. In the browser the owner presses **Continue with Google** (only if not
+      signed in), checks the code and presses **Allow**. The token is bound
+      to that Google account.
+   4. The server polls `apps/v1/link/poll` `{device_code}` every `interval`
+      seconds:
+      * `pending` → keep waiting;
+      * `approved` → the response carries `token`, exactly once;
+      * `denied` / `expired` → stop and say so.
+   5. Store the token in the data dir, never in the browser or `board.db`.
+
+   Fallback: the typed one-time code (Connections → Dream Board → Connect in
+   the assistant, then POST `apps/v1/pair` with `{app, code, instance_id,
+   instance_label}`) still works.
+
+   Either way:
    * `instance_id` is a stable random id stored in the data dir, one per
      workspace.
-   * Store the returned token in the data dir, never in IndexedDB or the
-     browser.
    * A `zz-*` test workspace has its own instance id. Pointing it at the real
      assistant gets `409 wrong_board`, and nothing is drained.
-   * The dev server (`~/.dream-board-server-dev`) should not pair with the
+   * The dev server (`~/.dream-board-server-dev`) should not connect to the
      real assistant at all.
+   * The development assistant is at
+     `https://assistant-dev.automatedpest.com` (all API paths are under
+     `/api/assistant/`).
 3. **Assistant sequence and epoch** (server).
    * `assistant_seq`: one integer in the server DB. Bump it in the **same
      transaction** as any merged op that changes a goal's published fields,
@@ -109,7 +177,10 @@ Run them against a `zz-assistant` workspace with a local assistant (the
 assistant's `npm run dev:assistant` pairs its own fake board, so turn that
 off with `DEV_DREAMBOARD=0` and pair the real zz board instead).
 
-1. Pair with a code → Connected. The same code again → refused.
+1. Connect Personal Assistant → the browser opens the assistant → Allow →
+   Connected within one poll. Don't allow → the board says so and stays
+   disconnected. The typed code also works once; the same code again →
+   refused.
 2. Capture "Dream board: someday a lake house with a dock" on the phone.
    Within one poll the board has a *Lake House* goal whose first note is
    exactly those words. The assistant's item page shows "Saved to Dream

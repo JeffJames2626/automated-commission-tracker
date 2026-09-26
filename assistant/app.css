@@ -470,3 +470,19 @@ mark { background: color-mix(in srgb, var(--accent) 30%, transparent); color: in
 .theme-seg button { flex: 1; padding: 9px 0; border-radius: 12px; font-weight: 600; font-size: 14px; color: var(--text-2); background: var(--surface); border: 1px solid var(--line); }
 .theme-seg button.on { color: #fff; background: #ee4f9a; border-color: #ee4f9a; }
 .journal-entry { margin: 4px 0 14px; padding: 10px 14px; border-left: 3px solid #ee4f9a; background: var(--surface); border-radius: 0 12px 12px 0; color: var(--text-2); font-size: 15px; white-space: pre-wrap; }
+
+/* ---------- beta: environment badge, capture review, app link ---------- */
+.env-badge { position: fixed; z-index: 60; top: calc(env(safe-area-inset-top) + 2px); left: 50%; transform: translateX(-50%);
+  font: 600 10px/1 var(--font); letter-spacing: .06em; padding: 3px 7px; border-radius: 99px; color: var(--accent);
+  background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); opacity: .85; text-decoration: none; }
+.signed-out .env-badge { opacity: .6; }
+.review { margin-bottom: 10px; }
+.review-raw { white-space: pre-wrap; font-size: 15px; margin-bottom: 8px; max-height: 9em; overflow: hidden; }
+.review-facts { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 0 0 8px; font-size: 13px; }
+.review-facts dt { color: var(--text-3); }
+.review-facts dd { margin: 0; color: var(--text-2); overflow-wrap: anywhere; }
+.link-card { text-align: center; }
+.link-card h2 { margin: 6px 0; }
+.link-card .bullets { text-align: left; }
+.link-icon { width: 48px; height: 48px; margin: 0 auto; display: grid; place-items: center; border-radius: 14px; background: var(--accent-soft); color: var(--accent); }
+.warn-text { color: var(--warn); }

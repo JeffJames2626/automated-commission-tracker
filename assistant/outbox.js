@@ -6,7 +6,8 @@ import { api } from './api.js';
 // retry after a lost response can never create a second copy). Items the
 // server rejects stay here, visible, until the owner retries or discards them.
 
-const DB = 'personal-assistant', STORE = 'outbox';
+// The demo gets its own database: its captures never mix with real ones.
+const DB = window.__ASST_DEMO__ === true ? 'personal-assistant-demo' : 'personal-assistant', STORE = 'outbox';
 let dbp = null;
 const memory = new Map();          // fallback when IndexedDB is unavailable (private mode)
 const subs = new Set();

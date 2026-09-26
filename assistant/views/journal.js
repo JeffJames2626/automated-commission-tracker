@@ -46,7 +46,7 @@ export function journalSheet(capture) {
     if (ev.type === 'conversation') convId = ev.id;
     else if (ev.type === 'status') { const st = out.querySelector('[data-status]'); if (st) st.innerHTML = icon('sparkle') + ' ' + esc(ev.text) + '…'; }
     else if (ev.type === 'message') { paint(ev.message); document.dispatchEvent(new CustomEvent('asst:captured', { detail: null })); }
-    else if (ev.type === 'error') out.innerHTML = `<p class="muted">${esc(ev.error)}</p>`;
+    else if (ev.type === 'error') out.innerHTML = `<p class="muted">Your words are saved in your journal. The assistant couldn’t go through them just now — it will try again automatically.</p>${ev.ref ? `<p class="muted small">Reference: ${esc(ev.ref)}</p>` : ''}`;
   }).catch(e => {
     out.innerHTML = `<p class="muted">Saved to your journal. ${esc(e.offline ? 'I’ll go through it when you’re back online.' : 'I couldn’t go through it just now — I’ll try again later.')}</p>`;
   });

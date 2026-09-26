@@ -2,6 +2,10 @@
 // a scriptable fake Claude, and a tiny client that calls router routes the way
 // the browser does (cookie + x-assistant header).
 
+// Every test runs on in-memory PGlite. This flag makes the real database
+// driver refuse to connect, so no test can ever touch real rows.
+process.env.ASSISTANT_TEST = '1';
+
 import { PGlite } from '@electric-sql/pglite';
 import { pgliteDb } from '../../lib/assistant/db/index.mjs';
 import { migrate } from '../../lib/assistant/db/schema.mjs';
@@ -106,14 +110,17 @@ export function fakeClaude(script) {
 export const text = t => ({ content: [{ type: 'text', text: t }], stop_reason: 'end_turn' });
 export const toolUse = (calls) => ({ stop_reason: 'tool_use', content: calls.map((c, i) => ({ type: 'tool_use', id: 'tu_' + i + '_' + c.name, name: c.name, input: c.input })) });
 
-export function makeApp({ db, google, claude = null, config = {}, now, linkFetch, lookup, limits }) {
-  const router = createRouter({ db, fetchImpl: google ? google.fetchImpl : undefined, claude, config: Object.assign({}, CONFIG, config), now, sleep: async () => {}, linkFetch, lookup, limits });
+export function makeApp({ db, google, claude = null, config = {}, now, linkFetch, lookup, limits, origin = 'https://assistant.test' }) {
+  // Server log lines are kept here (not printed) so tests can check them.
+  const logs = [];
+  const logSink = { log: l => logs.push(JSON.parse(l)), error: l => logs.push(JSON.parse(l)) };
+  const router = createRouter({ db, fetchImpl: google ? google.fetchImpl : undefined, claude, config: Object.assign({}, CONFIG, config), now, sleep: async () => {}, linkFetch, lookup, limits, logSink });
   const jar = {};
   async function call(method, route, { body, query = {}, headers = {}, cookies } = {}) {
     const out = await router({
       method, route, query, body: body === undefined ? null : body,
       headers: Object.assign({ 'x-assistant': '1', 'x-timezone': 'America/Chicago' }, headers),
-      cookies: cookies || Object.assign({}, jar), origin: 'https://assistant.test',
+      cookies: cookies || Object.assign({}, jar), origin,
     });
     for (const c of out.cookies || []) {
       const [kv] = c.split(';');
@@ -139,5 +146,5 @@ export function makeApp({ db, google, claude = null, config = {}, now, linkFetch
     const cb = await call('GET', 'auth/callback', { query: { code: 'code-1', state } });
     return { start, cb };
   }
-  return { router, call, stream, signIn, jar, parseCookies };
+  return { router, call, stream, signIn, jar, parseCookies, logs };
 }

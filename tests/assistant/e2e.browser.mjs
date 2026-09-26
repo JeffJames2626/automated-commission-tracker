@@ -42,10 +42,25 @@ try {
   page.on('pageerror', e => errors.push(e.message));
   page.on('console', m => { if (/Content Security Policy|Refused to/i.test(m.text())) errors.push(m.text()); });
 
-  await step('signed-out visitor sees Sign in with Google', async () => {
+  await step('signed-out visitor sees a private sign-in, nothing about what is inside', async () => {
     await page.goto(BASE + '/assistant/');
-    await page.getByText('Sign in with Google').waitFor();
+    await page.getByText('Continue with Google').waitFor();
+    await page.getByText('Private. Sign in to continue.').waitFor();
     await shot(page, '00-signin');
+  });
+
+  await step('someone not on the allow-list sees only "This Personal Assistant is private."', async () => {
+    await page.goto(BASE + '/assistant/#/signin?error=' + encodeURIComponent('This Personal Assistant is private.'));
+    await page.locator('h1', { hasText: 'This Personal Assistant is private.' }).waitFor();
+    assert.equal(await page.getByText('Continue with Google').count(), 0);
+    await shot(page, '00-private');
+  });
+
+  await step('a Dream Board link opened while signed out comes back to it after sign-in', async () => {
+    await page.goto(BASE + '/assistant/#/link?code=ABCD-EFGH');
+    await page.getByText('Continue with Google').waitFor();
+    const href = await page.getByText('Continue with Google').getAttribute('href');
+    assert.match(decodeURIComponent(href), /next=#\/link\?code=ABCD-EFGH/);
   });
 
   await step('sign in lands on Today with calendar and email', async () => {
@@ -194,6 +209,46 @@ try {
     await card.getByText('Delete or merge — off').waitFor();
     await page.locator('.ability', { hasText: 'Send — off' }).waitFor();
     await shot(page, '15-connections-apps');
+  });
+
+  await step('a small LOCAL badge names the build; About shows environment and build', async () => {
+    await page.goto(BASE + '/assistant/#/today');
+    await page.locator('#envbadge', { hasText: 'LOCAL' }).waitFor();
+    await page.goto(BASE + '/assistant/#/about');
+    await page.getByText('Local (test data)').waitFor();
+    await shot(page, '16-about');
+  });
+
+  await step('Report / Idea saves into the Personal Assistant project', async () => {
+    await page.goto(BASE + '/assistant/#/more');
+    await page.getByText('Report a problem / Idea').click();
+    await page.locator('.sheet [data-type="idea"]').click();
+    await page.locator('.sheet textarea').fill('A home-screen widget for one-tap capture');
+    await shot(page, '17-feedback');
+    await page.locator('.sheet [data-send]').click();
+    await page.locator('.toast', { hasText: 'Idea saved' }).waitFor();
+  });
+
+  await step('capture review shows raw words beside how each was filed', async () => {
+    await page.goto(BASE + '/assistant/#/review');
+    await page.locator('.review-raw', { hasText: 'A home-screen widget for one-tap capture' }).waitFor();
+    await page.locator('.review', { hasText: 'customer portal' }).first().locator('dt', { hasText: 'Filed' }).waitFor();
+    await shot(page, '18-review');
+  });
+
+  await step('Dream Board "Connect Personal Assistant": approve in the browser, board gets its token', async () => {
+    const start = await page.request.post(BASE + '/api/assistant/apps/v1/link/start', { data: { app: 'dreamboard', instance_id: 'board-browser-test', instance_label: 'Test PC' } });
+    const j = await start.json();
+    await page.goto(j.approve_url);
+    await page.getByText('Dream Board wants to connect').waitFor();
+    await page.locator('.pair-code', { hasText: j.user_code }).waitFor();
+    await page.getByText('This replaces the connection with Dev board.').waitFor();
+    await shot(page, '19-link-approve');
+    await page.getByRole('button', { name: 'Allow', exact: true }).click();
+    await page.getByText('Connected. Go back to Dream Board').waitFor();
+    const poll = await (await page.request.post(BASE + '/api/assistant/apps/v1/link/poll', { data: { device_code: j.device_code } })).json();
+    assert.equal(poll.status, 'approved');
+    assert.match(poll.token, /^dbc_/);
   });
 
   await step('no uncaught page errors on mobile', async () => { assert.deepEqual(errors, []); });

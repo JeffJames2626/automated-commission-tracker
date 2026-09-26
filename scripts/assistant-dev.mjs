@@ -33,6 +33,8 @@ import { startPairing, setBaseUrl } from '../lib/assistant/repo/apps.mjs';
 import { fakeDreamBoard } from '../tests/assistant/fake-dreamboard.mjs';
 
 const PORT = +process.env.PORT || 8787;
+// LOCAL: synthetic data only (shown as a LOCAL badge in the app).
+process.env.ASSISTANT_ENV = process.env.ASSISTANT_ENV || 'local';
 const ROOT = path.resolve('.');
 const config = {
   databaseUrl: 'pglite://dev', googleClientId: 'dev-client', googleClientSecret: 'dev-secret',

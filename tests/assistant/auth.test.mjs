@@ -55,8 +55,12 @@ test('email not on the allow-list is refused', async () => {
   const app = makeApp({ db, google: g });
   const { cb } = await app.signIn({ sub: '666', email: 'stranger@example.com' });
   assert.match(cb.redirect, /signin\?error=/);
-  assert.match(decodeURIComponent(cb.redirect), /not allowed/);
+  // Only the private notice: not the address, not what the app is or holds.
+  assert.equal(decodeURIComponent(cb.redirect), '/assistant/#/signin?error=This Personal Assistant is private.');
   assert.equal(app.jar.asst_session, undefined);
+  // …and nothing behind the sign-in answers them.
+  const me = await app.call('GET', 'bootstrap');
+  assert.equal(me.status, 401);
 });
 
 test('tampered state, expired oauth cookie and forged sessions are rejected', async () => {

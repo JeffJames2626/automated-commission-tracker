@@ -6,6 +6,9 @@
 // search for anything else.
 (function () {
   'use strict';
+  // Marks this page as the demo: the app then uses demo-only storage names
+  // (asst-demo:*, the personal-assistant-demo database).
+  window.__ASST_DEMO__ = true;
   const KEY = 'asst-demo-v2';
   const H = 3600e3, D = 24 * H;
   const now = () => Date.now();
@@ -737,5 +740,18 @@
     window.dispatchEvent(new HashChangeEvent('hashchange'));
   }, true);
 
-  window.__asstDemoReset = () => { try { localStorage.removeItem(KEY); localStorage.removeItem('asst:boot'); localStorage.removeItem('asst:today'); } catch { /* ignore */ } location.hash = '#/today'; location.reload(); };
+  // Reset demo: removes only this demo's own storage (keys starting
+  // "asst-demo", its own IndexedDB). It never runs where the real assistant
+  // lives (/assistant/), and the real app has no reset of any kind — its data
+  // is on the server, which has no endpoint that wipes anything.
+  window.__asstDemoReset = () => {
+    if (window.__ASST_DEMO__ !== true || /^\/(assistant|api)\//.test(location.pathname)) return;
+    try {
+      const mine = [];
+      for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith('asst-demo')) mine.push(k); }
+      mine.forEach(k => localStorage.removeItem(k));
+      indexedDB.deleteDatabase('personal-assistant-demo');
+    } catch { /* ignore */ }
+    location.hash = '#/today'; location.reload();
+  };
 })();

@@ -1,23 +1,58 @@
 {
   "functions": {
-    "api/assistant.mjs": { "maxDuration": 120 }
+    "api/assistant.mjs": {
+      "maxDuration": 120
+    }
   },
+  "redirects": [
+    {
+      "source": "/((?!assistant/|api/assistant).*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "assistant-dev.automatedpest.com"
+        }
+      ],
+      "destination": "/assistant/",
+      "permanent": false
+    }
+  ],
   "rewrites": [
-    { "source": "/api/assistant/:path+", "destination": "/api/assistant?r=:path+" }
+    {
+      "source": "/api/assistant/:path+",
+      "destination": "/api/assistant?r=:path+"
+    }
   ],
   "headers": [
     {
       "source": "/assistant/(.*)",
       "headers": [
-        { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: https://*.googleusercontent.com; media-src 'self' blob:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'" },
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "Referrer-Policy", "value": "same-origin" },
-        { "key": "Permissions-Policy", "value": "microphone=(self), camera=(self), geolocation=()" }
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: https://*.googleusercontent.com; media-src 'self' blob:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "same-origin"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "microphone=(self), camera=(self), geolocation=()"
+        }
       ]
     },
     {
       "source": "/assistant/sw.js",
-      "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache"
+        }
+      ]
     }
   ]
 }

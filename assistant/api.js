@@ -10,6 +10,13 @@ export class ApiError extends Error {
   get offline() { return this.status === 0; }
 }
 
+// What a person reads when a request fails: the server's plain-words message,
+// plus a reference to quote in a bug report when the server itself broke.
+export function errorText(status, data) {
+  const msg = (data && data.error) || (status >= 500 ? 'Something went wrong on the server.' : 'That did not work (' + status + ').');
+  return data && data.ref ? msg + ' Reference: ' + data.ref : msg;
+}
+
 const listeners = new Set();
 export function onSignedOut(fn) { listeners.add(fn); }
 
@@ -30,7 +37,7 @@ export async function api(route, { method = 'GET', body, query, signal } = {}) {
   const ct = r.headers.get('content-type') || '';
   if (ct.includes('application/json')) { try { data = await r.json(); } catch { data = null; } }
   if (r.status === 401) { listeners.forEach(fn => fn()); throw new ApiError(401, 'Signed out', data); }
-  if (!r.ok) throw new ApiError(r.status, (data && data.error) || ('Request failed (' + r.status + ')'), data);
+  if (!r.ok) throw new ApiError(r.status, errorText(r.status, data), data);
   return data;
 }
 
@@ -48,7 +55,7 @@ export async function stream(route, body, onEvent, { signal } = {}) {
     throw new ApiError(0, navigator.onLine ? 'Could not reach the server.' : 'You are offline.');
   }
   if (r.status === 401) { listeners.forEach(fn => fn()); throw new ApiError(401, 'Signed out'); }
-  if (!r.ok) { let d = null; try { d = await r.json(); } catch { /* not json */ } throw new ApiError(r.status, (d && d.error) || 'Request failed', d); }
+  if (!r.ok) { let d = null; try { d = await r.json(); } catch { /* not json */ } throw new ApiError(r.status, errorText(r.status, d), d); }
   const reader = r.body.getReader();
   const dec = new TextDecoder();
   let buf = '';
@@ -73,4 +80,4 @@ export async function stream(route, body, onEvent, { signal } = {}) {
 
 // The standalone demo (scripts/assistant-demo) serves attachments from memory.
 export const attachmentUrl = id => (window.__asstAttachmentUrl && window.__asstAttachmentUrl(id)) || BASE + '?r=attachment&id=' + encodeURIComponent(id);
-export const authUrl = (intent, services = []) => BASE + '/auth/start?intent=' + intent + (services.length ? '&services=' + services.join(',') : '');
+export const authUrl = (intent, services = [], next = '') => BASE + '/auth/start?intent=' + intent + (services.length ? '&services=' + services.join(',') : '') + (next ? '&next=' + encodeURIComponent(next) : '');

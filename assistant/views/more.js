@@ -18,6 +18,12 @@ export async function renderMore(main) {
       <a href="#/memory">${icon('brain')}<span>Memory</span>${icon('chevron')}</a>
       <a href="#/connections">${icon('link')}<span>Connections</span>${icon('chevron')}</a>
     </nav>
+    <nav class="menu card">
+      <button data-report>${icon('note')}<span>Report a problem / Idea</span>${icon('chevron')}</button>
+      <a href="#/review">${icon('history')}<span>Capture review</span>${icon('chevron')}</a>
+      <a href="/api/assistant?r=export" download>${icon('folder')}<span>Export my data</span>${icon('chevron')}</a>
+      <a href="#/about">${icon('shield')}<span>About this build</span>${icon('chevron')}</a>
+    </nav>
     <section class="card sec"><div class="sec-h">${icon('today')}<span>Appearance</span></div>
       <div class="theme-seg" role="radiogroup" aria-label="Theme">${['system', 'light', 'dark'].map(t => `<button data-theme-pick="${t}" role="radio">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}</div></section>
     <nav class="menu card">
@@ -49,6 +55,7 @@ export async function renderMore(main) {
     location.hash = '#/signin'; location.reload();
   };
   main.querySelector('[data-install]').onclick = installHelp;
+  main.querySelector('[data-report]').onclick = () => import('./beta.js').then(m => m.feedbackSheet());
   main.querySelector('[data-privacy]').onclick = () => sheet(`<h3 class="sheet-title">${icon('shield')} Privacy & permissions</h3>
     <ul class="bullets">
       <li>Google access is <b>read-only</b>. The assistant cannot send, edit, move or delete anything in Google.</li>

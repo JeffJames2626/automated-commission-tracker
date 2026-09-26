@@ -1,5 +1,7 @@
 # Personal Assistant — setup
 
+**Development deployment:** see [DEV-ENVIRONMENT.md](DEV-ENVIRONMENT.md) (address, branch, variables, Google client for the dev URL). Backups: [BACKUP-RECOVERY.md](BACKUP-RECOVERY.md).
+
 The assistant is served from the same Vercel project as the tracker:
 
 * App: `https://<your-domain>/assistant/`
@@ -36,7 +38,9 @@ is for Google Identity Services sign-in only and is untouched.
 | `GOOGLE_OAUTH_CLIENT_SECRET` | from step 1.3 — server only |
 | `ASSISTANT_TOKEN_KEY` | `openssl rand -hex 32` — encrypts Google tokens at rest. Changing it later forces a Google reconnect. |
 | `ASSISTANT_SESSION_SECRET` | `openssl rand -base64 48` — signs session cookies |
-| `ASSISTANT_ALLOWED_EMAILS` | `jeff@automatedlawnandpest.com` (comma-separated). If unset, the tracker's admin users may sign in. |
+| `ASSISTANT_ALLOWED_EMAILS` | `jeff@automatedlawnandpest.com` (comma-separated). If unset, the tracker's admin users may sign in — except when `ASSISTANT_ENV` is `development` or `production`, where nobody can. |
+| `ASSISTANT_ENV` | `local`, `development` or `production` — a small badge outside production, and the explicit allow-list rule |
+| `ASSISTANT_DATABASE_URL` | optional: a database for the assistant alone (default: `DATABASE_URL`) |
 | `ANTHROPIC_API_KEY` | server-side key for Claude. Without it, capture uses rule-based filing and the assistant answers with search results only. |
 | `ASSISTANT_MODEL` | optional, default `claude-opus-5` |
 | `ASSISTANT_PUBLIC_URL` | recommended: `https://<your-domain>` — pins the OAuth redirect URI |
@@ -69,6 +73,7 @@ npm install
 npm run dev:assistant          # http://localhost:8787/__dev/login — demo data, no credentials
 npm run test:assistant         # API/integration tests on real Postgres (PGlite), incl. Dream Board
 npm run test:assistant:browser # Chromium end-to-end (iPhone + desktop)
+npm run check:assistant        # syntax, function loads, no secrets/debug routes shipped, build step
 ```
 
 `ANTHROPIC_API_KEY=… npm run dev:assistant` runs the real AI against demo
@@ -79,11 +84,12 @@ every 2 seconds. `/__dev/dreamboard?offline=1` takes it offline,
 
 ## Connecting Dream Board
 
-1. Deploy, then open **Connections → Dream Board → Connect**. You get a
-   one-time code (10 minutes).
-2. Enter the code in Dream Board → Settings → Personal Assistant. Dream
-   Board's server needs the assistant's address (your Vercel URL) and
-   outbound HTTPS. The assistant never connects to the PC.
+1. In Dream Board → Settings → Personal Assistant, press **Connect Personal
+   Assistant**. The browser opens the assistant. Sign in with Google if
+   asked, check the code matches, and press **Allow**. (Fallback:
+   **Connections → Dream Board → Connect** in the assistant gives a one-time
+   code to type into Dream Board.) Dream Board's server needs the assistant's
+   address and outbound HTTPS. The assistant never connects to the PC.
 3. Optional: under *Address you open it at*, enter the address you use for
    Dream Board (for example your Tailscale `https://…ts.net` name).
    "Open in Dream Board" links use it.

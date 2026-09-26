@@ -176,5 +176,9 @@ export function emptyState(title, body, iconName = 'sparkle') {
 }
 
 // Session-local cache for offline reads (per viewer, best effort).
-export function cacheGet(k) { try { return JSON.parse(localStorage.getItem('asst:' + k) || 'null'); } catch { return null; } }
-export function cacheSet(k, v) { try { localStorage.setItem('asst:' + k, JSON.stringify(v)); } catch { /* storage full or blocked */ } }
+// The click-through demo keeps its storage apart from the real app's, so
+// nothing the demo does (including "Reset demo") can touch real caches.
+export const DEMO = typeof window !== 'undefined' && window.__ASST_DEMO__ === true;
+const NS = DEMO ? 'asst-demo:' : 'asst:';
+export function cacheGet(k) { try { return JSON.parse(localStorage.getItem(NS + k) || 'null'); } catch { return null; } }
+export function cacheSet(k, v) { try { localStorage.setItem(NS + k, JSON.stringify(v)); } catch { /* storage full or blocked */ } }

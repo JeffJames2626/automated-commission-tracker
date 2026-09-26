@@ -156,5 +156,18 @@ export function fakeDreamBoard(app, { instanceId = 'board-real', label = 'Jeffâ€
     return r;
   }
 
-  return { s, board, pair, sync, syncUntilIdle, apply, auth };
+  // "Connect Personal Assistant": ask to be linked, then wait for the owner
+  // to allow it in the browser. The token arrives once, on the poll.
+  async function linkStart() {
+    const r = await app.call('POST', 'apps/v1/link/start', { body: { app: 'dreamboard', instance_id: instanceId, instance_label: label }, cookies: {} });
+    if (r.status === 200) s.device = r.json.device_code;
+    return r;
+  }
+  async function linkPoll() {
+    const r = await app.call('POST', 'apps/v1/link/poll', { body: { device_code: s.device }, cookies: {} });
+    if (r.status === 200 && r.json.status === 'approved') { s.token = r.json.token; s.resync = true; s.since = 0; }
+    return r;
+  }
+
+  return { s, board, pair, linkStart, linkPoll, sync, syncUntilIdle, apply, auth };
 }

@@ -6,7 +6,9 @@
   "scripts": {
     "dev:assistant": "node scripts/assistant-dev.mjs",
     "test:assistant": "node --test \"tests/assistant/*.test.mjs\"",
-    "test:assistant:browser": "node tests/assistant/e2e.browser.mjs"
+    "test:assistant:browser": "node tests/assistant/e2e.browser.mjs",
+    "vercel-build": "node scripts/assistant-build-info.mjs",
+    "check:assistant": "node scripts/assistant-check.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",

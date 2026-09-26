@@ -15,7 +15,7 @@ const TABS = [
   { key: 'search', label: 'Search', icon: 'search', href: '#/search' },
   { key: 'more', label: 'More', icon: 'more', href: '#/more' },
 ];
-const TAB_OF = { item: 'inbox', dream: 'dreams', project: 'more', projects: 'more', people: 'more', person: 'more', memory: 'more', connections: 'more' };
+const TAB_OF = { item: 'inbox', dream: 'dreams', project: 'more', projects: 'more', people: 'more', person: 'more', memory: 'more', connections: 'more', review: 'more', about: 'more', link: 'more' };
 
 const ROUTES = {
   today: () => import('./views/today.js').then(m => m.render),
@@ -32,6 +32,9 @@ const ROUTES = {
   person: () => import('./views/more.js').then(m => m.renderPerson),
   memory: () => import('./views/more.js').then(m => m.renderMemory),
   connections: () => import('./views/more.js').then(m => m.renderConnections),
+  review: () => import('./views/beta.js').then(m => m.renderReview),
+  about: () => import('./views/beta.js').then(m => m.renderAbout),
+  link: () => import('./views/link.js').then(m => m.renderLink),
 };
 
 const main = document.getElementById('main');
@@ -65,7 +68,7 @@ async function route() {
   const [name, id] = path.split('/');
   const params = new URLSearchParams(qs || '');
   if (name === 'signin') return renderSignin(params);
-  if (!state.boot) return;
+  if (!state.boot) { if (signedOut) toSignin(); return; }
   const loader = ROUTES[name] || ROUTES.today;
   if (cleanup) { try { cleanup(); } catch { /* view already gone */ } cleanup = null; }
   closeAllSheets();
@@ -84,18 +87,53 @@ async function route() {
   }
 }
 
+// Signed out, or not allowed: nothing about what is inside. A person who is
+// not on the allow-list sees only that this assistant is private.
+const PRIVATE = 'This Personal Assistant is private.';
 function renderSignin(params) {
   document.body.classList.add('signed-out');
   const err = params.get('error');
+  const next = /^#\/[a-z]+/.test(params.get('next') || '') ? params.get('next') : '';
   main.className = 'main view-signin';
+  if (err === PRIVATE) {
+    main.innerHTML = `<div class="signin"><img class="signin-logo" src="icons/icon.svg" alt="" width="72" height="72">
+      <h1>${esc(PRIVATE)}</h1><a class="muted small" href="${authUrl('signin', [], next)}">Use a different Google account</a></div>`;
+    return;
+  }
   main.innerHTML = `<div class="signin">
     <img class="signin-logo" src="icons/icon.svg" alt="" width="72" height="72">
-    <h1>Your assistant</h1>
-    <p class="muted">Capture anything in seconds. Ask about everything you’ve captured and connected.</p>
+    <h1>Personal Assistant</h1>
+    <p class="muted">Private. Sign in to continue.</p>
     ${err ? `<div class="card bad-card">${esc(err)}</div>` : ''}
-    <a class="btn primary big" href="${authUrl('signin')}">${gLogo()} Sign in with Google</a>
-    <p class="muted small">Only accounts you’ve allowed can sign in. Connecting Gmail, Calendar or Drive is a separate, read-only step.</p>
+    <a class="btn primary big" href="${authUrl('signin', [], next)}">${gLogo()} Continue with Google</a>
   </div>`;
+}
+
+// Signed out: go to sign-in, and come back to the same screen afterwards
+// (e.g. a Dream Board link request opened from the board).
+let signedOut = false;
+function toSignin() {
+  const here = location.hash;
+  if (here.startsWith('#/signin')) return;
+  location.hash = '#/signin' + (/^#\/(link|item|dream|project|person)\b/.test(here) ? '?next=' + encodeURIComponent(here) : '');
+}
+
+// A small, quiet marker on anything that is not production (DEV · abc1234).
+function envBadge() {
+  const b = state.boot && state.boot.build;
+  let el = document.getElementById('envbadge');
+  if (!b || b.env === 'production') { if (el) el.remove(); return; }
+  if (!el) { el = document.createElement('a'); el.id = 'envbadge'; el.className = 'env-badge'; el.href = '#/about'; document.body.appendChild(el); }
+  el.textContent = (b.env === 'development' ? 'DEV' : b.env === 'local' ? 'LOCAL' : String(b.env || 'test').toUpperCase()) + (b.sha && b.sha !== 'local' ? ' · ' + b.sha : '');
+  el.title = 'About this build';
+}
+
+// Anything saved while AI filing was down (or offline) is gone through again.
+let lastReprocess = 0;
+function reprocessSoon() {
+  if (Date.now() - lastReprocess < 60000 || !state.boot || state.boot.offline) return;
+  lastReprocess = Date.now();
+  setTimeout(() => api('reprocess', { method: 'POST' }).catch(() => {}), 4000);
 }
 const gLogo = () => '<svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3 0 5.8 1.1 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>';
 
@@ -122,14 +160,15 @@ function sharedPayload() {
 
 async function boot() {
   shell();
-  onSignedOut(() => { state.boot = null; cacheSet('boot', null); if (!location.hash.startsWith('#/signin')) location.hash = '#/signin'; });
+  onSignedOut(() => { signedOut = true; state.boot = null; cacheSet('boot', null); toSignin(); });
   window.addEventListener('hashchange', route);
-  window.addEventListener('online', () => netPill());
+  window.addEventListener('online', () => { netPill(); reprocessSoon(); });
   window.addEventListener('offline', () => outbox.all().then(netPill));
   outbox.subscribe(netPill);
   outbox.all().then(netPill);
   const shared = sharedPayload();
-  if (location.hash.startsWith('#/signin') && !new URLSearchParams(location.hash.split('?')[1] || '').get('error')) location.hash = '#/today';
+  const sp = new URLSearchParams(location.hash.split('?')[1] || '');
+  if (location.hash.startsWith('#/signin') && !sp.get('error')) location.hash = sp.get('next') && /^#\/[a-z]+/.test(sp.get('next')) ? sp.get('next') : '#/today';
   try {
     state.boot = await api('bootstrap');
     cacheSet('boot', state.boot);
@@ -143,6 +182,8 @@ async function boot() {
     toast(e.offline ? 'Offline — captures are saved on this phone.' : 'The server is not answering right now — captures are saved on this phone.', { ms: 5000 });
   }
   document.body.classList.remove('signed-out');
+  envBadge();
+  reprocessSoon();
   outbox.startAutoFlush();
   if (!location.hash || location.hash === '#/' || location.hash.startsWith('#/signin')) location.hash = '#/today';
   await route();
