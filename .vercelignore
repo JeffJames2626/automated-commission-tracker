@@ -1,0 +1,10 @@
+# Not part of any deployment: tests, docs, local-only tools and the
+# standalone demo (which must never be served next to the real assistant).
+/tests
+/docs
+/scripts/assistant-demo
+/scripts/assistant-dev.mjs
+/scripts/assistant-demo-google.mjs
+/scripts/assistant-icons.mjs
+/scripts/assistant-check.mjs
+/scripts/assistant-restore.mjs

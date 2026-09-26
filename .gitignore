@@ -25,3 +25,6 @@ Thumbs.db
 .idea/
 
 Open Tracker.bat
+
+# Dependencies
+node_modules/
