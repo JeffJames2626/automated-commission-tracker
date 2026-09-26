@@ -2,9 +2,9 @@
 // a bad connection (captures themselves are kept in IndexedDB by the page).
 // API calls are never cached — personal data stays out of the cache.
 
-const VERSION = 'asst-v2';
+const VERSION = 'asst-v3';
 const SHELL = [
-  './', 'index.html', 'app.css', 'app.js', 'api.js', 'ui.js', 'state.js', 'outbox.js', 'capture.js',
+  './', 'index.html', 'theme.js', 'app.css', 'app.js', 'api.js', 'ui.js', 'state.js', 'outbox.js', 'capture.js',
   'views/common.js', 'views/today.js', 'views/inbox.js', 'views/item.js', 'views/chat.js', 'views/search.js', 'views/more.js', 'views/dreams.js',
   'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-180.png',
 ];

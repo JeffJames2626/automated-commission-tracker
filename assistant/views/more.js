@@ -18,6 +18,8 @@ export async function renderMore(main) {
       <a href="#/memory">${icon('brain')}<span>Memory</span>${icon('chevron')}</a>
       <a href="#/connections">${icon('link')}<span>Connections</span>${icon('chevron')}</a>
     </nav>
+    <section class="card sec"><div class="sec-h">${icon('today')}<span>Appearance</span></div>
+      <div class="theme-seg" role="radiogroup" aria-label="Theme">${['system', 'light', 'dark'].map(t => `<button data-theme-pick="${t}" role="radio">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}</div></section>
     <nav class="menu card">
       <button data-install>${icon('plus')}<span>Add to Home Screen</span>${icon('chevron')}</button>
       <button data-privacy>${icon('shield')}<span>Privacy & permissions</span>${icon('chevron')}</button>
@@ -27,6 +29,19 @@ export async function renderMore(main) {
       <button data-signout-all class="danger-text">${icon('logout')}<span>Sign out on every device</span></button>
     </nav>
     <p class="muted small center">${state.boot.ai ? 'AI assistant is on.' : 'AI is not configured — capture and search still work.'}</p>`;
+  // Theme: System (follow the device), Light or Dark — remembered on this device.
+  const paintTheme = () => {
+    let cur = 'system';
+    try { cur = localStorage.getItem('asst:theme') || 'system'; } catch { /* storage blocked */ }
+    main.querySelectorAll('[data-theme-pick]').forEach(b => { const on = b.dataset.themePick === cur; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
+  };
+  main.querySelectorAll('[data-theme-pick]').forEach(b => b.onclick = () => {
+    const t = b.dataset.themePick;
+    try { if (t === 'system') localStorage.removeItem('asst:theme'); else localStorage.setItem('asst:theme', t); } catch { /* this visit only */ }
+    if (t === 'system') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t);
+    paintTheme();
+  });
+  paintTheme();
   main.querySelector('[data-signout]').onclick = async () => { await api('auth/signout', { method: 'POST' }).catch(() => {}); location.hash = '#/signin'; location.reload(); };
   main.querySelector('[data-signout-all]').onclick = async () => {
     if (!(await confirmSheet('Sign out everywhere?', 'Every phone and browser signed in to your assistant will need to sign in again.', { ok: 'Sign out everywhere', danger: true }))) return;

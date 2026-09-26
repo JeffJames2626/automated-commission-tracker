@@ -1,26 +1,29 @@
-/* Personal Assistant — dark-first, calm, thumb-friendly.
-   One token layer; light mode redefines the tokens. */
+/* Personal Assistant — calm, thumb-friendly. One brand colour (#ee4f9a)
+   on whites, blacks and greys. One token layer: light mode redefines the
+   tokens, following the system unless the owner picked Light or Dark
+   (html[data-theme], set by theme.js before first paint). */
 
 :root {
-  --bg: #0b0b10;
-  --bg-2: #111118;
+  --bg: #0a0a0a;
+  --bg-2: #121212;
   --surface: rgba(255, 255, 255, 0.045);
-  --surface-2: rgba(255, 255, 255, 0.075);
-  --surface-solid: #16161e;
-  --line: rgba(255, 255, 255, 0.08);
-  --line-2: rgba(255, 255, 255, 0.14);
-  --text: #f4f4f6;
-  --text-2: #b4b4c0;
-  --text-3: #7c7c8a;
-  --accent: #8b9dff;
-  --accent-2: #c08bff;
-  --accent-ink: #0b0b10;
-  --grad: linear-gradient(135deg, #8b9dff 0%, #b18cff 55%, #ff9ec4 110%);
+  --surface-2: rgba(255, 255, 255, 0.08);
+  --surface-solid: #161616;
+  --line: rgba(255, 255, 255, 0.09);
+  --line-2: rgba(255, 255, 255, 0.15);
+  --text: #f5f5f5;
+  --text-2: #b8b8b8;
+  --text-3: #808080;
+  --accent: #ee4f9a;
+  --accent-2: #ee4f9a;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(238, 79, 154, 0.14);
+  --grad: linear-gradient(#ee4f9a, #ee4f9a);
   --ok: #5fd39a;
   --warn: #ffb65c;
-  --bad: #ff7a7a;
-  --glass: rgba(18, 18, 26, 0.72);
-  --shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+  --bad: #ff6b6b;
+  --glass: rgba(16, 16, 16, 0.74);
+  --shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
   --radius: 20px;
   --radius-sm: 14px;
   --tab-h: 64px;
@@ -32,15 +35,22 @@
 }
 
 @media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f6f6f8; --bg-2: #eeeef3; --surface: rgba(255, 255, 255, 0.8); --surface-2: #ffffff; --surface-solid: #ffffff;
-    --line: rgba(10, 10, 30, 0.07); --line-2: rgba(10, 10, 30, 0.13);
-    --text: #121218; --text-2: #4b4b58; --text-3: #85858f;
-    --accent: #4f5ee8; --accent-2: #8a4fe8; --accent-ink: #ffffff;
-    --grad: linear-gradient(135deg, #5b6cf0 0%, #8e5cf0 60%, #e05f9a 115%);
-    --glass: rgba(250, 250, 252, 0.78); --shadow: 0 10px 40px rgba(20, 20, 60, 0.12);
+  :root:not([data-theme="dark"]) {
+    --bg: #f5f5f5; --bg-2: #ebebeb; --surface: rgba(255, 255, 255, 0.85); --surface-2: #ffffff; --surface-solid: #ffffff;
+    --line: rgba(0, 0, 0, 0.08); --line-2: rgba(0, 0, 0, 0.14);
+    --text: #111111; --text-2: #4a4a4a; --text-3: #7a7a7a;
+    --accent: #d6307f; --accent-soft: rgba(238, 79, 154, 0.1);
+    --glass: rgba(255, 255, 255, 0.8); --shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
     color-scheme: light;
   }
+}
+:root[data-theme="light"] {
+  --bg: #f5f5f5; --bg-2: #ebebeb; --surface: rgba(255, 255, 255, 0.85); --surface-2: #ffffff; --surface-solid: #ffffff;
+  --line: rgba(0, 0, 0, 0.08); --line-2: rgba(0, 0, 0, 0.14);
+  --text: #111111; --text-2: #4a4a4a; --text-3: #7a7a7a;
+  --accent: #d6307f; --accent-soft: rgba(238, 79, 154, 0.1);
+  --glass: rgba(255, 255, 255, 0.8); --shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -51,7 +61,7 @@ body {
 }
 body::before {   /* soft light in the corner, the only decoration */
   content: ""; position: fixed; inset: -20% -10% auto auto; width: 70vw; height: 60vh; pointer-events: none; z-index: 0;
-  background: radial-gradient(closest-side, rgba(139, 157, 255, 0.13), transparent 70%);
+  background: radial-gradient(closest-side, rgba(238, 79, 154, 0.09), transparent 70%);
 }
 a { color: inherit; text-decoration: none; }
 button, input, select, textarea { font: inherit; color: inherit; }
@@ -112,7 +122,7 @@ h3 { font: 600 18px/1.3 var(--font-display); margin: 0; }
   border-radius: 99px; font-weight: 600; font-size: 15px; background: var(--surface-2); border: 1px solid var(--line); transition: transform .12s, opacity .15s;
 }
 .btn:active { transform: scale(.97); }
-.btn.primary { background: var(--grad); color: #fff; border: 0; box-shadow: 0 6px 24px rgba(139, 157, 255, .28); }
+.btn.primary { background: var(--grad); color: #fff; border: 0; box-shadow: 0 6px 24px rgba(238, 79, 154, .3); }
 .btn.ghost { background: transparent; }
 .btn.danger { background: var(--bad); color: #1a0000; border: 0; }
 .btn.wide { width: 100%; }
@@ -219,7 +229,7 @@ h3 { font: 600 18px/1.3 var(--font-display); margin: 0; }
 .fab {
   position: fixed; right: 18px; bottom: calc(var(--tab-h) + var(--safe-b) + 16px); z-index: 45;
   width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; color: #fff; background: var(--grad);
-  box-shadow: 0 10px 30px rgba(139, 157, 255, .45), 0 2px 6px rgba(0,0,0,.3); transition: transform .15s;
+  box-shadow: 0 10px 30px rgba(238, 79, 154, .4), 0 2px 6px rgba(0,0,0,.3); transition: transform .15s;
 }
 .fab svg { width: 30px; height: 30px; }
 .fab:active { transform: scale(.92); }
@@ -256,13 +266,16 @@ body.signed-out .tabbar, body.signed-out .fab, body.signed-out .rail, body.signe
 .toast.in { opacity: 1; transform: none; }
 .toast.ok::before { content: "✓"; font-weight: 800; color: var(--ok); }
 .toast-btn { font-weight: 700; color: var(--accent); white-space: nowrap; }
-@media (prefers-color-scheme: light) { .toast-btn { color: #aab6ff; } }
+/* the toast is inverted (dark on light, light on dark): keep its button readable */
+.toast-btn { color: #ee4f9a; }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .toast-btn { color: #ff8cc1; } }
+:root[data-theme="light"] .toast-btn { color: #ff8cc1; }
 
 /* ---------- voice ---------- */
 .voice { text-align: center; padding: 10px 0 4px; }
-.voice-orb { width: 96px; height: 96px; margin: 8px auto 14px; border-radius: 50%; background: var(--grad); display: grid; place-items: center; animation: breathe 1.8s ease-in-out infinite; box-shadow: 0 0 60px rgba(139,157,255,.5); }
+.voice-orb { width: 96px; height: 96px; margin: 8px auto 14px; border-radius: 50%; background: var(--grad); display: grid; place-items: center; animation: breathe 1.8s ease-in-out infinite; box-shadow: 0 0 60px rgba(238,79,154,.45); }
 .voice-orb span { width: 30px; height: 30px; border-radius: 50%; background: rgba(255,255,255,.9); }
-@keyframes breathe { 50% { transform: scale(1.08); box-shadow: 0 0 90px rgba(177,140,255,.6); } }
+@keyframes breathe { 50% { transform: scale(1.08); box-shadow: 0 0 90px rgba(238,79,154,.6); } }
 .voice-text { min-height: 80px; font-size: 18px; line-height: 1.5; text-align: left; margin: 14px 0; }
 
 /* ---------- idea card ---------- */
@@ -415,7 +428,7 @@ mark { background: color-mix(in srgb, var(--accent) 30%, transparent); color: in
 .skel-line { height: 12px; border-radius: 6px; background: var(--surface-2); margin: 8px 0; animation: pulse 1.4s infinite; }
 .w40 { width: 40%; } .w60 { width: 60%; } .w90 { width: 90%; }
 .signin { min-height: 80dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 16px; max-width: 380px; margin: 0 auto; }
-.signin-logo { border-radius: 20px; box-shadow: 0 12px 40px rgba(139,157,255,.35); }
+.signin-logo { border-radius: 20px; box-shadow: 0 12px 40px rgba(238,79,154,.35); }
 .signin h1 { font-size: 34px; }
 .signin .btn.primary { background: #fff; color: #1f1f1f; box-shadow: var(--shadow); }
 
@@ -451,3 +464,8 @@ mark { background: color-mix(in srgb, var(--accent) 30%, transparent); color: in
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* appearance picker (More) */
+.theme-seg { display: flex; gap: 6px; padding: 10px 14px 14px; }
+.theme-seg button { flex: 1; padding: 9px 0; border-radius: 12px; font-weight: 600; font-size: 14px; color: var(--text-2); background: var(--surface); border: 1px solid var(--line); }
+.theme-seg button.on { color: #fff; background: #ee4f9a; border-color: #ee4f9a; }

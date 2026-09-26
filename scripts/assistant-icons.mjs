@@ -11,7 +11,7 @@ const svg = fs.readFileSync(path.join(dir, 'icon.svg'), 'utf8');
 const browser = await pw.chromium.launch();
 for (const size of [180, 192, 512]) {
   const page = await browser.newPage({ viewport: { width: size, height: size } });
-  await page.setContent(`<html><body style="margin:0;background:#0e0e16">${svg.replace('<svg ', `<svg width="${size}" height="${size}" `)}</body></html>`);
+  await page.setContent(`<html><body style="margin:0;background:#ee4f9a">${svg.replace('<svg ', `<svg width="${size}" height="${size}" `)}</body></html>`);
   await page.screenshot({ path: path.join(dir, `icon-${size}.png`), omitBackground: false });
   await page.close();
 }

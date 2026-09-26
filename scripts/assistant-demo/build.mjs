@@ -15,7 +15,7 @@ fs.rmSync(out, { recursive: true, force: true });
 fs.mkdirSync(path.join(out, 'views'), { recursive: true });
 fs.mkdirSync(path.join(out, 'icons'), { recursive: true });
 
-const js = ['app.js', 'api.js', 'ui.js', 'state.js', 'outbox.js', 'capture.js', 'views/common.js', 'views/today.js', 'views/inbox.js', 'views/item.js', 'views/chat.js', 'views/search.js', 'views/more.js', 'views/dreams.js'];
+const js = ['theme.js', 'app.js', 'api.js', 'ui.js', 'state.js', 'outbox.js', 'capture.js', 'views/common.js', 'views/today.js', 'views/inbox.js', 'views/item.js', 'views/chat.js', 'views/search.js', 'views/more.js', 'views/dreams.js'];
 js.forEach(f => fs.copyFileSync(path.join(src, f), path.join(out, f)));
 // Demo only: suggest the Dream Board questions the sample data can answer.
 const chat = path.join(out, 'views/chat.js');
@@ -23,11 +23,7 @@ fs.writeFileSync(chat, fs.readFileSync(chat, 'utf8').replace("  'Catch me up',\n
 fs.copyFileSync(path.join(src, 'icons/icon.svg'), path.join(out, 'icons/icon.svg'));
 fs.copyFileSync(path.resolve('scripts/assistant-demo/demo-api.js'), path.join(out, 'demo-api.js'));
 
-// CSS: also honour an explicit light/dark choice from the host page.
 let css = fs.readFileSync(path.join(src, 'app.css'), 'utf8');
-const m = css.match(/@media \(prefers-color-scheme: light\) \{\n  :root \{([\s\S]*?)\n  \}\n\}/);
-if (!m) throw new Error('light token block not found in app.css');
-css = css.replace(m[0], `@media (prefers-color-scheme: light) {\n  :root:not([data-theme="dark"]) {${m[1]}\n  }\n}\n:root[data-theme="light"] {${m[1]}\n}`);
 css += `
 /* demo only */
 .demo-strip { position: relative; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 12px; padding: 8px 16px; font-size: 13px; color: var(--text-2); background: var(--surface-2); border-bottom: 1px solid var(--line); text-align: center; }
@@ -37,7 +33,8 @@ css += `
 fs.writeFileSync(path.join(out, 'app.css'), css);
 
 fs.writeFileSync(path.join(out, 'index.html'), `<title>Personal Assistant</title>
-<meta name="theme-color" content="#0b0b10">
+<meta name="theme-color" content="#0a0a0a">
+<script src="theme.js"></script>
 <link rel="stylesheet" href="app.css">
 <div class="demo-strip" role="note"><span><b>Demo</b> — sample notes, email, calendar and Sheets. Nothing here is real or connected.</span><button type="button" onclick="window.__asstDemoReset && window.__asstDemoReset()">Reset demo</button></div>
 <div class="app">
