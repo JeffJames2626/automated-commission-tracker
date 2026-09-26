@@ -271,6 +271,18 @@ try {
     await shot(dp, '10-desktop-assistant');
   });
 
+  const android = await browser.newContext({ ...pw.devices['Pixel 7'], colorScheme: 'dark', timezoneId: 'America/Chicago' });
+  const ap = await android.newPage();
+  await step('Android-size phone: Today, capture sheet with voice/photo/file/paste, no horizontal scroll', async () => {
+    await ap.goto(BASE + '/__dev/login');
+    await ap.getByText('Catch me up').waitFor();
+    assert.ok(await ap.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'no horizontal scroll');
+    await ap.locator('#tabbar a', { hasText: 'Inbox' }).click();
+    await ap.locator('#fab').click();
+    for (const label of ['Voice', 'Photo', 'File', 'Paste']) await ap.locator('.sheet').getByText(label, { exact: true }).first().waitFor();
+    await shot(ap, '20-android-capture');
+  });
+
   const light = await browser.newContext({ ...pw.devices['iPhone 14'], colorScheme: 'light' });
   const lp = await light.newPage();
   await step('light mode renders', async () => {
