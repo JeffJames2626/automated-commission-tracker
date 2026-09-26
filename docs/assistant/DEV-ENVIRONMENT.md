@@ -32,22 +32,39 @@ claude/… (feature work) ──► dev ──► Vercel preview deployment, ser
   `*-<hash>-alp-marko-s.vercel.app` URLs).
 * `automatedpest.com` uses Vercel DNS, so the subdomain needed no DNS work.
 
-### Why a custom subdomain (and what protects it)
+### What protects it
 
-The project has Vercel Deployment Protection set to *all deployments except
-custom domains* (Vercel login + password). Every `*.vercel.app` address,
-including the branch alias, is behind it. That would stop the phone PWA
-(manifest, service worker) and Dream Board's server from reaching the
-assistant. The custom subdomain is outside that protection. The assistant's
-own gate protects it instead:
+This Vercel project has **Deployment Protection** (Vercel login + password)
+on every deployment except *production* custom domains. The dev address is
+a preview deployment, so on its own it was behind that wall too (checked
+live). That would stop:
+
+* the phone PWA (manifest, service worker, separate cookie jar);
+* Dream Board's server;
+* strangers from seeing the assistant's own "private" message.
+
+So **this one address has a Deployment Protection Exception**:
+
+* It was added through the API (`alias-protection-override` on
+  `assistant-dev.automatedpest.com`).
+* It is listed under Vercel → Settings → Deployment Protection, where you
+  can revoke it.
+* The project-wide protection is unchanged. The Sales Tracker's previews and
+  every `*.vercel.app` address (including this branch's alias) stay behind
+  the Vercel login.
+* If the dev address ever shows Vercel's "Protected Page" after a deploy,
+  re-add the exception there.
+
+The assistant's own gate protects the dev address:
 
 * Google sign-in, then the explicit allow-list (`ASSISTANT_ALLOWED_EMAILS`).
-  In development and production an empty list lets **nobody** in (it never
-  falls back to the tracker's admin users).
+  In development and on any Vercel deployment, an empty list lets **nobody**
+  in; it never falls back to the tracker's admin users.
 * Anyone else sees only: *This Personal Assistant is private.* No user row is
   created for them, and every data endpoint answers `401`.
 * On this host only `/assistant/…` and `/api/assistant…` are served;
-  everything else redirects to `/assistant/` (`vercel.json`, host rule). The
+  everything else (including the tracker's `/api/state`) redirects to
+  `/assistant/`. This is checked live and with Vercel's route compiler. The
   dev address is not a second front door to the Sales Tracker.
 * The page itself (HTML/JS/CSS) is public, as for any web app; it holds no data.
 

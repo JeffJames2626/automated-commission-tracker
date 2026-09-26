@@ -8,8 +8,8 @@ building on speculation.
 |---|---|
 | Address | **https://assistant-dev.automatedpest.com/assistant/** |
 | Environment | DEVELOPMENT: real account, real data (see [DEV-ENVIRONMENT.md](DEV-ENVIRONMENT.md)) |
-| Git | branch `dev` @ `{{SHA}}`, tag `pa-beta-baseline-2026-09-26` |
-| Vercel | preview deployment `{{DEPLOYMENT}}` (project automated-commission-tracker), built {{BUILT}} |
+| Git | branch `dev`, tag `pa-beta-baseline-2026-09-26`. The app code is as smoke-tested at `d458189`; this doc was added on top. |
+| Vercel | preview deployments of branch `dev` (project automated-commission-tracker). Tested: `dpl_3H4JuPuy8qKJp3WxTXvMG9W1TBjb`, built 2026-09-26 03:35 UTC. |
 | Production | not deployed; `main` untouched |
 
 ## What is in this baseline
@@ -43,11 +43,78 @@ building on speculation.
 
 ## Verified before and after deploying
 
-{{VERIFIED}}
+Before pushing (local, synthetic data only):
+
+* **API tests.** 146 tests on real Postgres (PGlite in memory), with made-up
+  users. They include:
+  * private access: strangers get only the private sentence, no session, no
+    user row, `401` on every data endpoint;
+  * one sign-in address, and the return to the right screen;
+  * no duplicate users from email case or host;
+  * no content in logs;
+  * Report / Idea, Capture review and export without secrets;
+  * backup round trip with photos, paged, skipping orphans;
+  * the tentative-wording rules;
+  * the journal: never lost, retried while the AI is down, never processed
+    twice;
+  * the Dream Board Connect flow: allow, deny, expiry, signed-out,
+    rollback, sign-out-everywhere;
+  * the demo fenced off;
+  * tests cannot reach a real database.
+* **Browser tests** (Chromium, simulated iPhone 14, Pixel 7, desktop, light
+  mode): 30 checks. They include the private sign-in, the return to a Dream
+  Board request after sign-in, the DEV/LOCAL badge, About, Report / Idea,
+  Capture review, approving a Dream Board connection, and no horizontal
+  scroll on an Android-size screen.
+* **`npm run check:assistant`**: every file parses, the function loads with
+  no environment, no secret or debug/demo code in shipped files, and the
+  build step runs.
+* **Independent review** (8 agents) of the launch commit. It found:
+  * 1 blocker: path-style API routes got a trailing space on Vercel (sign-in
+    and Dream Board broken);
+  * 4 medium and 7 low findings.
+
+  All are fixed. Each has a regression test that fails on the unfixed code.
+
+After deploying, against the real address (from Vercel's side; this
+session's network cannot reach the domain directly):
+
+* `GET /api/assistant/health` → 200:
+  `{"env":"development","sha":"d458189","branch":"dev","builtAt":"2026-09-26T03:35:16Z"}`.
+  The only setup item missing is the Google OAuth client.
+* `GET /api/assistant?r=bootstrap` without a session → `401 signed_out`,
+  with an `x-request-id` header.
+* `GET /api/assistant/auth/start` → `302` to the sign-in page ("not set up
+  yet" until the Google client exists).
+* `/assistant/`, `manifest.webmanifest` and `sw.js` (`asst-v5`, `no-cache`)
+  → 200 with the CSP and security headers.
+* The Sales Tracker's `/api/state` on the dev host → redirected to
+  `/assistant/`.
+* Runtime logs show one JSON line per request (route, status, ms, request
+  id), with no content.
+* The first request created the `asst_*` tables in the shared Neon database:
+  the connection works and migrations ran.
+* The build ran `vercel-build` (stamp `d458189 dev`), and `.vercelignore`
+  removed tests, docs and local tools.
 
 ## Not verified (needs you)
 
-{{NOT_VERIFIED}}
+* **Real Google sign-in** and every Google source (Gmail, Calendar,
+  Drive/Docs, Sheets, Contacts). These need the Google OAuth client for the
+  dev address (DEV-ENVIRONMENT.md), and then you.
+* **Real AI answers, filing and journal** on your data. These need
+  `ANTHROPIC_API_KEY`.
+* **A physical phone.** Only simulated iPhone/Android screen sizes were
+  tested, which is not the same as a real iPhone: Safari, Add to Home Screen,
+  the microphone, the camera and share.
+* **Seeing the dev address as a stranger.** The protection exception is set,
+  but this session couldn't load the page without Vercel credentials. Open it
+  on your phone while signed out of Vercel: you should see *Personal
+  Assistant — Private. Sign in to continue.*, not Vercel's "Protected
+  Page".
+* **Dream Board end to end.** The assistant side is live, but Dream Board
+  itself doesn't have the Connect button or sync loop yet (see
+  DREAM-BOARD-CONNECTOR.md), so the Dreams tab shows *Not connected*.
 
 ## First things to try (15 minutes)
 
